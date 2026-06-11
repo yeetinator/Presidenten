@@ -14,26 +14,25 @@ class Presidenten:
     def __init__(self, players=4):
         if players < 4:
             raise ValueError("Presidenten requires at least 4 players.")
+
         self.players = players
-        self.deck = [
-            rank for rank in range(3, 16) for _ in range(4)
-        ]  # 3 to Ace (14), plus 2 (15)
+
+        # 3 to Ace (14), plus 2 (15)
+        self.deck = [rank for rank in range(3, 16) for _ in range(4)]
         self.hands = {i: [] for i in range(players)}
 
-        self.roles = {
-            i: "Citizen" for i in range(players)
-        }  # Placeholder for role assignment
+        self.roles = {i: "Citizen" for i in range(players)}
         self.out_order = []  # Track finishing order for role assignment
         self.round = 0
         self.ended_2 = []  # Track players who finished with a 2 for role assignment
 
-        self.history = []
+        self.history = []  # [(P_id, move), ...]
         self.last_move = (0, 0, 0)  # (card_value, count, twos_used)
-        self.pile_leader = 0
-        self.passed = set()
+        self.pile_leader = 0  # P_id of the player who last played to the pile
+        self.passed = set()  # Players who have passed in the current pile
         self.playing = set(range(players))
         self.first_turn = True
-        self.curr_turn = 0
+        self.curr_turn = 0  # P_id of the current player
         self.game_over = False
 
     def _get_roles(self):
@@ -59,14 +58,13 @@ class Presidenten:
 
     def assign_roles(self):
         if not self.out_order:
-            return  # No roles to assign yet
+            return
 
-        for p in range(self.players):
+        for p in range(self.players):  # Add any remaining players who haven't finished
             if p not in self.out_order:
-                self.out_order.append(
-                    p
-                )  # Add any remaining players who haven't finished
+                self.out_order.append(p)
 
+        # Move players who finished with a 2 to the end of the order
         for p in reversed(self.ended_2):
             if p in self.out_order:
                 self.out_order.remove(p)
@@ -89,11 +87,12 @@ class Presidenten:
             role_pairs.append(("Secretary", "Clerk", 1))
 
         role_to_player = {role: player_id for player_id, role in self.roles.items()}
+
+        # Makes sure no cards are exchanged back and forth in the same round
         staged_outgoing = {player_id: [] for player_id in range(self.players)}
 
         def pick_cards(player_id, count, highest=False, allow_custom=True):
             hand = self.hands[player_id]
-
             if allow_custom and cards_to_pass is not None:
                 if player_id in cards_to_pass:
                     chosen = list(cards_to_pass[player_id])
@@ -107,12 +106,12 @@ class Presidenten:
 
                 chosen_counts = Counter(chosen)
                 hand_counts = Counter(hand)
+
                 for card, selected_count in chosen_counts.items():
                     if hand_counts[card] < selected_count:
                         raise ValueError(
                             f"Player {player_id} cannot exchange {selected_count} copy/copies of {card}."
                         )
-
                 return chosen
 
             sorted_hand = sorted(hand, reverse=highest)
@@ -183,14 +182,14 @@ class Presidenten:
         self.game_over = False
         self.playing = set(range(self.players))
         self.out_order = []
-        self.ended_2 = []  # Track players who finished with a 2 for role assignment
+        self.ended_2 = []
 
         if next_round:
             scum_player = [p for p, role in self.roles.items() if role == "Scum"][0]
             self.curr_turn = scum_player if scum_player else 0
         else:
             self.curr_turn = random.choice(
-                [p for p, hand in self.hands.items() if 3 in hand]
+                [p for p, hand in self.hands.items() if 3 in hand]  # 3 of Clubs starts
             )
             self.first_turn = True
         return self._get_state(self.curr_turn)
@@ -222,20 +221,22 @@ class Presidenten:
 
     def get_legal_moves(self, player_id):
         hand = self.hands[player_id]
-        legal_moves = (
-            [(0, 0, 0)] if self.last_move[0] != 0 else []
-        )  # Can only pass if there's a pile to beat
+
+        # Can't pass on an empty pile
+        legal_moves = [(0, 0, 0)] if self.last_move[0] != 0 else []
         counts = Counter(hand)
         num_twos = counts[15]
-
         pile_card, pile_count, _ = self.last_move
+
         for card, count in counts.items():
             if self.first_turn and card != 3:
                 continue  # First turn must play a 3
+
             if card > pile_card:
                 for c in range(1, count + 1):
                     if card != 15:
-                        for t in range(num_twos + 1):
+                        for t in range(num_twos + 1):  # Combinations with wildcard 2
+                            # No more than 4 cards at a time, and must beat the pile count
                             if 1 <= c + t <= 4 and c + t >= pile_count:
                                 legal_moves.append((card, c + t, t))
                     else:
@@ -252,9 +253,9 @@ class Presidenten:
             return None
 
         if any(item[1][0] == card for item in self.history[:-1]):
-            return None
+            return None  # If the card has been played before, it's impossible for it to be the finishing move
 
-        players_with_card = {
+        players_with_card = {  # If multiple players have the card, it's impossible for it to be the finishing move
             p: hand
             for p, hand in self.hands.items()
             if p != player_id and hand.count(card) + played_count == 4
@@ -309,7 +310,7 @@ class Presidenten:
 
     def _loop_curr_turn(self):
         self.curr_turn = (self.curr_turn + 1) % self.players
-        while (
+        while (  # Skip players who have passed or are out
             self.curr_turn in self.passed or self.curr_turn not in self.playing
         ) and not self.game_over:
             self.curr_turn = (self.curr_turn + 1) % self.players
@@ -324,7 +325,7 @@ class Presidenten:
             if self.pile_leader is not None:
                 pile_reset = all(
                     p == self.pile_leader or p in self.passed for p in self.playing
-                )
+                )  # The pile resets if all other active players have passed
         else:
             self.last_move = move
             self.pile_leader = player_id
