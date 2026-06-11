@@ -11,11 +11,12 @@ class Presidenten:
         15: "2",
     }
 
-    def __init__(self, players=4):
+    def __init__(self, players=4, verbose=False):
         if players < 4:
             raise ValueError("Presidenten requires at least 4 players.")
 
         self.players = players
+        self.verbose = verbose
 
         # 3 to Ace (14), plus 2 (15)
         self.deck = [rank for rank in range(3, 16) for _ in range(4)]
@@ -146,13 +147,14 @@ class Presidenten:
             self.hands[high_player].extend(staged_outgoing[low_player])
             self.hands[low_player].extend(staged_outgoing[high_player])
 
-            print(f"Exchanging cards between {high_player} and {low_player}:")
-            print(
-                f" -> Player {high_player} gives: {self.visualize_hand(staged_outgoing[high_player])}"
-            )
-            print(
-                f" -> Player {low_player} gives: {self.visualize_hand(staged_outgoing[low_player])}\n"
-            )
+            if self.verbose:
+                print(f"Exchanging cards between {high_player} and {low_player}:")
+                print(
+                    f" -> Player {high_player} gives: {self.visualize_hand(staged_outgoing[high_player])}"
+                )
+                print(
+                    f" -> Player {low_player} gives: {self.visualize_hand(staged_outgoing[low_player])}\n"
+                )
 
         for player_id in self.hands:
             self.hands[player_id].sort()
@@ -216,7 +218,7 @@ class Presidenten:
             "first_turn": self.first_turn,
             "history": self.history.copy(),
             "player_roles": self.roles.copy(),
-            "history_card_counts": sorted(dict(history_counts).items()),
+            "history_vector": [history_counts[rank] for rank in range(3, 16)],
         }
 
     def get_legal_moves(self, player_id):
@@ -284,15 +286,18 @@ class Presidenten:
             return None
 
         chosen = min(options, key=lambda x: x[0])  # Prioritize lower card
-        print(
-            f"\nJUMP IN! Player {chosen[2]} finishes the last move with [{self.visualize_move((chosen[0], chosen[1], 0))}]"
-        )
+        if self.verbose:
+            print(
+                f"\nJUMP IN! Player {chosen[2]} finishes the last move with [{self.visualize_move((chosen[0], chosen[1], 0))}]"
+            )
 
         self._remove_cards(chosen[2], chosen[0], chosen[1])
         self.history.append((chosen[2], (chosen[0], chosen[1], 0)))
 
         if not self.hands[chosen[2]] and chosen[2] not in self.out_order:
-            print(f"Player {chosen[2]} is out!\n")
+            if self.verbose:
+                print(f"Player {chosen[2]} is out!\n")
+
             self.out_order.append(chosen[2])
             self.ended_2.append(chosen[2]) if chosen[0] == 15 else None
 
@@ -348,7 +353,9 @@ class Presidenten:
             return self._get_state(self.curr_turn), self.game_over
 
         if not self.hands[player_id]:
-            print(f"Player {player_id} is out!\n")
+            if self.verbose:
+                print(f"Player {player_id} is out!\n")
+
             self.out_order.append(player_id)
             self.ended_2.append(player_id) if card_val == 15 else None
 
@@ -387,45 +394,46 @@ class Presidenten:
         return f"{count}x {card_name}"
 
 
-ROUNDS_TO_PLAY = 3
+if __name__ == "__main__":
+    ROUNDS_TO_PLAY = 3
 
-env = Presidenten(players=6)
+    env = Presidenten(players=6)
 
-for round_idx in range(ROUNDS_TO_PLAY):
-    print(f"\n=== ROUND {round_idx + 1} ===")
-    state = env.full_reset(next_round=(round_idx > 0))
+    for round_idx in range(ROUNDS_TO_PLAY):
+        print(f"\n=== ROUND {round_idx + 1} ===")
+        state = env.full_reset(next_round=(round_idx > 0))
 
-    print("Player Roles for this Round:")
-    if round_idx == 0:
-        role_items = sorted(env.roles.items())
-    else:
-        role_order = {role: idx for idx, role in enumerate(env._get_roles())}
-        role_items = sorted(
-            env.roles.items(), key=lambda item: (role_order[item[1]], item[0])
+        print("Player Roles for this Round:")
+        if round_idx == 0:
+            role_items = sorted(env.roles.items())
+        else:
+            role_order = {role: idx for idx, role in enumerate(env._get_roles())}
+            role_items = sorted(
+                env.roles.items(), key=lambda item: (role_order[item[1]], item[0])
+            )
+
+        for p_id, role in role_items:
+            print(f" -> Player {p_id}: {role}")
+        print("-" * 50, "\n")
+
+        if round_idx > 0:
+            env.exchange_cards()
+            state = env._get_state(env.curr_turn)
+
+        while not env.game_over:
+            curr_player = env.curr_turn
+            legal_moves = env.get_legal_moves(curr_player)
+            chosen_move = random.choice(legal_moves)
+
+            print(f"Player {env.curr_turn} Hand:", env.visualize_hand(state["hand"]))
+            print(f"Player {curr_player} plays [{env.visualize_move(chosen_move)}]\n")
+
+            state, game_over = env.step(curr_player, chosen_move)
+
+        for p in range(env.players):
+            if p not in env.out_order:
+                env.out_order.append(p)
+        print(
+            f"\nRound {round_idx + 1} Complete! Finishing Order: {env.out_order}. Players who finished with a 2: {env.ended_2}"
         )
-
-    for p_id, role in role_items:
-        print(f" -> Player {p_id}: {role}")
-    print("-" * 50, "\n")
-
-    if round_idx > 0:
-        env.exchange_cards()
-        state = env._get_state(env.curr_turn)
-
-    while not env.game_over:
-        curr_player = env.curr_turn
-        legal_moves = env.get_legal_moves(curr_player)
-        chosen_move = random.choice(legal_moves)
-
-        print(f"Player {env.curr_turn} Hand:", env.visualize_hand(state["hand"]))
-        print(f"Player {curr_player} plays [{env.visualize_move(chosen_move)}]\n")
-
-        state, game_over = env.step(curr_player, chosen_move)
-
-    for p in range(env.players):
-        if p not in env.out_order:
-            env.out_order.append(p)
-    print(
-        f"\nRound {round_idx + 1} Complete! Finishing Order: {env.out_order}. Players who finished with a 2: {env.ended_2}"
-    )
-    input("Press Enter to continue to the next round...")
+        input("Press Enter to continue to the next round...")
