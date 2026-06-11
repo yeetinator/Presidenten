@@ -298,7 +298,8 @@ class Presidenten:
             else:
                 resume_turn = self.pending_finish["resume_turn"]
                 was_pile_reset = self.pending_finish["pile_reset"]
-                print(f"Resuming normal play with Player {resume_turn}.")
+                if self.verbose:
+                    print(f"Resuming normal play with Player {resume_turn}.")
 
                 self.pending_finish = None
                 self.curr_turn = resume_turn
@@ -324,10 +325,10 @@ class Presidenten:
                 if player_id in self.playing:
                     self.playing.remove(player_id)
 
+            self.game_over = self._is_game_over()
             self._pile_reset()
             self.curr_turn = player_id
             self.pending_finish = None
-            self.game_over = self._is_game_over()
 
     def handle_finishing(
         self, card_val, rcount, player_id, twos, temp_next_turn, pile_reset
@@ -353,6 +354,9 @@ class Presidenten:
         return True
 
     def _pile_reset(self):
+        if self.game_over:
+            return
+
         self.last_move = (0, 0, 0)
         self.passed = set()
         self.curr_turn = self._get_next_active_player(
@@ -367,11 +371,12 @@ class Presidenten:
         self, from_player, ignore_passed=False, include_start=False
     ):
         curr = from_player if include_start else (from_player + 1) % self.players
-        while not self.game_over:
+        for _ in range(self.players):
             if curr in self.playing and (ignore_passed or curr not in self.passed):
                 return curr
             curr = (curr + 1) % self.players
-        return curr
+
+        return from_player
 
     def step(self, player_id, move):
         card_val, count, twos = move
@@ -411,6 +416,10 @@ class Presidenten:
             if player_id in self.playing:
                 self.playing.remove(player_id)
             self.game_over = self._is_game_over()
+
+        if self.game_over:
+            self.curr_turn = player_id
+            return self._get_state(self.curr_turn), self.game_over
 
         if pile_reset:
             temp_next_turn = self._get_next_active_player(
@@ -454,15 +463,26 @@ class Presidenten:
 
 if __name__ == "__main__":
     from baseline_bot import PresidentenBaselineBot
+    from ismcts_bot import PresidentenISMCTSBot
 
-    setting = input("0: random play, 1: baseline bots, 2: player vs bots: ")
+    setting = input(
+        "0: random play, 1: baseline bots, 2: player vs bots, 3: ismcts vs baseline bots: "
+    )
 
-    ROUNDS_TO_PLAY = 3
-    NUM_PLAYERS = 7
+    ROUNDS_TO_PLAY = 1
+    NUM_PLAYERS = 4
     HUMAN_ID = 0
+    ISMCTS_ID = 0
     env = Presidenten(players=NUM_PLAYERS, verbose=True)
 
-    bots = [PresidentenBaselineBot(i) for i in range(NUM_PLAYERS)]
+    if setting == "3":
+        bots = {}
+        bots[0] = PresidentenISMCTSBot(player_id=ISMCTS_ID, iterations=400)
+
+        for i in range(1, NUM_PLAYERS):
+            bots[i] = PresidentenBaselineBot(i)
+    else:
+        bots = [PresidentenBaselineBot(i) for i in range(NUM_PLAYERS)]
 
     for round_idx in range(ROUNDS_TO_PLAY):
         print(f"\n=== ROUND {round_idx + 1} ===")
@@ -503,8 +523,12 @@ if __name__ == "__main__":
 
                 move_idx = int(input("Enter move index: "))
                 chosen_move = legal_moves[move_idx]
+            elif setting == "3" and curr_player == ISMCTS_ID:
+                print(f"Player {curr_player} ({env.roles[curr_player]}) is thinking...")
+                chosen_move = bots[curr_player].get_move(state, env)  # type: ignore
             else:
-                chosen_move = bots[curr_player].get_move(state)  # Bot's turn
+                bot_instance = bots[curr_player]
+                chosen_move = bot_instance.get_move(state)  # Bot's turn
 
             print(
                 f"Player {curr_player} ({env.roles[curr_player]}) Hand:",
