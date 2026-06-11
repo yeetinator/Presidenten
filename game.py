@@ -489,25 +489,22 @@ if __name__ == "__main__":
             curr_player = env.curr_turn
             legal_moves = env.get_legal_moves(curr_player)
 
-            # Determine how to get the move based on setting and current player
             if setting == "0":
-                # Random play
                 chosen_move = random.choice(legal_moves)
             elif setting == "2" and curr_player == HUMAN_ID:
-                # Human player's turn - get input
                 print(
                     f"Player {curr_player} ({env.roles[curr_player]}) Hand: {env.visualize_hand(state['hand'])}"
                 )
                 print(f"Last Move: {env.visualize_move(state['last_move'])}")
                 print("Legal moves:")
+
                 for idx, move in enumerate(legal_moves):
                     print(f"  {idx}: {env.visualize_move(move)}")
 
                 move_idx = int(input("Enter move index: "))
                 chosen_move = legal_moves[move_idx]
             else:
-                # Bot's turn (setting "1" or setting "2" with non-human player)
-                chosen_move = bots[curr_player].get_move(state)
+                chosen_move = bots[curr_player].get_move(state)  # Bot's turn
 
             print(
                 f"Player {curr_player} ({env.roles[curr_player]}) Hand:",

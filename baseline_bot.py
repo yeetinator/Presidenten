@@ -29,8 +29,7 @@ class PresidentenBaselineBot:
                 return chosen_jump
             return (0, 0, 0)
 
-        # Normal play logic
-        unique_vals = set(hand)
+        unique_vals = set(hand)  # Normal play logic
         hand_counts = Counter(hand)
 
         playable_moves = [m for m in legal_moves if m != (0, 0, 0)]
@@ -60,9 +59,8 @@ class PresidentenBaselineBot:
                 and history_vector[history_index] == 0
             ):
                 candidate_moves = [m for m in filtered_moves if m[0] != card_value]
-                if not candidate_moves:
-                    return (0, 0, 0)
-                filtered_moves = candidate_moves
+                if candidate_moves:
+                    filtered_moves = candidate_moves
         playable_moves = filtered_moves
 
         if (
@@ -73,9 +71,11 @@ class PresidentenBaselineBot:
                 or any(opp <= 3 for opp in state["opp_hand_counts"].values())
             )
         ):
-            playable_moves = [
+            candidate_moves = [
                 m for m in playable_moves if m[0] > min(hand_counts.keys())
             ]
+            if candidate_moves:
+                playable_moves = candidate_moves
 
         low_card_moves = [m for m in playable_moves if m[0] < 10 and m[2] == 0]
         high_card_moves = [m for m in playable_moves if m[0] >= 10]
@@ -98,8 +98,7 @@ class PresidentenBaselineBot:
                 junk_count = sum(1 for c in hand if c < 8)
 
                 if len(hand) > starting_cards * 0.5 and junk_count >= 2:
-                    if state["last_move"][0] < 14:
+                    if state["last_move"][0] < 14 and (0, 0, 0) in legal_moves:
                         return (0, 0, 0)
             return best_high_move
-
-        return (0, 0, 0)
+        return legal_moves[0]
