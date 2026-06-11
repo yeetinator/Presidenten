@@ -12,20 +12,163 @@ class Presidenten:
     }
 
     def __init__(self, players=4):
+        if players < 4:
+            raise ValueError("Presidenten requires at least 4 players.")
         self.players = players
         self.deck = [
             rank for rank in range(3, 16) for _ in range(4)
         ]  # 3 to Ace (14), plus 2 (15)
         self.hands = {i: [] for i in range(players)}
+
+        self.roles = {
+            i: "Citizen" for i in range(players)
+        }  # Placeholder for role assignment
+        self.out_order = []  # Track finishing order for role assignment
+        self.round = 0
+        self.ended_2 = []  # Track players who finished with a 2 for role assignment
+
         self.history = []
         self.last_move = (0, 0, 0)  # (card_value, count, twos_used)
+        self.pile_leader = 0
         self.passed = set()
         self.playing = set(range(players))
         self.first_turn = True
+        self.curr_turn = 0
         self.game_over = False
 
-    def full_reset(self):
+    def _get_roles(self):
+        if self.players == 4:
+            return ["President", "Vice-President", "High-Scum", "Scum"]
+        elif self.players == 5:
+            return ["President", "Vice-President", "Citizen", "High-Scum", "Scum"]
+        elif self.players == 6:
+            return [
+                "President",
+                "Vice-President",
+                "Secretary",
+                "Clerk",
+                "High-Scum",
+                "Scum",
+            ]
+        else:
+            return (
+                ["President", "Vice-President", "Secretary"]
+                + ["Citizen"] * (self.players - 6)
+                + ["Clerk", "High-Scum", "Scum"]
+            )
+
+    def assign_roles(self):
+        if not self.out_order:
+            return  # No roles to assign yet
+
+        for p in range(self.players):
+            if p not in self.out_order:
+                self.out_order.append(
+                    p
+                )  # Add any remaining players who haven't finished
+
+        for p in reversed(self.ended_2):
+            if p in self.out_order:
+                self.out_order.remove(p)
+                self.out_order.append(p)
+
+        roles = self._get_roles()
+        for rank, player_id in enumerate(self.out_order):
+            self.roles[player_id] = roles[rank]
+
+    def exchange_cards(self, cards_to_pass: dict[int | str, list[int]] | None = None):
+        role_pairs = []
+
+        if self.players >= 4:
+            role_pairs.append(("President", "Scum", 3 if self.players >= 6 else 2))
+            role_pairs.append(
+                ("Vice-President", "High-Scum", 2 if self.players >= 6 else 1)
+            )
+
+        if self.players >= 6:
+            role_pairs.append(("Secretary", "Clerk", 1))
+
+        role_to_player = {role: player_id for player_id, role in self.roles.items()}
+        staged_outgoing = {player_id: [] for player_id in range(self.players)}
+
+        def pick_cards(player_id, count, highest=False, allow_custom=True):
+            hand = self.hands[player_id]
+
+            if allow_custom and cards_to_pass is not None:
+                if player_id in cards_to_pass:
+                    chosen = list(cards_to_pass[player_id])
+                else:
+                    chosen = list(cards_to_pass.get(self.roles[player_id], []))
+
+                if len(chosen) != count:
+                    raise ValueError(
+                        f"Player {player_id} must exchange {count} card(s), got {len(chosen)}."
+                    )
+
+                chosen_counts = Counter(chosen)
+                hand_counts = Counter(hand)
+                for card, selected_count in chosen_counts.items():
+                    if hand_counts[card] < selected_count:
+                        raise ValueError(
+                            f"Player {player_id} cannot exchange {selected_count} copy/copies of {card}."
+                        )
+
+                return chosen
+
+            sorted_hand = sorted(hand, reverse=highest)
+            return sorted_hand[:count]
+
+        for high_role, low_role, count in role_pairs:
+            high_player = role_to_player.get(high_role)
+            low_player = role_to_player.get(low_role)
+
+            if high_player is None or low_player is None:
+                continue
+
+            high_cards = pick_cards(
+                high_player, count, highest=False, allow_custom=True
+            )
+            low_cards = pick_cards(low_player, count, highest=True, allow_custom=False)
+
+            staged_outgoing[high_player].extend(high_cards)
+            staged_outgoing[low_player].extend(low_cards)
+
+        for player_id, cards in staged_outgoing.items():
+            for card in cards:
+                self.hands[player_id].remove(card)
+
+        for high_role, low_role, _ in role_pairs:
+            high_player = role_to_player.get(high_role)
+            low_player = role_to_player.get(low_role)
+
+            if high_player is None or low_player is None:
+                continue
+
+            self.hands[high_player].extend(staged_outgoing[low_player])
+            self.hands[low_player].extend(staged_outgoing[high_player])
+
+            print(f"Exchanging cards between {high_player} and {low_player}:")
+            print(
+                f" -> Player {high_player} gives: {self.visualize_hand(staged_outgoing[high_player])}"
+            )
+            print(
+                f" -> Player {low_player} gives: {self.visualize_hand(staged_outgoing[low_player])}\n"
+            )
+
+        for player_id in self.hands:
+            self.hands[player_id].sort()
+
+    def full_reset(self, next_round=False):
+        if next_round:
+            self.assign_roles()
+            self.round += 1
+        else:
+            self.roles = {i: "Citizen" for i in range(self.players)}
+            self.round = 1
+
         random.shuffle(self.deck)
+        self.hands = {i: [] for i in range(self.players)}
+
         for i, card in enumerate(self.deck):
             player_id = i % self.players
             self.hands[player_id].append(card)
@@ -35,27 +178,46 @@ class Presidenten:
 
         self.history = []
         self.last_move = (0, 0, 0)
-        self.curr_turn = random.choice(
-            [p for p, hand in self.hands.items() if 3 in hand]
-        )
+        self.pile_leader = 0
         self.passed = set()
-        self.first_turn = True
         self.game_over = False
         self.playing = set(range(self.players))
+        self.out_order = []
+        self.ended_2 = []  # Track players who finished with a 2 for role assignment
 
+        if next_round:
+            scum_player = [p for p, role in self.roles.items() if role == "Scum"][0]
+            self.curr_turn = scum_player if scum_player else 0
+        else:
+            self.curr_turn = random.choice(
+                [p for p, hand in self.hands.items() if 3 in hand]
+            )
+            self.first_turn = True
         return self._get_state(self.curr_turn)
 
     def _get_state(self, player_id):
+        flat_history_cards = []
+        for _, move in self.history:
+            if move != (0, 0, 0):
+                card_val, count, twos = move
+                flat_history_cards.extend([card_val] * (count - twos))
+                flat_history_cards.extend([15] * twos)
+        history_counts = Counter(flat_history_cards)
+
         return {
             "hand": self.hands[player_id].copy(),
+            "legal_moves": self.get_legal_moves(player_id),
+            "my_role": self.roles[player_id],
             "last_move": self.last_move,
             "opp_hand_counts": {
                 p: len(self.hands[p]) for p in range(self.players) if p != player_id
             },
-            "legal_moves": self.get_legal_moves(player_id),
-            "history": self.history.copy(),
             "passed": self.passed.copy(),
+            "active_players": self.playing.copy(),
             "first_turn": self.first_turn,
+            "history": self.history.copy(),
+            "player_roles": self.roles.copy(),
+            "history_card_counts": sorted(dict(history_counts).items()),
         }
 
     def get_legal_moves(self, player_id):
@@ -67,8 +229,6 @@ class Presidenten:
         num_twos = counts[15]
 
         pile_card, pile_count, _ = self.last_move
-        hand_size = len(hand)
-
         for card, count in counts.items():
             if self.first_turn and card != 3:
                 continue  # First turn must play a 3
@@ -77,8 +237,6 @@ class Presidenten:
                     if card != 15:
                         for t in range(num_twos + 1):
                             if 1 <= c + t <= 4 and c + t >= pile_count:
-                                if hand_size - (c + t) == 0 and t > 0:
-                                    continue  # Can't use twos to finish if it would end the game
                                 legal_moves.append((card, c + t, t))
                     else:
                         if c >= pile_count:
@@ -125,13 +283,20 @@ class Presidenten:
             return None
 
         chosen = min(options, key=lambda x: x[0])  # Prioritize lower card
-        vis_finish_options = [self.visualize_move((o[0], o[1], 0)) for o in options]
         print(
-            f"\nJUMP IN! Player {chosen[2]} finishes the last move with [{self.visualize_move((chosen[0], chosen[1], 0))}] out of legal options: {vis_finish_options}"
+            f"\nJUMP IN! Player {chosen[2]} finishes the last move with [{self.visualize_move((chosen[0], chosen[1], 0))}]"
         )
 
         self._remove_cards(chosen[2], chosen[0], chosen[1])
         self.history.append((chosen[2], (chosen[0], chosen[1], 0)))
+
+        if not self.hands[chosen[2]] and chosen[2] not in self.out_order:
+            print(f"Player {chosen[2]} is out!\n")
+            self.out_order.append(chosen[2])
+            self.ended_2.append(chosen[2]) if chosen[0] == 15 else None
+
+            if chosen[2] in self.playing:
+                self.playing.remove(chosen[2])
         return chosen[2]
 
     def _pile_reset(self):
@@ -142,17 +307,29 @@ class Presidenten:
         active_players = [p for p in range(self.players) if self.hands[p]]
         return len(active_players) <= 1
 
+    def _loop_curr_turn(self):
+        self.curr_turn = (self.curr_turn + 1) % self.players
+        while (
+            self.curr_turn in self.passed or self.curr_turn not in self.playing
+        ) and not self.game_over:
+            self.curr_turn = (self.curr_turn + 1) % self.players
+
     def step(self, player_id, move):
         card_val, count, twos = move
-        pile_reset = False
         finisher = None
+        pile_reset = False
 
         if move == (0, 0, 0):
             self.passed.add(player_id)
+            if self.pile_leader is not None:
+                pile_reset = all(
+                    p == self.pile_leader or p in self.passed for p in self.playing
+                )
         else:
             self.last_move = move
-
+            self.pile_leader = player_id
             rcount = count - twos
+
             self._remove_cards(player_id, card_val, rcount)
             self._remove_cards(player_id, 15, twos)
 
@@ -169,21 +346,25 @@ class Presidenten:
 
             return self._get_state(self.curr_turn), self.game_over
 
-        if len(self.passed) >= len(self.playing) - 1:
-            pile_reset = True
-
         if not self.hands[player_id]:
-            print(f"Player {player_id} is out!")
-            self.playing.remove(player_id)
-            self.game_over = self._is_game_over()
+            print(f"Player {player_id} is out!\n")
+            self.out_order.append(player_id)
+            self.ended_2.append(player_id) if card_val == 15 else None
 
-        self.curr_turn = (self.curr_turn + 1) % self.players
-        while self.curr_turn in self.passed or self.curr_turn not in self.playing:
-            self.curr_turn = (self.curr_turn + 1) % self.players
+            if player_id in self.playing:
+                self.playing.remove(player_id)
+            self.game_over = self._is_game_over()
 
         if pile_reset:
             self._pile_reset()
+            self.curr_turn = self.pile_leader
+            self.pile_leader = 0
 
+            if self.curr_turn not in self.playing:
+                self._loop_curr_turn()
+            return self._get_state(self.curr_turn), self.game_over
+
+        self._loop_curr_turn()
         return self._get_state(self.curr_turn), self.game_over
 
     def visualize_hand(self, hand):
@@ -205,32 +386,45 @@ class Presidenten:
         return f"{count}x {card_name}"
 
 
-env = Presidenten()
-state = env.full_reset()
+ROUNDS_TO_PLAY = 3
 
-print(
-    f"Initial Player {env.curr_turn} Starting Hand:", env.visualize_hand(state["hand"])
-)
-print("-" * 50)
+env = Presidenten(players=6)
 
-while not env.game_over:
-    curr_player = env.curr_turn
-    legal_moves = env.get_legal_moves(curr_player)
+for round_idx in range(ROUNDS_TO_PLAY):
+    print(f"\n=== ROUND {round_idx + 1} ===")
+    state = env.full_reset(next_round=(round_idx > 0))
 
-    # Pick a random legal move
-    chosen_move = random.choice(legal_moves)
+    print("Player Roles for this Round:")
+    if round_idx == 0:
+        role_items = sorted(env.roles.items())
+    else:
+        role_order = {role: idx for idx, role in enumerate(env._get_roles())}
+        role_items = sorted(
+            env.roles.items(), key=lambda item: (role_order[item[1]], item[0])
+        )
 
-    vis_options = [env.visualize_move(move) for move in legal_moves]
+    for p_id, role in role_items:
+        print(f" -> Player {p_id}: {role}")
+    print("-" * 50, "\n")
+
+    if round_idx > 0:
+        env.exchange_cards()
+        state = env._get_state(env.curr_turn)
+
+    while not env.game_over:
+        curr_player = env.curr_turn
+        legal_moves = env.get_legal_moves(curr_player)
+        chosen_move = random.choice(legal_moves)
+
+        print(f"Player {env.curr_turn} Hand:", env.visualize_hand(state["hand"]))
+        print(f"Player {curr_player} plays [{env.visualize_move(chosen_move)}]\n")
+
+        state, game_over = env.step(curr_player, chosen_move)
+
+    for p in range(env.players):
+        if p not in env.out_order:
+            env.out_order.append(p)
     print(
-        f"Player {curr_player} plays [{env.visualize_move(chosen_move)}] out of legal options: {vis_options}"
+        f"\nRound {round_idx + 1} Complete! Finishing Order: {env.out_order}. Players who finished with a 2: {env.ended_2}"
     )
-
-    state, game_over = env.step(curr_player, chosen_move)
-    if game_over:
-        print(f"\nGame Over!")
-        break
-
-    print("-" * 50)
-    print(
-        f"Next up: Player {env.curr_turn}'s Hand: {env.visualize_hand(env.hands[env.curr_turn])}"
-    )
+    input("Press Enter to continue to the next round...")
