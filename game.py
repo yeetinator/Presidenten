@@ -35,7 +35,7 @@ class Presidenten:
         self.first_turn = True
         self.curr_turn = 0  # P_id of the current player
         self.game_over = False
-        self.pending_finish = None
+        self.pending_finish = None  # {"queue": [(card, count, player_id), ...], "resume_turn": player_id, "pile_reset": bool}
 
     def _get_roles(self):
         if self.players == 4:
@@ -222,13 +222,14 @@ class Presidenten:
             "player_roles": self.roles.copy(),
             "history_vector": [history_counts[rank] for rank in range(3, 16)],
             "is_finish_prompt": self.pending_finish
-            and self.pending_finish["player_id"] == player_id,
+            and self.pending_finish["queue"][0][2] == player_id,
         }
 
     def get_legal_moves(self, player_id):
         if self.pending_finish:
-            if player_id == self.pending_finish["player_id"]:
-                return [(0, 0, 0), self.pending_finish["move"]]
+            finish_card, finish_count, finish_player = self.pending_finish["queue"][0]
+            if player_id == finish_player:
+                return [(0, 0, 0), (finish_card, finish_count, 0)]
             return []
         hand = self.hands[player_id]
 
@@ -280,45 +281,53 @@ class Presidenten:
             player,
         )
 
-    def handle_pending_finish(self, move, player_id, card_val, count):
-        if self.pending_finish:
-            resume_turn = self.pending_finish["resume_turn"]
-            was_pile_reset = self.pending_finish["pile_reset"]
+    def handle_pending_finish(self, move, player_id):
+        if not self.pending_finish:
+            return
 
-            if move == (0, 0, 0):
-                # AI/Player DECLINED the jump-in. Resume normal play.
-                if self.verbose:
-                    print(
-                        f"Player {player_id} declines the jump-in. Resuming normal play with Player {resume_turn}."
-                    )
+        card_val, count, _ = self.pending_finish["queue"][0]
+
+        if move == (0, 0, 0):
+            # Current AI/Player DECLINED the jump-in. Resume normal play.
+            self.pending_finish["queue"].pop(0)  # Remove the declined option
+            if self.verbose:
+                print(f"Player {player_id} declines the jump-in.")
+
+            if self.pending_finish["queue"]:  # Next option's player gets the chance
+                self.curr_turn = self.pending_finish["queue"][0][2]
+            else:
+                resume_turn = self.pending_finish["resume_turn"]
+                was_pile_reset = self.pending_finish["pile_reset"]
+                print(f"Resuming normal play with Player {resume_turn}.")
+
                 self.pending_finish = None
                 self.curr_turn = resume_turn
 
                 if was_pile_reset:
                     self._pile_reset()
-            else:
+        else:
+            if self.verbose:
+                print(
+                    f"JUMP IN! Player {player_id} finishes the last move with [{self.visualize_move(move)}]"
+                )
+
+            self._remove_cards(player_id, card_val, count)
+            self.history.append((player_id, move))
+
+            if not self.hands[player_id] and player_id not in self.out_order:
                 if self.verbose:
-                    print(
-                        f"JUMP IN! Player {player_id} finishes the last move with [{self.visualize_move(move)}]"
-                    )
+                    print(f"Player {player_id} is out!\n")
 
-                self._remove_cards(player_id, card_val, count)
-                self.history.append((player_id, move))
+                self.out_order.append(player_id)
+                self.ended_2.append(player_id) if card_val == 15 else None
 
-                if not self.hands[player_id] and player_id not in self.out_order:
-                    if self.verbose:
-                        print(f"Player {player_id} is out!\n")
+                if player_id in self.playing:
+                    self.playing.remove(player_id)
 
-                    self.out_order.append(player_id)
-                    self.ended_2.append(player_id) if card_val == 15 else None
-
-                    if player_id in self.playing:
-                        self.playing.remove(player_id)
-
-                self._pile_reset()
-                self.curr_turn = player_id
-                self.pending_finish = None
-                self.game_over = self._is_game_over()
+            self._pile_reset()
+            self.curr_turn = player_id
+            self.pending_finish = None
+            self.game_over = self._is_game_over()
 
     def handle_finishing(
         self, card_val, rcount, player_id, twos, temp_next_turn, pile_reset
@@ -334,14 +343,13 @@ class Presidenten:
         if not options:
             return False
 
-        chosen = min(options, key=lambda x: x[0])  # Prioritize lower card
+        options.sort(key=lambda x: x[0])  # Prioritize lower card
         self.pending_finish = {
-            "player_id": chosen[2],
-            "move": (chosen[0], chosen[1], 0),
+            "queue": options,
             "resume_turn": temp_next_turn,
             "pile_reset": pile_reset,
         }
-        self.curr_turn = chosen[2]
+        self.curr_turn = options[0][2]
         return True
 
     def _pile_reset(self):
@@ -370,7 +378,7 @@ class Presidenten:
         pile_reset = False
 
         if self.pending_finish:
-            self.handle_pending_finish(move, player_id, card_val, count)
+            self.handle_pending_finish(move, player_id)
             return self._get_state(self.curr_turn), self.game_over
 
         if move == (0, 0, 0):
