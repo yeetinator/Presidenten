@@ -1,5 +1,6 @@
 import random
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 
 
 class Presidenten:
@@ -21,6 +22,8 @@ class Presidenten:
         # 3 to Ace (14), plus 2 (15)
         self.deck = [rank for rank in range(3, 16) for _ in range(4)]
         self.hands = {i: [] for i in range(players)}
+
+        self.scores = {i: 0 for i in range(players)}
 
         self.roles = {i: "Citizen" for i in range(players)}
         self.out_order = []  # Track finishing order for role assignment
@@ -75,6 +78,7 @@ class Presidenten:
         roles = self._get_roles()
         for rank, player_id in enumerate(self.out_order):
             self.roles[player_id] = roles[rank]
+            self.scores[player_id] += self.players - 1 - rank
 
     def exchange_cards(self, cards_to_pass: dict[int | str, list[int]] | None = None):
         role_pairs = []
@@ -162,7 +166,6 @@ class Presidenten:
 
     def full_reset(self, next_round=False):
         if next_round:
-            self.assign_roles()
             self.round += 1
         else:
             self.roles = {i: "Citizen" for i in range(self.players)}
@@ -223,6 +226,8 @@ class Presidenten:
             "history_vector": [history_counts[rank] for rank in range(3, 16)],
             "is_finish_prompt": self.pending_finish
             and self.pending_finish["queue"][0][2] == player_id,
+            "round": self.round,
+            "scores": self.scores.copy(),
         }
 
     def get_legal_moves(self, player_id):
@@ -362,6 +367,7 @@ class Presidenten:
         self.curr_turn = self._get_next_active_player(
             self.pile_leader, ignore_passed=True, include_start=True
         )
+        self.pile_leader = 0
 
     def _is_game_over(self):
         active_players = [p for p in range(self.players) if self.hands[p]]
@@ -437,7 +443,6 @@ class Presidenten:
 
         if pile_reset:
             self._pile_reset()
-            self.pile_leader = 0
         else:
             self.curr_turn = temp_next_turn
         return self._get_state(self.curr_turn), self.game_over
@@ -473,75 +478,86 @@ if __name__ == "__main__":
     NUM_PLAYERS = 4
     HUMAN_ID = 0
     ISMCTS_ID = 0
+    NUM_WORKERS = 8
+    ISMCTS_ITERATIONS = (400 + 200 * (NUM_PLAYERS - 4)) * NUM_WORKERS
     env = Presidenten(players=NUM_PLAYERS, verbose=True)
 
-    if setting == "3":
-        bots = {}
-        bots[0] = PresidentenISMCTSBot(player_id=ISMCTS_ID, iterations=400)
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as shared_executor:
+        if setting == "3":
+            bots = {}
+            bots[0] = PresidentenISMCTSBot(
+                player_id=ISMCTS_ID, iterations=ISMCTS_ITERATIONS
+            )
 
-        for i in range(1, NUM_PLAYERS):
-            bots[i] = PresidentenBaselineBot(i)
-    else:
-        bots = [PresidentenBaselineBot(i) for i in range(NUM_PLAYERS)]
-
-    for round_idx in range(ROUNDS_TO_PLAY):
-        print(f"\n=== ROUND {round_idx + 1} ===")
-        state = env.full_reset(next_round=(round_idx > 0))
-
-        print("Player Roles for this Round:")
-        if round_idx == 0:
-            role_items = sorted(env.roles.items())
+            for i in range(1, NUM_PLAYERS):
+                bots[i] = PresidentenBaselineBot(i)
         else:
-            role_order = {role: idx for idx, role in enumerate(env._get_roles())}
-            role_items = sorted(
-                env.roles.items(), key=lambda item: (role_order[item[1]], item[0])
-            )
+            bots = [PresidentenBaselineBot(i) for i in range(NUM_PLAYERS)]
 
-        for p_id, role in role_items:
-            print(f" -> Player {p_id}: {role}")
-        print("-" * 50, "\n")
+        for round_idx in range(ROUNDS_TO_PLAY):
+            print(f"\n=== ROUND {round_idx + 1} ===")
+            state = env.full_reset(next_round=(round_idx > 0))
 
-        if round_idx > 0:
-            env.exchange_cards()
-            state = env._get_state(env.curr_turn)
-
-        while not env.game_over:
-            curr_player = env.curr_turn
-            legal_moves = env.get_legal_moves(curr_player)
-
-            if setting == "0":
-                chosen_move = random.choice(legal_moves)
-            elif setting == "2" and curr_player == HUMAN_ID:
-                print(
-                    f"Player {curr_player} ({env.roles[curr_player]}) Hand: {env.visualize_hand(state['hand'])}"
-                )
-                print(f"Last Move: {env.visualize_move(state['last_move'])}")
-                print("Legal moves:")
-
-                for idx, move in enumerate(legal_moves):
-                    print(f"  {idx}: {env.visualize_move(move)}")
-
-                move_idx = int(input("Enter move index: "))
-                chosen_move = legal_moves[move_idx]
-            elif setting == "3" and curr_player == ISMCTS_ID:
-                print(f"Player {curr_player} ({env.roles[curr_player]}) is thinking...")
-                chosen_move = bots[curr_player].get_move(state, env)  # type: ignore
+            print("Player Roles for this Round:")
+            if round_idx == 0:
+                role_items = sorted(env.roles.items())
             else:
-                bot_instance = bots[curr_player]
-                chosen_move = bot_instance.get_move(state)  # Bot's turn
+                role_order = {role: idx for idx, role in enumerate(env._get_roles())}
+                role_items = sorted(
+                    env.roles.items(), key=lambda item: (role_order[item[1]], item[0])
+                )
 
+            for p_id, role in role_items:
+                print(f" -> Player {p_id}: {role}")
+            print("-" * 50, "\n")
+
+            if round_idx > 0:
+                env.exchange_cards()
+                state = env._get_state(env.curr_turn)
+
+            while not env.game_over:
+                curr_player = env.curr_turn
+                legal_moves = env.get_legal_moves(curr_player)
+
+                if setting == "0":
+                    chosen_move = random.choice(legal_moves)
+                elif setting == "2" and curr_player == HUMAN_ID:
+                    print(
+                        f"Player {curr_player} ({env.roles[curr_player]}) Hand: {env.visualize_hand(state['hand'])}"
+                    )
+                    print(f"Last Move: {env.visualize_move(state['last_move'])}")
+                    print("Legal moves:")
+
+                    for idx, move in enumerate(legal_moves):
+                        print(f"  {idx}: {env.visualize_move(move)}")
+
+                    move_idx = int(input("Enter move index: "))
+                    chosen_move = legal_moves[move_idx]
+                elif setting == "3" and curr_player == ISMCTS_ID:
+                    print(
+                        f"Player {curr_player} ({env.roles[curr_player]}) is thinking..."
+                    )
+                    chosen_move = bots[curr_player].get_move(state, env, executor=shared_executor)  # type: ignore
+                else:
+                    bot_instance = bots[curr_player]
+                    chosen_move = bot_instance.get_move(state)  # Bot's turn
+
+                print(
+                    f"Player {curr_player} ({env.roles[curr_player]}) Hand:",
+                    env.visualize_hand(state["hand"]),
+                )
+                print(
+                    f"Player {curr_player} plays [{env.visualize_move(chosen_move)}]\n"
+                )
+
+                state, game_over = env.step(curr_player, chosen_move)
+
+            for p in range(env.players):
+                if p not in env.out_order:
+                    env.out_order.append(p)
+
+            env.assign_roles()  # Assign roles and update scores at the end of the round
             print(
-                f"Player {curr_player} ({env.roles[curr_player]}) Hand:",
-                env.visualize_hand(state["hand"]),
+                f"\nRound {round_idx + 1} Complete! Finishing Order: {env.out_order}. Players who finished with a 2: {env.ended_2}. Scores: {env.scores}"
             )
-            print(f"Player {curr_player} plays [{env.visualize_move(chosen_move)}]\n")
-
-            state, game_over = env.step(curr_player, chosen_move)
-
-        for p in range(env.players):
-            if p not in env.out_order:
-                env.out_order.append(p)
-        print(
-            f"\nRound {round_idx + 1} Complete! Finishing Order: {env.out_order}. Players who finished with a 2: {env.ended_2}"
-        )
-        input("Press Enter to continue to the next round...")
+            input("Press Enter to continue to the next round...")

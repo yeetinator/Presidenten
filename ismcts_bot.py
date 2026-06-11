@@ -15,8 +15,12 @@ class ISMCTSNode:
         self.visits = 0
         self.wins = 0.0
 
-    def select_child(self, legal_moves, exploration_weight=1.41):
-        legal_children = [child for child in self.children if child.move in legal_moves]
+    def select_child(self, legal_moves, player_id, exploration_weight=1.41):
+        legal_children = [
+            child
+            for child in self.children
+            if child.move in legal_moves and child.player_id == player_id
+        ]
         if not legal_children:
             return None
 
@@ -50,23 +54,37 @@ class PresidentenISMCTSBot:
         self.player_id = player_id
         self.iterations = iterations
 
-    def get_move(self, state: dict, real_env):
+    def get_move(self, state: dict, real_env, executor=None):
         legal_moves = state["legal_moves"]
         if len(legal_moves) == 1:
             return legal_moves[0]
 
-        num_workers = 8
+        if self.iterations < 500:
+            num_workers = 1
+        else:
+            num_workers = 8
         iterations_per_worker = max(1, self.iterations // num_workers)
 
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        if executor is not None:
             futures = [
                 executor.submit(
                     _execute_mcts_batch, self.player_id, iterations_per_worker, real_env
                 )
                 for _ in range(num_workers)
             ]
-
             results = [future.result() for future in futures]
+        else:
+            with ProcessPoolExecutor(max_workers=num_workers) as local_executor:
+                futures = [
+                    local_executor.submit(
+                        _execute_mcts_batch,
+                        self.player_id,
+                        iterations_per_worker,
+                        real_env,
+                    )
+                    for _ in range(num_workers)
+                ]
+                results = [future.result() for future in futures]
 
         total_visits = {}
         for worker_visits in results:
@@ -112,9 +130,10 @@ class PresidentenISMCTSBot:
                     sim_env.step(curr_player, chosen_move)
                     break
                 else:
-                    next_node = curr_node.select_child(sim_legal_moves)
+                    next_node = curr_node.select_child(sim_legal_moves, curr_player)
                     if next_node is None:
                         break
+
                     curr_node = next_node
                     sim_env.step(curr_player, curr_node.move)
 
@@ -161,6 +180,8 @@ class PresidentenISMCTSBot:
         sim_env.ended_2 = real_env.ended_2.copy()
         sim_env.roles = real_env.roles.copy()
         sim_env.round = real_env.round
+        sim_env.scores = real_env.scores.copy()
+        sim_env.game_over = real_env.game_over
 
         if real_env.pending_finish:
             sim_env.pending_finish = {
@@ -188,6 +209,14 @@ class PresidentenISMCTSBot:
             unaccounted = total_count - known_counts[card_val]
             if unaccounted > 0:
                 hidden_pool.extend([card_val] * unaccounted)
+
+        if real_env.pending_finish:
+            for card, count, p in real_env.pending_finish["queue"]:
+                if p != self.player_id:
+                    sim_env.hands[p].extend([card] * count)
+                    for _ in range(count):
+                        if card in hidden_pool:
+                            hidden_pool.remove(card)
 
         random.shuffle(hidden_pool)
         pool_pointer = 0
