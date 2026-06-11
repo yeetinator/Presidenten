@@ -395,6 +395,9 @@ class Presidenten:
             self._remove_cards(player_id, card_val, rcount)
             self._remove_cards(player_id, 15, twos)
 
+        if card_val == 15:
+            pile_reset = True  # Playing a 2 always resets the pile
+
         self.history.append((player_id, move))
         self.first_turn = False
 
