@@ -453,9 +453,16 @@ class Presidenten:
 
 
 if __name__ == "__main__":
-    ROUNDS_TO_PLAY = 3
+    from baseline_bot import PresidentenBaselineBot
 
-    env = Presidenten(players=6, verbose=True)
+    setting = input("0: random play, 1: baseline bots, 2: player vs bots: ")
+
+    ROUNDS_TO_PLAY = 3
+    NUM_PLAYERS = 7
+    HUMAN_ID = 0
+    env = Presidenten(players=NUM_PLAYERS, verbose=True)
+
+    bots = [PresidentenBaselineBot(i) for i in range(NUM_PLAYERS)]
 
     for round_idx in range(ROUNDS_TO_PLAY):
         print(f"\n=== ROUND {round_idx + 1} ===")
@@ -481,9 +488,31 @@ if __name__ == "__main__":
         while not env.game_over:
             curr_player = env.curr_turn
             legal_moves = env.get_legal_moves(curr_player)
-            chosen_move = random.choice(legal_moves)
 
-            print(f"Player {env.curr_turn} Hand:", env.visualize_hand(state["hand"]))
+            # Determine how to get the move based on setting and current player
+            if setting == "0":
+                # Random play
+                chosen_move = random.choice(legal_moves)
+            elif setting == "2" and curr_player == HUMAN_ID:
+                # Human player's turn - get input
+                print(
+                    f"Player {curr_player} ({env.roles[curr_player]}) Hand: {env.visualize_hand(state['hand'])}"
+                )
+                print(f"Last Move: {env.visualize_move(state['last_move'])}")
+                print("Legal moves:")
+                for idx, move in enumerate(legal_moves):
+                    print(f"  {idx}: {env.visualize_move(move)}")
+
+                move_idx = int(input("Enter move index: "))
+                chosen_move = legal_moves[move_idx]
+            else:
+                # Bot's turn (setting "1" or setting "2" with non-human player)
+                chosen_move = bots[curr_player].get_move(state)
+
+            print(
+                f"Player {curr_player} ({env.roles[curr_player]}) Hand:",
+                env.visualize_hand(state["hand"]),
+            )
             print(f"Player {curr_player} plays [{env.visualize_move(chosen_move)}]\n")
 
             state, game_over = env.step(curr_player, chosen_move)
