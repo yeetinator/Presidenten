@@ -56,6 +56,8 @@ class PresidentenISMCTSBot:
 
     def get_move(self, state: dict, real_env, executor=None):
         legal_moves = state["legal_moves"]
+        if not legal_moves:
+            return (0, 0, 0)
         if len(legal_moves) == 1:
             return legal_moves[0]
 

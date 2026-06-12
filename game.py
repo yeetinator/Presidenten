@@ -170,6 +170,7 @@ class Presidenten:
         else:
             self.roles = {i: "Citizen" for i in range(self.players)}
             self.round = 1
+            self.scores = {i: 0 for i in range(self.players)}
 
         random.shuffle(self.deck)
         self.hands = {i: [] for i in range(self.players)}
@@ -473,14 +474,17 @@ if __name__ == "__main__":
     setting = input(
         "0: random play, 1: baseline bots, 2: player vs bots, 3: ismcts vs baseline bots: "
     )
+    has_human = setting == "2"
 
-    ROUNDS_TO_PLAY = 1
+    GAMES_TO_PLAY = 100
+    ROUNDS_TO_PLAY = 10
     NUM_PLAYERS = 4
     HUMAN_ID = 0
     ISMCTS_ID = 0
     NUM_WORKERS = 8
     ISMCTS_ITERATIONS = (400 + 200 * (NUM_PLAYERS - 4)) * NUM_WORKERS
-    env = Presidenten(players=NUM_PLAYERS, verbose=True)
+    env = Presidenten(players=NUM_PLAYERS, verbose=has_human)
+    final_score = {i: 0 for i in range(NUM_PLAYERS)}
 
     with ProcessPoolExecutor(max_workers=NUM_WORKERS) as shared_executor:
         if setting == "3":
@@ -494,70 +498,93 @@ if __name__ == "__main__":
         else:
             bots = [PresidentenBaselineBot(i) for i in range(NUM_PLAYERS)]
 
-        for round_idx in range(ROUNDS_TO_PLAY):
-            print(f"\n=== ROUND {round_idx + 1} ===")
-            state = env.full_reset(next_round=(round_idx > 0))
+        for game_idx in range(GAMES_TO_PLAY):
+            print(f"\n=== GAME {game_idx+1} ===")
+            for round_idx in range(ROUNDS_TO_PLAY):
+                print(f"\n=== ROUND {round_idx + 1} ===")
+                state = env.full_reset(next_round=(round_idx > 0))
 
-            print("Player Roles for this Round:")
-            if round_idx == 0:
-                role_items = sorted(env.roles.items())
-            else:
-                role_order = {role: idx for idx, role in enumerate(env._get_roles())}
-                role_items = sorted(
-                    env.roles.items(), key=lambda item: (role_order[item[1]], item[0])
-                )
-
-            for p_id, role in role_items:
-                print(f" -> Player {p_id}: {role}")
-            print("-" * 50, "\n")
-
-            if round_idx > 0:
-                env.exchange_cards()
-                state = env._get_state(env.curr_turn)
-
-            while not env.game_over:
-                curr_player = env.curr_turn
-                legal_moves = env.get_legal_moves(curr_player)
-
-                if setting == "0":
-                    chosen_move = random.choice(legal_moves)
-                elif setting == "2" and curr_player == HUMAN_ID:
-                    print(
-                        f"Player {curr_player} ({env.roles[curr_player]}) Hand: {env.visualize_hand(state['hand'])}"
-                    )
-                    print(f"Last Move: {env.visualize_move(state['last_move'])}")
-                    print("Legal moves:")
-
-                    for idx, move in enumerate(legal_moves):
-                        print(f"  {idx}: {env.visualize_move(move)}")
-
-                    move_idx = int(input("Enter move index: "))
-                    chosen_move = legal_moves[move_idx]
-                elif setting == "3" and curr_player == ISMCTS_ID:
-                    print(
-                        f"Player {curr_player} ({env.roles[curr_player]}) is thinking..."
-                    )
-                    chosen_move = bots[curr_player].get_move(state, env, executor=shared_executor)  # type: ignore
+                if has_human:
+                    print("Player Roles for this Round:")
+                if round_idx == 0:
+                    role_items = sorted(env.roles.items())
                 else:
-                    bot_instance = bots[curr_player]
-                    chosen_move = bot_instance.get_move(state)  # Bot's turn
+                    role_order = {
+                        role: idx for idx, role in enumerate(env._get_roles())
+                    }
+                    role_items = sorted(
+                        env.roles.items(),
+                        key=lambda item: (role_order[item[1]], item[0]),
+                    )
 
+                if has_human:
+                    for p_id, role in role_items:
+                        print(f" -> Player {p_id}: {role}")
+                    print("-" * 50, "\n")
+
+                if round_idx > 0:
+                    env.exchange_cards()
+                    state = env._get_state(env.curr_turn)
+
+                while not env.game_over:
+                    curr_player = env.curr_turn
+                    legal_moves = env.get_legal_moves(curr_player)
+
+                    if not legal_moves:
+                        chosen_move = (0, 0, 0)
+                    elif setting == "0":
+                        chosen_move = random.choice(legal_moves)
+                    elif has_human and curr_player == HUMAN_ID:
+                        print(
+                            f"Player {curr_player} ({env.roles[curr_player]}) Hand: {env.visualize_hand(state['hand'])}"
+                        )
+                        print(f"Last Move: {env.visualize_move(state['last_move'])}")
+                        print("Legal moves:")
+
+                        for idx, move in enumerate(legal_moves):
+                            print(f"  {idx}: {env.visualize_move(move)}")
+
+                        move_idx = int(input("Enter move index: "))
+                        chosen_move = legal_moves[move_idx]
+                    elif setting == "3" and curr_player == ISMCTS_ID:
+                        if has_human:
+                            print(
+                                f"Player {curr_player} ({env.roles[curr_player]}) is thinking..."
+                            )
+                        chosen_move = bots[curr_player].get_move(state, env, executor=shared_executor)  # type: ignore
+                    else:
+                        bot_instance = bots[curr_player]
+                        chosen_move = bot_instance.get_move(state)  # Bot's turn
+
+                    if has_human:
+                        print(
+                            f"Player {curr_player} ({env.roles[curr_player]}) Hand:",
+                            env.visualize_hand(state["hand"]),
+                        )
+                        print(
+                            f"Player {curr_player} plays [{env.visualize_move(chosen_move)}]\n"
+                        )
+
+                    state, game_over = env.step(curr_player, chosen_move)
+
+                for p in range(env.players):
+                    if p not in env.out_order:
+                        env.out_order.append(p)
+
+                env.assign_roles()  # Assign roles and update scores at the end of the round
                 print(
-                    f"Player {curr_player} ({env.roles[curr_player]}) Hand:",
-                    env.visualize_hand(state["hand"]),
+                    f"\nRound {round_idx + 1} Complete! Finishing Order: {env.out_order}. Players who finished with a 2: {env.ended_2}. Scores: {env.scores}"
                 )
-                print(
-                    f"Player {curr_player} plays [{env.visualize_move(chosen_move)}]\n"
-                )
+                if has_human:
+                    input("Press Enter to continue to the next round...")
 
-                state, game_over = env.step(curr_player, chosen_move)
+            if has_human:
+                break
 
-            for p in range(env.players):
-                if p not in env.out_order:
-                    env.out_order.append(p)
+            final_score = {
+                p: final_score[p] + env.scores[p] for p in range(env.players)
+            }
 
-            env.assign_roles()  # Assign roles and update scores at the end of the round
-            print(
-                f"\nRound {round_idx + 1} Complete! Finishing Order: {env.out_order}. Players who finished with a 2: {env.ended_2}. Scores: {env.scores}"
-            )
-            input("Press Enter to continue to the next round...")
+        print(f"\n=== Final Scores after {GAMES_TO_PLAY} Games ===")
+        for p in range(env.players):
+            print(f"Player {p}: {final_score[p]} points")
