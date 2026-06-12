@@ -54,7 +54,9 @@ class PresidentenISMCTSBot:
         self.player_id = player_id
         self.iterations = iterations
 
-    def get_move(self, state: dict, real_env, executor=None, num_workers=4, option="s"):
+    def get_move(
+        self, state: dict, real_env=None, executor=None, num_workers=4, parallelism="s"
+    ):
         legal_moves = state["legal_moves"]
         total_visits = {}
 
@@ -63,7 +65,7 @@ class PresidentenISMCTSBot:
         if len(legal_moves) == 1:
             return legal_moves[0]
 
-        if option == "s":
+        if parallelism == "s":
             if self.iterations < 500:
                 num_workers = 1
             iterations_per_worker = max(1, self.iterations // num_workers)

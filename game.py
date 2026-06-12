@@ -473,18 +473,56 @@ class Presidenten:
 
 
 def play_presidenten_game(
-    game_id, num_players, num_rounds, iterations, option, has_human=False
+    game_id,
+    num_players,
+    num_rounds,
+    iterations=None,
+    parallelism=None,
+    has_human=False,
+    executor=None,
+    assign_p=dict(),
 ):
+    from random_bot import PresidentenRandomBot
     from baseline_bot import PresidentenBaselineBot
     from ismcts_bot import PresidentenISMCTSBot
+    from human import HumanPlayer
 
-    env = Presidenten(players=num_players, verbose=has_human)
-    bots: dict[int, PresidentenISMCTSBot | PresidentenBaselineBot] = {
-        0: PresidentenISMCTSBot(player_id=0, iterations=iterations)
+    PLAYER_TYPE_NAMES = {
+        PresidentenRandomBot: "Random",
+        PresidentenBaselineBot: "Baseline",
+        PresidentenISMCTSBot: "ISMCTS",
+        HumanPlayer: "Human",
     }
 
-    for i in range(1, num_players):
-        bots[i] = PresidentenBaselineBot(player_id=i)
+    ismcts_ids: set[int] = set()
+    env = Presidenten(players=num_players, verbose=has_human)
+    assigned_players: dict[
+        int,
+        PresidentenRandomBot
+        | PresidentenISMCTSBot
+        | PresidentenBaselineBot
+        | HumanPlayer,
+    ] = {}
+
+    if not assign_p and iterations:
+        ismcts_ids = {0}
+        assigned_players = {0: PresidentenISMCTSBot(player_id=0, iterations=iterations)}
+
+        for i in range(1, num_players):
+            assigned_players[i] = PresidentenBaselineBot(player_id=i)
+    else:
+        for p_id, bot_type in assign_p.items():
+            if bot_type == 0:
+                assigned_players[p_id] = PresidentenRandomBot(player_id=p_id)
+            elif bot_type == 1:
+                assigned_players[p_id] = PresidentenBaselineBot(player_id=p_id)
+            elif bot_type == 2 and iterations:
+                ismcts_ids.add(p_id)
+                assigned_players[p_id] = PresidentenISMCTSBot(
+                    player_id=p_id, iterations=iterations
+                )
+            elif bot_type == 3:
+                assigned_players[p_id] = HumanPlayer(player_id=p_id)
 
     for round_idx in range(num_rounds):
         state = env.full_reset(next_round=(round_idx > 0))
@@ -510,12 +548,25 @@ def play_presidenten_game(
             state = env._get_state(env.curr_turn)
 
         while not env.game_over:
-            curr_player = env.curr_turn
-            if curr_player == 0:
-                chosen_move = bots[curr_player].get_move(state, env, option=option)
+            curr_player_id = env.curr_turn
+            curr_player_type = assigned_players[curr_player_id]
+
+            if curr_player_id in ismcts_ids and parallelism:
+                assert isinstance(curr_player_type, PresidentenISMCTSBot)
+                if has_human:
+                    print(
+                        f"Player {curr_player_id} (ISMCTS) is thinking... Please wait."
+                    )
+                chosen_move = curr_player_type.get_move(
+                    state, env, parallelism=parallelism, executor=executor
+                )
             else:
-                chosen_move = bots[curr_player].get_move(state, _)
-            state, _ = env.step(curr_player, chosen_move)
+                chosen_move = curr_player_type.get_move(state)
+            if has_human:
+                print(
+                    f"Player {curr_player_id} ({env.roles[curr_player_id]}, {PLAYER_TYPE_NAMES.get(type(curr_player_type), 'Unknown')}) chose: {Presidenten.visualize_move(chosen_move)}\n"
+                )
+            state, _ = env.step(curr_player_id, chosen_move)
 
         env.assign_roles()
         if has_human:
@@ -527,17 +578,29 @@ def play_presidenten_game(
 
 
 def get_settings():
-    setting = input(
-        "0: random play, 1: baseline bots, 2: player vs bots, 3: ismcts vs baseline bots: "
-    )
-    additional = None
+    assign_p = {}
+    scenario = input("0: ismcts vs baseline bots, 1: custom: ")
+    parallelism = None
 
-    if setting == "3":
-        additional = input("Search or game parallelism? (s/g): ")
-    return (setting, additional)
+    if scenario == "1":
+        for p in range(NUM_PLAYERS):
+            opt = input(
+                f"Player {p} - 0: random bot, 1: baseline bot, 2: ISMCTS bot, 3: human: "
+            )
+            if opt not in {"0", "1", "2", "3"}:
+                print("Invalid option. Please try again.")
+                return get_settings()
+
+            assign_p[p] = int(opt)
+
+    has_human = any(opt == "3" for opt in assign_p.values())
+    if any(opt == "2" for opt in assign_p.values()):
+        parallelism = "s" if has_human else input("Search or game parallelism? (s/g): ")
+
+    return (scenario, parallelism, assign_p, has_human)
 
 
-def game_parallelism(option):
+def game_parallelism(parallelism):
     print(f"Starting Tournament: {TOTAL_GAMES} games, {ROUNDS_PER_GAME} rounds each.")
     print(f"Deploying across {NUM_WORKERS} parallel game workers...\n")
 
@@ -552,7 +615,7 @@ def game_parallelism(option):
                 NUM_PLAYERS,
                 ROUNDS_PER_GAME,
                 BASE_ISMCTS_ITERATIONS,
-                option,
+                parallelism,
             )
             futures.append(f)
 
@@ -583,13 +646,20 @@ def print_scores(scores):
     print("=" * 60)
 
 
-def search_parallelism(option):
+def search_parallelism(parallelism, assign_p, has_human):
     final_score = {i: (0, 0) for i in range(NUM_PLAYERS)}
     with ProcessPoolExecutor(max_workers=NUM_WORKERS) as shared_executor:
         for game_idx in range(TOTAL_GAMES):
             print(f"\n=== GAME {game_idx+1} ===")
             score = play_presidenten_game(
-                game_idx, NUM_PLAYERS, ROUNDS_PER_GAME, SEARCH_PARALLELISM_ITERS, option
+                game_idx,
+                NUM_PLAYERS,
+                ROUNDS_PER_GAME,
+                SEARCH_PARALLELISM_ITERS,
+                parallelism,
+                executor=shared_executor,
+                assign_p=assign_p,
+                has_human=has_human,
             )
             final_score = {
                 p: (final_score[p][0] + score[p][0], final_score[p][1] + score[p][1])
@@ -599,9 +669,6 @@ def search_parallelism(option):
 
 
 if __name__ == "__main__":
-    setting = get_settings()
-    has_human = setting[0] == "2"
-
     TOTAL_GAMES = 100
     ROUNDS_PER_GAME = 10
     NUM_PLAYERS = 4
@@ -609,84 +676,26 @@ if __name__ == "__main__":
     SEARCH_PARALLELISM_ITERS = BASE_ISMCTS_ITERATIONS * 8
     NUM_WORKERS = 8
 
-    if setting[0] == "3":
-        if setting[1] == "g":
-            game_parallelism(setting[1])
+    final_score = {i: (0, 0) for i in range(NUM_PLAYERS)}
+    scenario, parallelism, assign_p, has_human = get_settings()
+
+    if parallelism:
+        if parallelism == "g":
+            game_parallelism(parallelism)
         else:
-            search_parallelism(setting[1])
-
-    """
-    HUMAN_ID = 0
-    ISMCTS_ID = 0
-
-    if setting == "3":
-        bots = {}
-        bots[0] = PresidentenISMCTSBot(
-            player_id=ISMCTS_ID, iterations=SEARCH_PARALLELISM_ITERS
-        )
-
-        for i in range(1, NUM_PLAYERS):
-            bots[i] = PresidentenBaselineBot(i)
+            search_parallelism(parallelism, assign_p, has_human)
     else:
-        bots = [PresidentenBaselineBot(i) for i in range(NUM_PLAYERS)]
-
-            
-                
-
-                
-
-                
-
-                while not env.game_over:
-                    curr_player = env.curr_turn
-
-                    
-                    if setting == "0":
-                        chosen_move = random.choice(legal_moves)
-                    elif has_human and curr_player == HUMAN_ID:
-                        print(
-                            f"Player {curr_player} ({env.roles[curr_player]}) Hand: {env.visualize_hand(state['hand'])}"
-                        )
-                        print(f"Last Move: {env.visualize_move(state['last_move'])}")
-                        print("Legal moves:")
-
-                        for idx, move in enumerate(legal_moves):
-                            print(f"  {idx}: {env.visualize_move(move)}")
-
-                        move_idx = int(input("Enter move index: "))
-                        chosen_move = legal_moves[move_idx]
-                    elif setting == "3" and curr_player == ISMCTS_ID:
-                        if has_human:
-                            print(
-                                f"Player {curr_player} ({env.roles[curr_player]}) is thinking..."
-                            )
-                        chosen_move = bots[curr_player].get_move(state, env, executor=shared_executor)  # type: ignore
-                    else:
-                        bot_instance = bots[curr_player]
-                        chosen_move = bot_instance.get_move(state)  # Bot's turn
-
-                    if has_human:
-                        print(
-                            f"Player {curr_player} ({env.roles[curr_player]}) Hand:",
-                            env.visualize_hand(state["hand"]),
-                        )
-                        print(
-                            f"Player {curr_player} plays [{env.visualize_move(chosen_move)}]\n"
-                        )
-
-                    state, game_over = env.step(curr_player, chosen_move)
-
-                env.assign_roles()  # Assign roles and update scores at the end of the round
-                print(
-                    f"\nRound {round_idx + 1} Complete! Finishing Order: {env.out_order}. Players who finished with a 2: {env.ended_2}. Scores: {env.scores}"
-                )
-                if has_human:
-                    input("Press Enter to continue to the next round...")
-
+        for game_idx in range(TOTAL_GAMES):
+            print(f"\n=== GAME {game_idx+1} ===")
+            score = play_presidenten_game(
+                game_idx,
+                NUM_PLAYERS,
+                ROUNDS_PER_GAME,
+                has_human=has_human,
+                assign_p=assign_p,
+            )
             final_score = {
-                p: final_score[p] + env.scores[p] for p in range(env.players)
+                p: (final_score[p][0] + score[p][0], final_score[p][1] + score[p][1])
+                for p in range(NUM_PLAYERS)
             }
-
-        print(f"\n=== Final Scores after {GAMES_TO_PLAY} Games ===")
-        for p in range(env.players):
-            print(f"Player {p}: {final_score[p]} points")"""
+        print_scores(final_score)
