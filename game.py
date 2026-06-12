@@ -4,14 +4,6 @@ from concurrent.futures import ProcessPoolExecutor
 
 
 class Presidenten:
-    FACE_NAMES = {
-        11: "J",
-        12: "Q",
-        13: "K",
-        14: "A",
-        15: "2",
-    }
-
     def __init__(self, players=4, verbose=False):
         if players < 4:
             raise ValueError("Presidenten requires at least 4 players.")
@@ -451,18 +443,28 @@ class Presidenten:
             self.curr_turn = temp_next_turn
         return self._get_state(self.curr_turn), self.game_over
 
-    def visualize_hand(self, hand):
-        return [self.visualize_card(card) for card in hand]
+    @staticmethod
+    def visualize_hand(hand):
+        return [Presidenten.visualize_card(card) for card in hand]
 
-    def visualize_card(self, card):
-        return self.FACE_NAMES.get(card, str(card))
+    @staticmethod
+    def visualize_card(card):
+        FACE_NAMES = {
+            11: "J",
+            12: "Q",
+            13: "K",
+            14: "A",
+            15: "2",
+        }
+        return FACE_NAMES.get(card, str(card))
 
-    def visualize_move(self, move):
+    @staticmethod
+    def visualize_move(move):
         if move == (0, 0, 0):
             return "Pass"
 
         card_val, count, twos = move
-        card_name = self.visualize_card(card_val)
+        card_name = Presidenten.visualize_card(card_val)
 
         if twos:
             rcount = count - twos
