@@ -54,31 +54,25 @@ class PresidentenISMCTSBot:
         self.player_id = player_id
         self.iterations = iterations
 
-    def get_move(self, state: dict, real_env, executor=None):
+    def get_move(self, state: dict, real_env, executor=None, num_workers=4, option="s"):
         legal_moves = state["legal_moves"]
+        total_visits = {}
+
         if not legal_moves:
             return (0, 0, 0)
         if len(legal_moves) == 1:
             return legal_moves[0]
 
-        if self.iterations < 500:
-            num_workers = 1
-        else:
-            num_workers = 8
-        iterations_per_worker = max(1, self.iterations // num_workers)
+        if option == "s":
+            if self.iterations < 500:
+                num_workers = 1
+            iterations_per_worker = max(1, self.iterations // num_workers)
 
-        if executor is not None:
-            futures = [
-                executor.submit(
-                    _execute_mcts_batch, self.player_id, iterations_per_worker, real_env
-                )
-                for _ in range(num_workers)
-            ]
-            results = [future.result() for future in futures]
-        else:
-            with ProcessPoolExecutor(max_workers=num_workers) as local_executor:
+            if num_workers == 1:
+                results = [self.run_search_batch(real_env)]
+            elif executor is not None:
                 futures = [
-                    local_executor.submit(
+                    executor.submit(
                         _execute_mcts_batch,
                         self.player_id,
                         iterations_per_worker,
@@ -87,11 +81,24 @@ class PresidentenISMCTSBot:
                     for _ in range(num_workers)
                 ]
                 results = [future.result() for future in futures]
+            else:
+                with ProcessPoolExecutor(max_workers=num_workers) as local_executor:
+                    futures = [
+                        local_executor.submit(
+                            _execute_mcts_batch,
+                            self.player_id,
+                            iterations_per_worker,
+                            real_env,
+                        )
+                        for _ in range(num_workers)
+                    ]
+                    results = [future.result() for future in futures]
 
-        total_visits = {}
-        for worker_visits in results:
-            for move, visits in worker_visits.items():
-                total_visits[move] = total_visits.get(move, 0) + visits
+            for worker_visits in results:
+                for move, visits in worker_visits.items():
+                    total_visits[move] = total_visits.get(move, 0) + visits
+        else:
+            total_visits = self.run_search_batch(real_env)
 
         legal_root_moves = {
             move: visits for move, visits in total_visits.items() if move in legal_moves
