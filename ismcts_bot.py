@@ -128,7 +128,18 @@ class PresidentenISMCTSBot:
                 untried_moves = [m for m in sim_legal_moves if m not in tried_moves]
 
                 if untried_moves:
-                    chosen_move = random.choice(untried_moves)
+                    if curr_player != self.player_id:
+                        rollout_bot = PresidentenBaselineBot(player_id=curr_player)
+                        sim_state = sim_env._get_state(curr_player)
+                        smart_move = rollout_bot.get_move(sim_state)
+
+                        if smart_move in untried_moves:
+                            chosen_move = smart_move
+                        else:
+                            chosen_move = random.choice(untried_moves)
+                    else:
+                        chosen_move = random.choice(untried_moves)
+
                     new_node = ISMCTSNode(
                         move=chosen_move,
                         parent=curr_node,
@@ -219,10 +230,11 @@ class PresidentenISMCTSBot:
             if unaccounted > 0:
                 hidden_pool.extend([card_val] * unaccounted)
 
+        pending_finish_cards = {p: [] for p in range(real_env.players)}
         if real_env.pending_finish:
             for card, count, p in real_env.pending_finish["queue"]:
                 if p != self.player_id:
-                    sim_env.hands[p].extend([card] * count)
+                    pending_finish_cards[p].extend([card] * count)
                     for _ in range(count):
                         if card in hidden_pool:
                             hidden_pool.remove(card)
@@ -234,9 +246,16 @@ class PresidentenISMCTSBot:
             if p == self.player_id:
                 continue
 
+            revealed_count = len(pending_finish_cards[p])
             opp_hand_size = len(real_env.hands[p])
-            sim_env.hands[p] = hidden_pool[pool_pointer : pool_pointer + opp_hand_size]
+            base_hand_size = max(0, opp_hand_size - revealed_count)
+
+            sim_env.hands[p] = hidden_pool[pool_pointer : pool_pointer + base_hand_size]
             sim_env.hands[p].sort()
-            pool_pointer += opp_hand_size
+            pool_pointer += base_hand_size
+
+            if pending_finish_cards[p]:
+                sim_env.hands[p].extend(pending_finish_cards[p])
+                sim_env.hands[p].sort()
 
         return sim_env
