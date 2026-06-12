@@ -582,7 +582,14 @@ def get_settings():
     scenario = input("0: ismcts vs baseline bots, 1: custom: ")
     parallelism = None
 
-    if scenario == "1":
+    if scenario not in {"0", "1"}:
+        print("Invalid option. Please try again.")
+        return get_settings()
+
+    if scenario == "0":
+        print("Defaulting to Player 0 as ISMCTS bot, Players 1-3 as baseline bots.")
+        parallelism = input("Search or game parallelism? (s/g): ")
+    elif scenario == "1":
         for p in range(NUM_PLAYERS):
             opt = input(
                 f"Player {p} - 0: random bot, 1: baseline bot, 2: ISMCTS bot, 3: human: "
@@ -672,8 +679,6 @@ if __name__ == "__main__":
     TOTAL_GAMES = 100
     ROUNDS_PER_GAME = 10
     NUM_PLAYERS = 4
-    BASE_ISMCTS_ITERATIONS = 400 + 200 * (NUM_PLAYERS - 4)
-    SEARCH_PARALLELISM_ITERS = BASE_ISMCTS_ITERATIONS * 8
     NUM_WORKERS = 8
 
     final_score = {i: (0, 0) for i in range(NUM_PLAYERS)}
@@ -681,8 +686,10 @@ if __name__ == "__main__":
 
     if parallelism:
         if parallelism == "g":
+            BASE_ISMCTS_ITERATIONS = 400
             game_parallelism(parallelism)
         else:
+            SEARCH_PARALLELISM_ITERS = 800 + 200 * (NUM_PLAYERS - 4)
             search_parallelism(parallelism, assign_p, has_human)
     else:
         for game_idx in range(TOTAL_GAMES):

@@ -66,8 +66,6 @@ class PresidentenISMCTSBot:
             return legal_moves[0]
 
         if parallelism == "s":
-            if self.iterations < 500:
-                num_workers = 1
             iterations_per_worker = max(1, self.iterations // num_workers)
 
             if num_workers == 1:
