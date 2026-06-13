@@ -53,17 +53,14 @@ class PresidentenBaselineBot:
         filtered_moves = playable_moves
 
         for card_value, count in hand_counts.items():
-            if count != 3:
-                continue
-
             history_index = card_value - 3
             if (
-                0 <= history_index < len(history_vector)
+                count == 3
+                and 0 <= history_index < len(history_vector)
                 and history_vector[history_index] == 0
-                and card_value < 10
+                and card_value >= 10
                 and any(
-                    hand_count <= 3
-                    for _, hand_count in state["opp_hand_counts"].items()
+                    hand_count <= 3 for hand_count in state["opp_hand_counts"].values()
                 )
             ):
                 candidate_moves = [
@@ -87,14 +84,17 @@ class PresidentenBaselineBot:
             card_diff = (
                 card_val - state["last_move"][0] if state["last_move"][0] != 0 else 0
             )
+            num_players = len(state["opp_hand_counts"]) + 1
+            starting_cards = math.ceil(52 / num_players)
+            junk_count = sum(1 for c in hand if c < 8)
 
-            if card_val >= 14 or twos > 0 or card_diff > 4:
-                num_players = len(state["opp_hand_counts"]) + 1
-                starting_cards = math.ceil(52 / num_players)
-                junk_count = sum(1 for c in hand if c < 8)
-
-                if len(hand) > starting_cards * 0.5 and junk_count >= 2:
-                    if state["last_move"][0] < 14 and (0, 0, 0) in legal_moves:
-                        return (0, 0, 0)
+            if (
+                (card_val >= 14 or twos > 0 or card_diff > 4)
+                and len(hand) > starting_cards * 0.5
+                and junk_count >= 2
+                and state["last_move"][0] < 14
+                and (0, 0, 0) in legal_moves
+            ):
+                return (0, 0, 0)
             return best_high_move
         return legal_moves[0]

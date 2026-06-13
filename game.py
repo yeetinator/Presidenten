@@ -261,11 +261,8 @@ class Presidenten:
             self.hands[player_id].remove(card_val)
 
     def _finishing_option(self, card, played_count, player_id):
-        if played_count >= 4:
+        if played_count >= 4 or any(item[1][0] == card for item in self.history[:-1]):
             return None
-
-        if any(item[1][0] == card for item in self.history[:-1]):
-            return None  # If the card has been played before, it's impossible for it to be the finishing move
 
         players_with_card = {  # If multiple players have the card, it's impossible for it to be the finishing move
             p: hand

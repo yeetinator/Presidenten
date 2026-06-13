@@ -229,6 +229,68 @@ class PresidentenISMCTSBot:
             for child in root.children
         }
 
+    def _deal_hidden_cards(
+        self, real_env, hidden_pool, pending_finish_cards, opp_hand_counts
+    ):
+        hands = {}
+        pool_pointer = 0
+
+        for p in range(real_env.players):
+            if p == self.player_id:
+                continue
+
+            base_hand_size = max(0, opp_hand_counts[p] - len(pending_finish_cards[p]))
+            hand = hidden_pool[pool_pointer : pool_pointer + base_hand_size]
+            pool_pointer += base_hand_size
+
+            if pending_finish_cards[p]:
+                hand.extend(pending_finish_cards[p])
+            hands[p] = sorted(hand)
+        return hands
+
+    def _is_valid_hand(
+        self,
+        p,
+        assigned_cards,
+        real_env,
+        pile_card,
+        pile_count,
+        history_vector,
+        starting_cards,
+        opp_hand_counts,
+    ):
+        if p not in real_env.passed or pile_card == 0:
+            return True
+
+        hand_counts = Counter(assigned_cards)
+        for card_val, count in hand_counts.items():
+            if card_val <= pile_card or count < pile_count:
+                continue
+
+            history_index = card_val - 3
+            if (
+                count == 3
+                and 0 <= history_index < len(history_vector)
+                and history_vector[history_index] == 0
+                and card_val >= 10
+                and any(hand_count <= 3 for hand_count in opp_hand_counts.values())
+            ):
+                continue
+
+            card_diff = card_val - pile_card if pile_card != 0 else 0
+            junk_count = sum(1 for c in assigned_cards if c < 8)
+
+            if (
+                (card_val >= 14 or card_diff > 4)
+                and len(assigned_cards) > starting_cards * 0.5
+                and junk_count >= 2
+                and pile_card < 14
+            ):
+                continue
+
+            return False
+        return True
+
     def _determinize_environment(
         self, real_env, base_hidden_pool, pending_finish_cards
     ):
@@ -247,34 +309,52 @@ class PresidentenISMCTSBot:
         sim_env.round = real_env.round
         sim_env.scores = real_env.scores.copy()
         sim_env.game_over = real_env.game_over
-
-        if real_env.pending_finish:
-            sim_env.pending_finish = {
+        sim_env.pending_finish = (
+            {
                 "queue": real_env.pending_finish["queue"].copy(),
                 "resume_turn": real_env.pending_finish["resume_turn"],
                 "pile_reset": real_env.pending_finish["pile_reset"],
             }
-        else:
-            sim_env.pending_finish = None
-
+            if real_env.pending_finish
+            else None
+        )
         sim_env.hands[self.player_id] = list(real_env.hands[self.player_id])
+
+        history_vector = real_env._get_state(self.player_id)["history_vector"]
+        pile_card, pile_count, _ = real_env.last_move
+        starting_cards = math.ceil(52 / real_env.players)
+        max_attempts = 40
+        opp_hand_counts = real_env._get_state(self.player_id)["opp_hand_counts"]
+
+        for _ in range(max_attempts):
+            hidden_pool = list(base_hidden_pool)
+            random.shuffle(hidden_pool)
+
+            hands = self._deal_hidden_cards(
+                real_env, hidden_pool, pending_finish_cards, opp_hand_counts
+            )
+            if all(
+                self._is_valid_hand(
+                    p,
+                    hand,
+                    real_env,
+                    pile_card,
+                    pile_count,
+                    history_vector,
+                    starting_cards,
+                    opp_hand_counts,
+                )
+                for p, hand in hands.items()
+            ):
+                for p, hand in hands.items():
+                    sim_env.hands[p] = hand
+                return sim_env
+
         hidden_pool = list(base_hidden_pool)
         random.shuffle(hidden_pool)
-        pool_pointer = 0
 
-        for p in range(real_env.players):
-            if p == self.player_id:
-                continue
-
-            revealed_count = len(pending_finish_cards[p])
-            opp_hand_size = len(real_env.hands[p])
-            base_hand_size = max(0, opp_hand_size - revealed_count)
-
-            sim_env.hands[p] = hidden_pool[pool_pointer : pool_pointer + base_hand_size]
-            pool_pointer += base_hand_size
-
-            if pending_finish_cards[p]:
-                sim_env.hands[p].extend(pending_finish_cards[p])
-            sim_env.hands[p].sort()
-
+        for p, hand in self._deal_hidden_cards(
+            real_env, hidden_pool, pending_finish_cards, opp_hand_counts
+        ).items():
+            sim_env.hands[p] = hand
         return sim_env
