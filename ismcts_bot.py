@@ -165,16 +165,12 @@ class PresidentenISMCTSBot:
                 untried_moves = [m for m in sim_legal_moves if m not in tried_moves_set]
 
                 if untried_moves:
-                    if curr_player != self.player_id:
-                        sim_state = sim_env._get_state(curr_player)
-                        smart_move = rollout_bots[curr_player].get_move(sim_state)
-                        chosen_move = (
-                            smart_move
-                            if smart_move in untried_moves
-                            else random.choice(untried_moves)
-                        )
-                    else:
-                        chosen_move = random.choice(untried_moves)
+                    sim_state = sim_env._get_state(curr_player)
+                    ranked_moves = rollout_bots[curr_player].get_ranked_moves(sim_state)
+                    chosen_move = next(
+                        (m for m in ranked_moves if m in untried_moves),
+                        random.choice(untried_moves),
+                    )
 
                     new_node = ISMCTSNode(
                         move=chosen_move,
