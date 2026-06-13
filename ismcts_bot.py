@@ -13,34 +13,30 @@ class ISMCTSNode:
         self.player_id = player_id
         self.children = []
         self.visits = 0
-        self.wins = 0.0
+        self.score = 0.0
 
-    def select_child(self, legal_moves, player_id, exploration_weight=1.41):
-        legal_children = [
-            child
-            for child in self.children
-            if child.move in legal_moves and child.player_id == player_id
-        ]
-        if not legal_children:
-            return None
-
+    def select_child(self, legal_moves_set, player_id, exploration_weight=1.41):
         if self.visits == 0:
-            return random.choice(legal_children)
+            return random.choice(
+                [
+                    child
+                    for child in self.children
+                    if child.player_id == player_id and child.move in legal_moves_set
+                ]
+            )
 
         log_total = math.log(self.visits)
         best_score = -float("inf")
         best_child = None
 
-        for child in legal_children:
-            if child.visits == 0:
-                score = float("inf")
-            else:
-                score = (child.wins / child.visits) + exploration_weight * math.sqrt(
+        for child in self.children:
+            if child.player_id == player_id and child.move in legal_moves_set:
+                score = (child.score / child.visits) + exploration_weight * math.sqrt(
                     log_total / child.visits
                 )
-            if score > best_score:
-                best_score = score
-                best_child = child
+                if score > best_score:
+                    best_score = score
+                    best_child = child
         return best_child
 
 
@@ -61,7 +57,6 @@ class PresidentenISMCTSBot:
         executor=None,
         num_workers=4,
         parallelism="g",
-        selection_policy="blended",
     ):
         legal_moves = state["legal_moves"]
         total_stats = {}
@@ -103,9 +98,9 @@ class PresidentenISMCTSBot:
             for worker_stats in results:
                 for move, stats in worker_stats.items():
                     if move not in total_stats:
-                        total_stats[move] = {"visits": 0, "wins": 0.0}
+                        total_stats[move] = {"visits": 0, "score": 0.0}
                     total_stats[move]["visits"] += stats["visits"]
-                    total_stats[move]["wins"] += stats["wins"]
+                    total_stats[move]["score"] += stats["score"]
         else:
             total_stats = self.run_search_batch(real_env)
 
@@ -115,46 +110,44 @@ class PresidentenISMCTSBot:
         if not legal_root_moves:
             return random.choice(legal_moves)
 
-        if selection_policy == "attention":
-            return max(
-                legal_root_moves, key=lambda move: legal_root_moves[move]["visits"]
-            )
-        elif selection_policy == "score":
-            return max(
-                legal_root_moves,
-                key=lambda move: (
-                    (
-                        legal_root_moves[move]["wins"]
-                        / max(1, legal_root_moves[move]["visits"])
-                    )
-                    if legal_root_moves[move]["visits"] >= 5
-                    else -1
-                ),
-            )
-        elif selection_policy == "blended":
-            max_visits = max(m["visits"] for m in legal_root_moves.values())
-            threshold = max_visits * 0.15
-            best_move = None
-            best_score = -1.0
-
-            for move, stats in legal_root_moves.items():
-                if stats["visits"] >= threshold:
-                    score = stats["wins"] / stats["visits"]
-                    if score > best_score:
-                        best_score = score
-                        best_move = move
-            return (
-                best_move
-                if best_move
-                else max(
-                    legal_root_moves, key=lambda move: legal_root_moves[move]["visits"]
-                )
-            )
+        return max(
+            legal_root_moves,
+            key=lambda move: legal_root_moves[move]["visits"],
+        )
 
     def run_search_batch(self, real_env):
         root = ISMCTSNode()
+        rollout_bots = {
+            p: PresidentenBaselineBot(player_id=p) for p in range(real_env.players)
+        }
+        known_cards = list(real_env.hands[self.player_id])
+        for _, move in real_env.history:
+            if move != (0, 0, 0):
+                card_val, count, twos = move
+                known_cards.extend([card_val] * (count - twos))
+                known_cards.extend([15] * twos)
+
+        known_counts = Counter(known_cards)
+        base_hidden_pool = []
+
+        for card_val in range(3, 16):
+            unaccounted = 4 - known_counts[card_val]
+            if unaccounted > 0:
+                base_hidden_pool.extend([card_val] * unaccounted)
+
+        pending_finish_cards = {p: [] for p in range(real_env.players)}
+        if real_env.pending_finish:
+            for card, count, p in real_env.pending_finish["queue"]:
+                if p != self.player_id:
+                    pending_finish_cards[p].extend([card] * count)
+                    for _ in range(count):
+                        if card in base_hidden_pool:
+                            base_hidden_pool.remove(card)
+
         for _ in range(self.iterations):
-            sim_env = self._determinize_environment(real_env)
+            sim_env = self._determinize_environment(
+                real_env, base_hidden_pool, pending_finish_cards
+            )
             curr_node = root
 
             while not sim_env.game_over:
@@ -164,23 +157,22 @@ class PresidentenISMCTSBot:
                 if not sim_legal_moves:
                     break
 
-                tried_moves = [
+                tried_moves_set = {
                     child.move
                     for child in curr_node.children
                     if child.player_id == curr_player
-                ]
-                untried_moves = [m for m in sim_legal_moves if m not in tried_moves]
+                }
+                untried_moves = [m for m in sim_legal_moves if m not in tried_moves_set]
 
                 if untried_moves:
                     if curr_player != self.player_id:
-                        rollout_bot = PresidentenBaselineBot(player_id=curr_player)
                         sim_state = sim_env._get_state(curr_player)
-                        smart_move = rollout_bot.get_move(sim_state)
-
-                        if smart_move in untried_moves:
-                            chosen_move = smart_move
-                        else:
-                            chosen_move = random.choice(untried_moves)
+                        smart_move = rollout_bots[curr_player].get_move(sim_state)
+                        chosen_move = (
+                            smart_move
+                            if smart_move in untried_moves
+                            else random.choice(untried_moves)
+                        )
                     else:
                         chosen_move = random.choice(untried_moves)
 
@@ -194,7 +186,9 @@ class PresidentenISMCTSBot:
                     sim_env.step(curr_player, chosen_move)
                     break
                 else:
-                    next_node = curr_node.select_child(sim_legal_moves, curr_player)
+                    next_node = curr_node.select_child(
+                        set(sim_legal_moves), curr_player
+                    )
                     if next_node is None:
                         break
 
@@ -208,9 +202,8 @@ class PresidentenISMCTSBot:
                 if not sim_legal_moves:
                     break
 
-                rollout_bot = PresidentenBaselineBot(player_id=curr_player)
                 sim_state = sim_env._get_state(curr_player)
-                chosen_move = rollout_bot.get_move(sim_state)
+                chosen_move = rollout_bots[curr_player].get_move(sim_state)
                 sim_env.step(curr_player, chosen_move)
 
             for p in range(sim_env.players):
@@ -225,12 +218,20 @@ class PresidentenISMCTSBot:
                     normalized_score = (sim_env.players - 1 - rank) / (
                         sim_env.players - 1
                     )
-                    node.wins += normalized_score
+                    node.score += normalized_score
                 node = node.parent
 
-        return {child.move: child.visits for child in root.children}
+        return {
+            child.move: {
+                "visits": child.visits,
+                "score": child.score,
+            }
+            for child in root.children
+        }
 
-    def _determinize_environment(self, real_env):
+    def _determinize_environment(
+        self, real_env, base_hidden_pool, pending_finish_cards
+    ):
         sim_env = Presidenten(players=real_env.players, verbose=False)
 
         sim_env.last_move = real_env.last_move
@@ -256,33 +257,8 @@ class PresidentenISMCTSBot:
         else:
             sim_env.pending_finish = None
 
-        known_cards = list(real_env.hands[self.player_id])
-        sim_env.hands[self.player_id] = known_cards.copy()
-
-        for _, move in real_env.history:
-            if move != (0, 0, 0):
-                card_val, count, twos = move
-                known_cards.extend([card_val] * (count - twos))
-                known_cards.extend([15] * twos)
-
-        total_deck_counts = Counter(real_env.deck)
-        known_counts = Counter(known_cards)
-        hidden_pool = []
-
-        for card_val, total_count in total_deck_counts.items():
-            unaccounted = total_count - known_counts[card_val]
-            if unaccounted > 0:
-                hidden_pool.extend([card_val] * unaccounted)
-
-        pending_finish_cards = {p: [] for p in range(real_env.players)}
-        if real_env.pending_finish:
-            for card, count, p in real_env.pending_finish["queue"]:
-                if p != self.player_id:
-                    pending_finish_cards[p].extend([card] * count)
-                    for _ in range(count):
-                        if card in hidden_pool:
-                            hidden_pool.remove(card)
-
+        sim_env.hands[self.player_id] = list(real_env.hands[self.player_id])
+        hidden_pool = list(base_hidden_pool)
         random.shuffle(hidden_pool)
         pool_pointer = 0
 
@@ -295,11 +271,10 @@ class PresidentenISMCTSBot:
             base_hand_size = max(0, opp_hand_size - revealed_count)
 
             sim_env.hands[p] = hidden_pool[pool_pointer : pool_pointer + base_hand_size]
-            sim_env.hands[p].sort()
             pool_pointer += base_hand_size
 
             if pending_finish_cards[p]:
                 sim_env.hands[p].extend(pending_finish_cards[p])
-                sim_env.hands[p].sort()
+            sim_env.hands[p].sort()
 
         return sim_env

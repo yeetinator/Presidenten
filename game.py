@@ -481,7 +481,6 @@ def play_presidenten_game(
     has_human=False,
     executor=None,
     assign_p=dict(),
-    selection_policies=dict(),
 ):
     from random_bot import PresidentenRandomBot
     from baseline_bot import PresidentenBaselineBot
@@ -550,7 +549,6 @@ def play_presidenten_game(
                     env,
                     parallelism=parallelism,
                     executor=executor,
-                    selection_policy=selection_policies[curr_player_id],
                 )
             else:
                 chosen_move = curr_player_type.get_move(state)
@@ -572,7 +570,6 @@ def play_presidenten_game(
 def get_settings():
     assign_p = {}
     parallelism = None
-    selection_policies = {}
 
     for p in range(NUM_PLAYERS):
         opt = input(
@@ -581,14 +578,6 @@ def get_settings():
         if opt not in {"0", "1", "2", "3"}:
             print("Invalid option. Please try again.")
             return get_settings()
-
-        if opt == "2":
-            selection_policy = input(
-                f"Player {p} ISMCTS selection policy (attention / score / blended (default)): "
-            ).lower()
-            if selection_policy not in {"attention", "score", "blended"}:
-                selection_policy = "blended"
-            selection_policies[p] = selection_policy
 
         assign_p[p] = int(opt)
 
@@ -601,13 +590,10 @@ def get_settings():
     if parallelism not in {"g", "s"}:
         parallelism = "g"
 
-    return (parallelism, assign_p, has_human, selection_policies)
+    return (parallelism, assign_p, has_human)
 
 
-def get_player_types(assign_p=None):
-    if not assign_p:
-        return {0: "ISMCTS", **{i: "Baseline" for i in range(1, NUM_PLAYERS)}}
-
+def get_player_types(assign_p):
     return {
         p_id: (
             "Random"
@@ -618,7 +604,7 @@ def get_player_types(assign_p=None):
     }
 
 
-def game_parallelism(parallelism, assign_p, selection_policies):
+def game_parallelism(parallelism, assign_p):
     print(f"Starting Tournament: {TOTAL_GAMES} games, {ROUNDS_PER_GAME} rounds each.")
     print(f"Deploying across {NUM_WORKERS} parallel game workers...\n")
 
@@ -636,7 +622,6 @@ def game_parallelism(parallelism, assign_p, selection_policies):
                 BASE_ISMCTS_ITERATIONS,
                 parallelism,
                 assign_p=assign_p,
-                selection_policies=selection_policies,
             )
             futures.append(f)
 
@@ -654,7 +639,7 @@ def game_parallelism(parallelism, assign_p, selection_policies):
     print_scores(final_score, player_types)
 
 
-def print_scores(scores, player_types=None):
+def print_scores(scores, player_types):
     print("\n" + "=" * 60)
     print(f"=== FINAL SCORES: {TOTAL_GAMES} Games | {ROUNDS_PER_GAME} Rounds Each ===")
     print("=" * 60)
@@ -667,7 +652,7 @@ def print_scores(scores, player_types=None):
     print("=" * 60)
 
 
-def search_parallelism(parallelism, assign_p, has_human, selection_policies):
+def search_parallelism(parallelism, assign_p, has_human):
     final_score = {i: (0, 0) for i in range(NUM_PLAYERS)}
     player_types = get_player_types(assign_p)
     with ProcessPoolExecutor(max_workers=NUM_WORKERS) as shared_executor:
@@ -682,7 +667,6 @@ def search_parallelism(parallelism, assign_p, has_human, selection_policies):
                 executor=shared_executor,
                 assign_p=assign_p,
                 has_human=has_human,
-                selection_policies=selection_policies,
             )
             final_score = {
                 p: (final_score[p][0] + score[p][0], final_score[p][1] + score[p][1])
@@ -692,17 +676,17 @@ def search_parallelism(parallelism, assign_p, has_human, selection_policies):
 
 
 if __name__ == "__main__":
-    TOTAL_GAMES = 100
+    TOTAL_GAMES = 50
     ROUNDS_PER_GAME = 10
     NUM_PLAYERS = 4
     NUM_WORKERS = 10
 
     final_score = {i: (0, 0) for i in range(NUM_PLAYERS)}
-    parallelism, assign_p, has_human, selection_policies = get_settings()
+    parallelism, assign_p, has_human = get_settings()
 
     if parallelism == "g":
         BASE_ISMCTS_ITERATIONS = 400
-        game_parallelism(parallelism, assign_p, selection_policies)
+        game_parallelism(parallelism, assign_p)
     else:
         SEARCH_PARALLELISM_ITERS = 800 + 200 * (NUM_PLAYERS - 4)
-        search_parallelism(parallelism, assign_p, has_human, selection_policies)
+        search_parallelism(parallelism, assign_p, has_human)
