@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Presidenten GUI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+            --bg1: #081120;
+            --bg2: #0d1729;
+            --panel: rgba(9, 15, 28, 0.78);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --accent: #5be7d7;
+            --accent-2: #f5c24b;
+            --text-muted: #9aa7bd;
+        }
+
+        body {
+            min-height: 100vh;
+            background:
+                radial-gradient(circle at top left, rgba(91, 231, 215, 0.2), transparent 30%),
+                radial-gradient(circle at top right, rgba(245, 194, 75, 0.14), transparent 24%),
+                linear-gradient(135deg, var(--bg1) 0%, var(--bg2) 52%, #050912 100%);
+            color: #e8eef8;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            backdrop-filter: blur(18px);
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.32);
+        }
+
+        .pill {
+            border-radius: 999px;
+            padding: 0.5rem 0.9rem;
+            font-size: 0.72rem;
+            font-weight: 800;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .pill-accent {
+            border-color: rgba(91, 231, 215, 0.25);
+            background: rgba(91, 231, 215, 0.12);
+            color: #d8ffff;
+        }
+
+        .pill-good {
+            border-color: rgba(102, 211, 158, 0.25);
+            background: rgba(102, 211, 158, 0.12);
+            color: #e0fff0;
+        }
+
+        .pill-muted {
+            color: #c7d1e2;
+        }
+
+        .pill-warn {
+            border-color: rgba(245, 194, 75, 0.24);
+            background: rgba(245, 194, 75, 0.12);
+            color: #fff1c8;
+        }
+
+        .info-card,
+        .detail-card {
+            border-radius: 1.2rem;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.05);
+            padding: 0.9rem 1rem;
+        }
+
+        .info-card span,
+        .detail-card span {
+            display: block;
+            font-size: 0.7rem;
+            letter-spacing: 0.18em;
+            color: rgba(231, 238, 248, 0.55);
+            text-transform: uppercase;
+        }
+
+        .info-card strong,
+        .detail-card strong {
+            display: block;
+            margin-top: 0.35rem;
+            color: #fff;
+            font-size: 1rem;
+        }
+
+        .button-primary {
+            background: linear-gradient(135deg, #8ff7e3, #5be7d7);
+            color: #06101d;
+            box-shadow: 0 18px 30px rgba(91, 231, 215, 0.18);
+        }
+
+        .button-secondary {
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .chip {
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 1rem;
+            transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+        }
+
+        .chip:hover {
+            transform: translateY(-1px);
+            border-color: rgba(91, 231, 215, 0.26);
+        }
+
+        .chip.selected {
+            border-color: rgba(245, 194, 75, 0.45);
+            background: rgba(245, 194, 75, 0.13);
+        }
+
+        .log-entry {
+            border-left: 3px solid rgba(91, 231, 215, 0.8);
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 1rem;
+            padding: 0.75rem 0.9rem;
+        }
+
+        .log-warn {
+            border-left-color: rgba(245, 194, 75, 0.85);
+        }
+
+        .log-error {
+            border-left-color: rgba(239, 108, 108, 0.85);
+        }
+
+        .subtle-grid {
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+    </style>
+</head>
+
+<body class="subtle-grid">
+    <main class="mx-auto max-w-7xl px-4 py-6 lg:px-8 lg:py-8">
+        <section class="mb-6 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+            <div class="card-surface shadow-glow rounded-3xl p-6 lg:p-8 overflow-hidden relative">
+                <div class="absolute inset-0 pointer-events-none opacity-70"
+                    style="background: linear-gradient(120deg, rgba(180, 95, 63, 0.06), transparent 48%, rgba(85, 107, 79, 0.08));">
+                </div>
+                <div class="relative">
+                    <p class="text-sm uppercase tracking-[0.35em] text-slate/70">Presidenten Arena</p>
+                    <h1 class="mt-3 text-4xl font-semibold tracking-tight text-slate lg:text-6xl">Play against your bots
+                        in the browser.</h1>
+                    <p class="mt-4 max-w-2xl text-base leading-7 text-slate/80">
+                        Select the bot lineup, start a session, and the server will run every bot turn while you make
+                        your moves from the GUI.
+                    </p>
+                    <div class="mt-6 flex flex-wrap gap-3 text-sm">
+                        <span class="rounded-full border border-slate/15 bg-white/60 px-4 py-2">FastAPI</span>
+                        <span class="rounded-full border border-slate/15 bg-white/60 px-4 py-2">WebSockets</span>
+                        <span class="rounded-full border border-slate/15 bg-white/60 px-4 py-2">Tailwind CDN</span>
+                        <span class="rounded-full border border-slate/15 bg-white/60 px-4 py-2">Plain JavaScript</span>
+                    </div>
+                </div>
+            </div>
+
+            <aside class="card-surface shadow-glow rounded-3xl p-6 lg:p-8">
+                <h2 class="text-lg font-semibold text-slate">Session setup</h2>
+                <div class="mt-4 space-y-4">
+                    <label class="block">
+                        <span class="mb-1 block text-sm font-medium text-slate/70">Rounds</span>
+                        <input id="rounds" type="number" min="1" value="10"
+                            class="w-full rounded-2xl border border-slate/15 bg-white/80 px-4 py-3 outline-none focus:border-clay color text-black" />
+                    </label>
+                    <label class="block">
+                        <span class="mb-1 block text-sm font-medium text-slate/70">Player 1 bot</span>
+                        <select id="bot1"
+                            class="w-full rounded-2xl border border-slate/15 bg-white/80 px-4 py-3 outline-none focus:border-clay text-black">
+                            <option value="0">Random</option>
+                            <option value="1" selected>Baseline</option>
+                            <option value="2">ISMCTS</option>
+                        </select>
+                    </label>
+                    <label class="block">
+                        <span class="mb-1 block text-sm font-medium text-slate/70">Player 2 bot</span>
+                        <select id="bot2"
+                            class="w-full rounded-2xl border border-slate/15 bg-white/80 px-4 py-3 outline-none focus:border-clay text-black">
+                            <option value="0">Random</option>
+                            <option value="1" selected>Baseline</option>
+                            <option value="2">ISMCTS</option>
+                        </select>
+                    </label>
+                    <label class="block">
+                        <span class="mb-1 block text-sm font-medium text-slate/70">Player 3 bot</span>
+                        <select id="bot3"
+                            class="w-full rounded-2xl border border-slate/15 bg-white/80 px-4 py-3 outline-none focus:border-clay text-black">
+                            <option value="0">Random</option>
+                            <option value="1" selected>Baseline</option>
+                            <option value="2">ISMCTS</option>
+                        </select>
+                    </label>
+                    <button id="startBtn"
+                        class="w-full rounded-2xl bg-slate px-4 py-3 font-semibold text-paper transition hover:bg-ink">Start
+                        new session</button>
+                </div>
+            </aside>
+        </section>
+
+        <section class="grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
+            <div class="space-y-6">
+                <div class="card-surface shadow-glow rounded-3xl p-6 lg:p-8">
+                    <div class="flex flex-wrap items-center justify-between gap-4">
+                        <div>
+                            <p class="text-sm uppercase tracking-[0.3em] text-slate/50">Live table</p>
+                            <h2 id="phaseTitle" class="mt-2 text-2xl font-semibold text-slate">Waiting for a session
+                            </h2>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-sm text-slate/60">Session</p>
+                            <p id="sessionId" class="font-mono text-sm text-slate/80">-</p>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 grid gap-4 md:grid-cols-4">
+                        <div class="rounded-2xl bg-white/70 p-4">
+                            <p class="text-xs uppercase tracking-[0.25em] text-slate/50">Round</p>
+                            <p id="roundInfo" class="mt-2 text-3xl font-semibold text-slate">-</p>
+                        </div>
+                        <div class="rounded-2xl bg-white/70 p-4">
+                            <p class="text-xs uppercase tracking-[0.25em] text-slate/50">Turn</p>
+                            <p id="turnInfo" class="mt-2 text-xl font-semibold text-slate">-</p>
+                        </div>
+                        <div class="rounded-2xl bg-white/70 p-4">
+                            <p class="text-xs uppercase tracking-[0.25em] text-slate/50">Last move</p>
+                            <p id="lastMoveInfo" class="mt-2 text-xl font-semibold text-slate">-</p>
+                        </div>
+                        <div class="rounded-2xl bg-white/70 p-4">
+                            <p class="text-xs uppercase tracking-[0.25em] text-slate/50">Your role</p>
+                            <p id="roleInfo" class="mt-2 text-xl font-semibold text-slate">-</p>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 grid gap-6 xl:grid-cols-[1fr_1fr]">
+                        <div>
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-base font-semibold text-slate">Your hand</h3>
+                                <span id="handHint" class="text-sm text-slate/60">-</span>
+                            </div>
+                            <div id="handArea" class="mt-3 flex flex-wrap gap-2"></div>
+                        </div>
+                        <div>
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-base font-semibold text-slate">Legal moves</h3>
+                                <span id="moveHint" class="text-sm text-slate/60">-</span>
+                            </div>
+                            <div id="moveArea" class="mt-3 flex flex-wrap gap-2"></div>
+                        </div>
+                    </div>
+
+                    <div class="mt-6">
+                        <div class="flex items-center justify-between gap-4">
+                            <h3 class="text-base font-semibold text-slate">Players</h3>
+                            <span class="text-sm text-slate/60">Cards left by seat</span>
+                        </div>
+                        <div id="players" class="mt-3 grid gap-2 md:grid-cols-2"></div>
+                    </div>
+
+                    <div id="exchangePanel" class="mt-6 hidden rounded-3xl border border-clay/20 bg-clay/8 p-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <p class="text-sm font-semibold text-clay">Exchange phase</p>
+                                <p id="exchangeText" class="mt-1 text-sm text-slate/75">Select the cards to pass.</p>
+                            </div>
+                            <button id="confirmExchangeBtn"
+                                class="rounded-2xl bg-clay px-4 py-2 font-semibold text-paper disabled:opacity-50">Confirm
+                                exchange</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card-surface shadow-glow rounded-3xl p-6 lg:p-8">
+                    <div class="flex items-center justify-between gap-4">
+                        <h3 class="text-lg font-semibold text-slate">History</h3>
+                        <p id="statusLine" class="text-sm text-slate/60">No active session</p>
+                    </div>
+                    <div id="historyArea" class="mt-4 max-h-[22rem] space-y-2 overflow-y-auto pr-1 text-sm"></div>
+                </div>
+            </div>
+
+            <aside class="space-y-6">
+                <div class="card-surface shadow-glow rounded-3xl p-6 lg:p-8">
+                    <h3 class="text-lg font-semibold text-slate">Table state</h3>
+                    <div class="mt-4 space-y-3 text-sm">
+                        <div class="flex items-center justify-between gap-3"><span class="text-slate/60">Players
+                                active</span><span id="activePlayersInfo" class="font-semibold text-slate">-</span>
+                        </div>
+                        <div class="flex items-center justify-between gap-3"><span
+                                class="text-slate/60">Passed</span><span id="passedInfo"
+                                class="font-semibold text-slate">-</span></div>
+                        <div class="flex items-center justify-between gap-3"><span class="text-slate/60">Pile
+                                leader</span><span id="leaderInfo" class="font-semibold text-slate">-</span></div>
+                        <div class="flex items-center justify-between gap-3"><span
+                                class="text-slate/60">Exchange</span><span id="exchangeInfo"
+                                class="font-semibold text-slate">-</span></div>
+                    </div>
+                </div>
+
+                <div class="card-surface shadow-glow rounded-3xl p-6 lg:p-8">
+                    <h3 class="text-lg font-semibold text-slate">Scores</h3>
+                    <div id="scoreArea" class="mt-4 space-y-3"></div>
+                </div>
+
+                <div class="card-surface shadow-glow rounded-3xl p-6 lg:p-8">
+                    <h3 class="text-lg font-semibold text-slate">Log</h3>
+                    <div id="logArea" class="mt-4 max-h-[22rem] space-y-2 overflow-auto pr-1 text-sm"></div>
+                </div>
+            </aside>
+        </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>

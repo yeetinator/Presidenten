@@ -1,0 +1,158 @@
+:root {
+    --panel: rgba(7, 12, 24, 0.76);
+    --accent: #41d7d8;
+    --accent-strong: #f4c542;
+    --danger: #ef6c6c;
+    --good: #66d39e;
+    --text: #eef2ff;
+}
+
+html,
+body {
+    min-height: 100%;
+}
+
+body {
+    margin: 0;
+    color: var(--text);
+    font-family: "Trebuchet MS", "Gill Sans", "Segoe UI", sans-serif;
+    background:
+        radial-gradient(circle at top left, rgba(65, 215, 216, 0.22), transparent 30%),
+        radial-gradient(circle at top right, rgba(244, 197, 66, 0.16), transparent 24%),
+        linear-gradient(135deg, #07111f 0%, #0b1324 45%, #050814 100%);
+}
+
+.app-shell {
+    background:
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 44px 44px;
+}
+
+.hero-panel,
+.panel {
+    background: var(--panel);
+    backdrop-filter: blur(18px);
+    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.35);
+}
+
+.eyebrow {
+    color: rgba(226, 232, 240, 0.72);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+}
+
+.pill {
+    border-radius: 9999px;
+    padding: 0.55rem 0.9rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.pill-waiting {
+    color: #e2e8f0;
+}
+
+.pill-muted {
+    color: #cbd5e1;
+}
+
+.pill-good {
+    background: rgba(102, 211, 158, 0.16);
+    color: #d4f8e7;
+    border-color: rgba(102, 211, 158, 0.26);
+}
+
+.pill-accent {
+    background: rgba(65, 215, 216, 0.16);
+    color: #d6ffff;
+    border-color: rgba(65, 215, 216, 0.24);
+}
+
+.pill-warning {
+    background: rgba(244, 197, 66, 0.14);
+    color: #fff0be;
+    border-color: rgba(244, 197, 66, 0.24);
+}
+
+.input-field {
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.input-field:focus {
+    box-shadow: 0 0 0 3px rgba(65, 215, 216, 0.18);
+    transform: translateY(-1px);
+}
+
+.action-button {
+    background: linear-gradient(135deg, #92f7e2, #41d7d8);
+    box-shadow: 0 20px 40px rgba(65, 215, 216, 0.25);
+}
+
+.secondary-button {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.info-card,
+.detail-card {
+    border-radius: 1.25rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(15, 23, 42, 0.52);
+    padding: 0.9rem 1rem;
+}
+
+.info-card span,
+.detail-card span {
+    display: block;
+    color: rgba(226, 232, 240, 0.58);
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+}
+
+.info-card strong,
+.detail-card strong {
+    display: block;
+    margin-top: 0.35rem;
+    color: white;
+    font-size: 1rem;
+}
+
+.log-line {
+    border-left: 3px solid rgba(255, 255, 255, 0.16);
+    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0.7rem 0.9rem;
+}
+
+.log-info {
+    border-left-color: rgba(65, 215, 216, 0.75);
+}
+
+.log-warn {
+    border-left-color: rgba(244, 197, 66, 0.8);
+}
+
+.log-error {
+    border-left-color: rgba(239, 108, 108, 0.85);
+}
+
+.hand-chip,
+.move-button {
+    animation: rise 0.22s ease-out;
+}
+
+@keyframes rise {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}

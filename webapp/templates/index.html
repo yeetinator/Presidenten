@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bot Arena</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <div class="ambient"></div>
+    <main
+        class="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-6 md:px-8 lg:flex-row lg:items-stretch lg:py-8">
+        <section class="panel lg:w-80">
+            <div>
+                <p class="eyebrow">Presidenten</p>
+                <h1 class="mt-2 text-3xl font-semibold tracking-tight text-white">Bot Arena</h1>
+                <p class="mt-3 text-sm leading-6 text-slate-300">Pick a bot, make a move, and keep the whole match in
+                    the browser.</p>
+            </div>
+
+            <div class="mt-6 space-y-3">
+                <label class="block text-xs font-semibold uppercase tracking-[0.24em] text-slate-400"
+                    for="bot-select">Opponent</label>
+                <select id="bot-select" class="input w-full"></select>
+            </div>
+
+            <div class="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div class="text-xs uppercase tracking-[0.24em] text-slate-400">Status</div>
+                <div id="status" class="mt-2 text-sm text-slate-200">Connecting...</div>
+            </div>
+
+            <div class="mt-6 grid grid-cols-2 gap-3 text-sm text-slate-300">
+                <div class="metric"><span class="label">Turns</span><span id="turn-count" class="value">0</span></div>
+                <div class="metric"><span class="label">Active bot</span><span id="active-bot" class="value">-</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel flex min-h-[70vh] flex-1 flex-col">
+            <div class="flex items-center justify-between gap-3 border-b border-white/10 pb-4">
+                <div>
+                    <p class="eyebrow">Live match</p>
+                    <h2 class="mt-2 text-xl font-semibold text-white">Moves and replies</h2>
+                </div>
+                <button id="reset-btn" class="btn-secondary">Reset</button>
+            </div>
+
+            <div id="log" class="log mt-4 flex-1 space-y-4 overflow-y-auto pr-1"></div>
+
+            <form id="move-form" class="mt-4 flex gap-3 border-t border-white/10 pt-4">
+                <input id="move-input" class="input flex-1" type="text" placeholder="Enter your move or command"
+                    autocomplete="off" />
+                <button class="btn-primary" type="submit">Send</button>
+            </form>
+        </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
