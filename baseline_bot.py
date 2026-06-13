@@ -60,25 +60,18 @@ class PresidentenBaselineBot:
             if (
                 0 <= history_index < len(history_vector)
                 and history_vector[history_index] == 0
+                and card_value < 10
+                and any(
+                    hand_count <= 3
+                    for _, hand_count in state["opp_hand_counts"].items()
+                )
             ):
-                candidate_moves = [m for m in filtered_moves if m[0] != card_value]
+                candidate_moves = [
+                    m for m in filtered_moves if not (m[0] == card_value and m[1] == 3)
+                ]
                 if candidate_moves:
                     filtered_moves = candidate_moves
         playable_moves = filtered_moves
-
-        if (
-            not state["first_turn"]
-            and len(unique_vals) != 1
-            and (
-                len(unique_vals) != 2
-                or any(opp <= 3 for opp in state["opp_hand_counts"].values())
-            )
-        ):
-            candidate_moves = [
-                m for m in playable_moves if m[0] > min(hand_counts.keys())
-            ]
-            if candidate_moves:
-                playable_moves = candidate_moves
 
         low_card_moves = [m for m in playable_moves if m[0] < 10 and m[2] == 0]
         high_card_moves = [m for m in playable_moves if m[0] >= 10]

@@ -476,11 +476,12 @@ def play_presidenten_game(
     game_id,
     num_players,
     num_rounds,
-    iterations=None,
-    parallelism=None,
+    iterations=200,
+    parallelism="g",
     has_human=False,
     executor=None,
     assign_p=dict(),
+    selection_policies=dict(),
 ):
     from random_bot import PresidentenRandomBot
     from baseline_bot import PresidentenBaselineBot
@@ -498,25 +499,18 @@ def play_presidenten_game(
         | HumanPlayer,
     ] = {}
 
-    if not assign_p and iterations:
-        ismcts_ids = {0}
-        assigned_players = {0: PresidentenISMCTSBot(player_id=0, iterations=iterations)}
-
-        for i in range(1, num_players):
-            assigned_players[i] = PresidentenBaselineBot(player_id=i)
-    else:
-        for p_id, bot_type in assign_p.items():
-            if bot_type == 0:
-                assigned_players[p_id] = PresidentenRandomBot(player_id=p_id)
-            elif bot_type == 1:
-                assigned_players[p_id] = PresidentenBaselineBot(player_id=p_id)
-            elif bot_type == 2 and iterations:
-                ismcts_ids.add(p_id)
-                assigned_players[p_id] = PresidentenISMCTSBot(
-                    player_id=p_id, iterations=iterations
-                )
-            elif bot_type == 3:
-                assigned_players[p_id] = HumanPlayer(player_id=p_id)
+    for p_id, bot_type in assign_p.items():
+        if bot_type == 0:
+            assigned_players[p_id] = PresidentenRandomBot(player_id=p_id)
+        elif bot_type == 1:
+            assigned_players[p_id] = PresidentenBaselineBot(player_id=p_id)
+        elif bot_type == 2:
+            ismcts_ids.add(p_id)
+            assigned_players[p_id] = PresidentenISMCTSBot(
+                player_id=p_id, iterations=iterations
+            )
+        elif bot_type == 3:
+            assigned_players[p_id] = HumanPlayer(player_id=p_id)
 
     for round_idx in range(num_rounds):
         state = env.full_reset(next_round=(round_idx > 0))
@@ -545,14 +539,18 @@ def play_presidenten_game(
             curr_player_id = env.curr_turn
             curr_player_type = assigned_players[curr_player_id]
 
-            if curr_player_id in ismcts_ids and parallelism:
+            if curr_player_id in ismcts_ids:
                 assert isinstance(curr_player_type, PresidentenISMCTSBot)
                 if has_human:
                     print(
                         f"Player {curr_player_id} (ISMCTS) is thinking... Please wait."
                     )
                 chosen_move = curr_player_type.get_move(
-                    state, env, parallelism=parallelism, executor=executor
+                    state,
+                    env,
+                    parallelism=parallelism,
+                    executor=executor,
+                    selection_policy=selection_policies[curr_player_id],
                 )
             else:
                 chosen_move = curr_player_type.get_move(state)
@@ -573,32 +571,37 @@ def play_presidenten_game(
 
 def get_settings():
     assign_p = {}
-    scenario = input("0: ismcts vs baseline bots, 1: custom: ")
     parallelism = None
+    selection_policies = {}
 
-    if scenario not in {"0", "1"}:
-        print("Invalid option. Please try again.")
-        return get_settings()
+    for p in range(NUM_PLAYERS):
+        opt = input(
+            f"Player {p} - 0: random bot, 1: baseline bot, 2: ISMCTS bot, 3: human: "
+        )
+        if opt not in {"0", "1", "2", "3"}:
+            print("Invalid option. Please try again.")
+            return get_settings()
 
-    if scenario == "0":
-        print("Defaulting to Player 0 as ISMCTS bot, Players 1-3 as baseline bots.")
-        parallelism = input("Search or game parallelism? (s/g): ")
-    elif scenario == "1":
-        for p in range(NUM_PLAYERS):
-            opt = input(
-                f"Player {p} - 0: random bot, 1: baseline bot, 2: ISMCTS bot, 3: human: "
-            )
-            if opt not in {"0", "1", "2", "3"}:
-                print("Invalid option. Please try again.")
-                return get_settings()
+        if opt == "2":
+            selection_policy = input(
+                f"Player {p} ISMCTS selection policy (attention / score / blended (default)): "
+            ).lower()
+            if selection_policy not in {"attention", "score", "blended"}:
+                selection_policy = "blended"
+            selection_policies[p] = selection_policy
 
-            assign_p[p] = int(opt)
+        assign_p[p] = int(opt)
 
-    has_human = any(opt == "3" for opt in assign_p.values())
-    if any(opt == "2" for opt in assign_p.values()):
-        parallelism = "s" if has_human else input("Search or game parallelism? (s/g): ")
+    has_human = any(opt == 3 for opt in assign_p.values())
+    if any(opt == 2 for opt in assign_p.values()):
+        parallelism = (
+            "s" if has_human else input("ISMCTS search or game parallelism? (G/s): ")
+        ).lower()
 
-    return (scenario, parallelism, assign_p, has_human)
+    if parallelism not in {"g", "s"}:
+        parallelism = "g"
+
+    return (parallelism, assign_p, has_human, selection_policies)
 
 
 def get_player_types(assign_p=None):
@@ -615,12 +618,12 @@ def get_player_types(assign_p=None):
     }
 
 
-def game_parallelism(parallelism):
+def game_parallelism(parallelism, assign_p, selection_policies):
     print(f"Starting Tournament: {TOTAL_GAMES} games, {ROUNDS_PER_GAME} rounds each.")
     print(f"Deploying across {NUM_WORKERS} parallel game workers...\n")
 
-    total_tournament_scores = {i: (0, 0) for i in range(NUM_PLAYERS)}
-    player_types = get_player_types()
+    final_score = {i: (0, 0) for i in range(NUM_PLAYERS)}
+    player_types = get_player_types(assign_p)
 
     futures = []
     with ProcessPoolExecutor(max_workers=NUM_WORKERS) as tournament_executor:
@@ -632,6 +635,8 @@ def game_parallelism(parallelism):
                 ROUNDS_PER_GAME,
                 BASE_ISMCTS_ITERATIONS,
                 parallelism,
+                assign_p=assign_p,
+                selection_policies=selection_policies,
             )
             futures.append(f)
 
@@ -639,14 +644,14 @@ def game_parallelism(parallelism):
             game_result = f.result()
             print(f" -> Game {idx+1}/{TOTAL_GAMES} finished processing.")
 
-            total_tournament_scores = {
+            final_score = {
                 p: (
-                    total_tournament_scores[p][0] + game_result[p][0],
-                    total_tournament_scores[p][1] + game_result[p][1],
+                    final_score[p][0] + game_result[p][0],
+                    final_score[p][1] + game_result[p][1],
                 )
                 for p in range(NUM_PLAYERS)
             }
-    print_scores(total_tournament_scores, player_types)
+    print_scores(final_score, player_types)
 
 
 def print_scores(scores, player_types=None):
@@ -662,7 +667,7 @@ def print_scores(scores, player_types=None):
     print("=" * 60)
 
 
-def search_parallelism(parallelism, assign_p, has_human):
+def search_parallelism(parallelism, assign_p, has_human, selection_policies):
     final_score = {i: (0, 0) for i in range(NUM_PLAYERS)}
     player_types = get_player_types(assign_p)
     with ProcessPoolExecutor(max_workers=NUM_WORKERS) as shared_executor:
@@ -677,6 +682,7 @@ def search_parallelism(parallelism, assign_p, has_human):
                 executor=shared_executor,
                 assign_p=assign_p,
                 has_human=has_human,
+                selection_policies=selection_policies,
             )
             final_score = {
                 p: (final_score[p][0] + score[p][0], final_score[p][1] + score[p][1])
@@ -689,30 +695,14 @@ if __name__ == "__main__":
     TOTAL_GAMES = 100
     ROUNDS_PER_GAME = 10
     NUM_PLAYERS = 4
-    NUM_WORKERS = 8
+    NUM_WORKERS = 10
 
     final_score = {i: (0, 0) for i in range(NUM_PLAYERS)}
-    scenario, parallelism, assign_p, has_human = get_settings()
+    parallelism, assign_p, has_human, selection_policies = get_settings()
 
-    if parallelism:
-        if parallelism == "g":
-            BASE_ISMCTS_ITERATIONS = 400
-            game_parallelism(parallelism)
-        else:
-            SEARCH_PARALLELISM_ITERS = 800 + 200 * (NUM_PLAYERS - 4)
-            search_parallelism(parallelism, assign_p, has_human)
+    if parallelism == "g":
+        BASE_ISMCTS_ITERATIONS = 400
+        game_parallelism(parallelism, assign_p, selection_policies)
     else:
-        for game_idx in range(TOTAL_GAMES):
-            print(f"\n=== GAME {game_idx+1} ===")
-            score = play_presidenten_game(
-                game_idx,
-                NUM_PLAYERS,
-                ROUNDS_PER_GAME,
-                has_human=has_human,
-                assign_p=assign_p,
-            )
-            final_score = {
-                p: (final_score[p][0] + score[p][0], final_score[p][1] + score[p][1])
-                for p in range(NUM_PLAYERS)
-            }
-        print_scores(final_score, get_player_types(assign_p))
+        SEARCH_PARALLELISM_ITERS = 800 + 200 * (NUM_PLAYERS - 4)
+        search_parallelism(parallelism, assign_p, has_human, selection_policies)

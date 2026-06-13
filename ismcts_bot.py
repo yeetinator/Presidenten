@@ -55,10 +55,16 @@ class PresidentenISMCTSBot:
         self.iterations = iterations
 
     def get_move(
-        self, state: dict, real_env=None, executor=None, num_workers=4, parallelism="s"
+        self,
+        state: dict,
+        real_env=None,
+        executor=None,
+        num_workers=4,
+        parallelism="g",
+        selection_policy="blended",
     ):
         legal_moves = state["legal_moves"]
-        total_visits = {}
+        total_stats = {}
 
         if not legal_moves:
             return (0, 0, 0)
@@ -94,18 +100,56 @@ class PresidentenISMCTSBot:
                     ]
                     results = [future.result() for future in futures]
 
-            for worker_visits in results:
-                for move, visits in worker_visits.items():
-                    total_visits[move] = total_visits.get(move, 0) + visits
+            for worker_stats in results:
+                for move, stats in worker_stats.items():
+                    if move not in total_stats:
+                        total_stats[move] = {"visits": 0, "wins": 0.0}
+                    total_stats[move]["visits"] += stats["visits"]
+                    total_stats[move]["wins"] += stats["wins"]
         else:
-            total_visits = self.run_search_batch(real_env)
+            total_stats = self.run_search_batch(real_env)
 
         legal_root_moves = {
-            move: visits for move, visits in total_visits.items() if move in legal_moves
+            move: total_stats[move] for move in total_stats if move in legal_moves
         }
         if not legal_root_moves:
             return random.choice(legal_moves)
-        return max(legal_root_moves, key=lambda move: legal_root_moves[move])
+
+        if selection_policy == "attention":
+            return max(
+                legal_root_moves, key=lambda move: legal_root_moves[move]["visits"]
+            )
+        elif selection_policy == "score":
+            return max(
+                legal_root_moves,
+                key=lambda move: (
+                    (
+                        legal_root_moves[move]["wins"]
+                        / max(1, legal_root_moves[move]["visits"])
+                    )
+                    if legal_root_moves[move]["visits"] >= 5
+                    else -1
+                ),
+            )
+        elif selection_policy == "blended":
+            max_visits = max(m["visits"] for m in legal_root_moves.values())
+            threshold = max_visits * 0.15
+            best_move = None
+            best_score = -1.0
+
+            for move, stats in legal_root_moves.items():
+                if stats["visits"] >= threshold:
+                    score = stats["wins"] / stats["visits"]
+                    if score > best_score:
+                        best_score = score
+                        best_move = move
+            return (
+                best_move
+                if best_move
+                else max(
+                    legal_root_moves, key=lambda move: legal_root_moves[move]["visits"]
+                )
+            )
 
     def run_search_batch(self, real_env):
         root = ISMCTSNode()
