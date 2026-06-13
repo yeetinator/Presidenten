@@ -479,10 +479,10 @@ def play_presidenten_game(
     executor=None,
     assign_p=dict(),
 ):
-    from random_bot import PresidentenRandomBot
-    from baseline_bot import PresidentenBaselineBot
-    from ismcts_bot import PresidentenISMCTSBot
-    from human import HumanPlayer
+    from playerTypes.random_bot import PresidentenRandomBot
+    from playerTypes.baseline_bot import PresidentenBaselineBot
+    from playerTypes.ismcts_bot import PresidentenISMCTSBot
+    from playerTypes.human import HumanPlayer
 
     player_types = get_player_types(assign_p)
     ismcts_ids: set[int] = set()
