@@ -65,6 +65,10 @@ class PresidentenISMCTSBot:
             return (0, 0, 0)
         if len(legal_moves) == 1:
             return legal_moves[0]
+        if state["last_move"] == (0, 0, 0) and state["first_turn"]:
+            return PresidentenBaselineBot(player_id=self.player_id).get_ranked_moves(
+                state
+            )[0]
 
         if parallelism == "s":
             iterations_per_worker = max(1, self.iterations // num_workers)
@@ -354,3 +358,8 @@ class PresidentenISMCTSBot:
         ).items():
             sim_env.hands[p] = hand
         return sim_env
+
+    def choose_cards_to_pass(self, state):
+        return PresidentenBaselineBot(player_id=self.player_id).choose_cards_to_pass(
+            state
+        )

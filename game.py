@@ -32,6 +32,15 @@ class Presidenten:
         self.game_over = False
         self.pending_finish = None  # {"queue": [(card, count, player_id), ...], "resume_turn": player_id, "pile_reset": bool}
 
+        self.role_pairs = []
+        if self.players >= 4:
+            self.role_pairs.append(("President", "Scum", 3 if self.players >= 6 else 2))
+            self.role_pairs.append(
+                ("Vice-President", "High-Scum", 2 if self.players >= 6 else 1)
+            )
+        if self.players >= 6:
+            self.role_pairs.append(("Secretary", "Clerk", 1))
+
     def _get_roles(self):
         if self.players == 4:
             return ["President", "Vice-President", "High-Scum", "Scum"]
@@ -76,17 +85,6 @@ class Presidenten:
             )
 
     def exchange_cards(self, cards_to_pass: dict[int | str, list[int]] | None = None):
-        role_pairs = []
-
-        if self.players >= 4:
-            role_pairs.append(("President", "Scum", 3 if self.players >= 6 else 2))
-            role_pairs.append(
-                ("Vice-President", "High-Scum", 2 if self.players >= 6 else 1)
-            )
-
-        if self.players >= 6:
-            role_pairs.append(("Secretary", "Clerk", 1))
-
         role_to_player = {role: player_id for player_id, role in self.roles.items()}
 
         # Makes sure no cards are exchanged back and forth in the same round
@@ -118,7 +116,7 @@ class Presidenten:
             sorted_hand = sorted(hand, reverse=highest)
             return sorted_hand[:count]
 
-        for high_role, low_role, count in role_pairs:
+        for high_role, low_role, count in self.role_pairs:
             high_player = role_to_player.get(high_role)
             low_player = role_to_player.get(low_role)
 
@@ -137,7 +135,7 @@ class Presidenten:
             for card in cards:
                 self.hands[player_id].remove(card)
 
-        for high_role, low_role, _ in role_pairs:
+        for high_role, low_role, _ in self.role_pairs:
             high_player = role_to_player.get(high_role)
             low_player = role_to_player.get(low_role)
 
@@ -148,12 +146,8 @@ class Presidenten:
             self.hands[low_player].extend(staged_outgoing[high_player])
 
             if self.verbose:
-                print(f"Exchanging cards between {high_player} and {low_player}:")
                 print(
-                    f" -> Player {high_player} gives: {self.visualize_hand(staged_outgoing[high_player])}"
-                )
-                print(
-                    f" -> Player {low_player} gives: {self.visualize_hand(staged_outgoing[low_player])}\n"
+                    f"Exchanging cards between {high_player} ({high_role}) and {low_player} ({low_role}):"
                 )
 
         for player_id in self.hands:
@@ -224,6 +218,7 @@ class Presidenten:
             and self.pending_finish["queue"][0][2] == player_id,
             "round": self.round,
             "scores": self.scores.copy(),
+            "role_pairs": self.role_pairs.copy(),
         }
 
     def get_legal_moves(self, player_id):
@@ -387,10 +382,6 @@ class Presidenten:
 
         if move == (0, 0, 0):
             self.passed.add(player_id)
-            if self.pile_leader is not None:
-                pile_reset = all(
-                    p == self.pile_leader or p in self.passed for p in self.playing
-                )  # The pile resets if all other active players have passed
         else:
             self.last_move = move
             self.pile_leader = player_id
@@ -398,6 +389,11 @@ class Presidenten:
 
             self._remove_cards(player_id, card_val, rcount)
             self._remove_cards(player_id, 15, twos)
+
+        if self.pile_leader is not None:
+            pile_reset = all(
+                p == self.pile_leader or p in self.passed for p in self.playing
+            )  # The pile resets if all other active players have passed
 
         if card_val == 15:
             pile_reset = True  # Playing a 2 always resets the pile
@@ -528,7 +524,16 @@ def play_presidenten_game(
             print("-" * 50, "\n")
 
         if round_idx > 0:
-            env.exchange_cards()
+            cards_to_pass = {}
+            for p_id, role in env.roles.items():
+                if role in {"President", "Vice-President", "Secretary"}:
+                    if has_human:
+                        print(f"Player {p_id} ({role}) is choosing cards...")
+                    p_state = env._get_state(p_id)
+                    cards_to_pass[p_id] = assigned_players[p_id].choose_cards_to_pass(
+                        p_state
+                    )
+            env.exchange_cards(cards_to_pass)
             state = env._get_state(env.curr_turn)
 
         while not env.game_over:
@@ -553,6 +558,8 @@ def play_presidenten_game(
                 print(
                     f"Player {curr_player_id} ({env.roles[curr_player_id]}, {player_types.get(curr_player_id, 'Unknown')}) chose: {Presidenten.visualize_move(chosen_move)}\n"
                 )
+                if not isinstance(curr_player_type, HumanPlayer):
+                    input("Press Enter to continue...")
             state, _ = env.step(curr_player_id, chosen_move)
 
         env.assign_roles()

@@ -1,4 +1,5 @@
 from collections import Counter
+from itertools import combinations
 import math
 
 
@@ -6,7 +7,7 @@ class PresidentenBaselineBot:
     def __init__(self, player_id):
         self.player_id = player_id
 
-    def get_ranked_moves(self, state: dict, *args, **kwargs):
+    def get_ranked_moves(self, state: dict, **kwargs):
         hand = state["hand"]
         legal_moves = state["legal_moves"]
 
@@ -95,7 +96,9 @@ class PresidentenBaselineBot:
 
         hand = state["hand"]
         card_val, _, twos = best_move
-        card_diff = card_val - state["last_move"][0] if state["last_move"][0] != 0 else 0
+        card_diff = (
+            card_val - state["last_move"][0] if state["last_move"][0] != 0 else 0
+        )
         num_players = len(state["opp_hand_counts"]) + 1
         starting_cards = math.ceil(52 / num_players)
         junk_count = sum(1 for c in hand if c < 8)
@@ -110,3 +113,57 @@ class PresidentenBaselineBot:
         ):
             return (0, 0, 0)
         return best_move
+
+    def choose_cards_to_pass(self, state):
+        _, _, count = next(
+            (
+                (hr, lr, c)
+                for hr, lr, c in state["role_pairs"]
+                if hr == state["my_role"]
+            ),
+            (None, None, 0),
+        )
+        hand = state["hand"]
+        low_cards = sorted([c for c in hand if c < 10])
+        high_cards = sorted([c for c in hand if c >= 10])
+
+        def find_best_selection(pool, needed):
+            if len(pool) <= needed:
+                return list(pool)
+
+            best_selection = None
+            min_remaining_singles = float("inf")
+            best_val_tuple = (float("inf"),) * needed
+
+            for indices in combinations(range(len(pool)), needed):
+                selection = [pool[i] for i in indices]
+                remaining = [pool[i] for i in range(len(pool)) if i not in indices]
+                rem_counts = Counter(remaining)
+                singles_count = sum(1 for c in rem_counts.values() if c == 1)
+                selected_sorted = tuple(sorted(selection))
+
+                if singles_count < min_remaining_singles:
+                    min_remaining_singles = singles_count
+                    best_val_tuple = selected_sorted
+                    best_selection = selection
+                elif (
+                    singles_count == min_remaining_singles
+                    and selected_sorted < best_val_tuple
+                ):
+                    best_val_tuple = selected_sorted
+                    best_selection = selection
+
+            return best_selection or pool[:needed]
+
+        cards_to_pass = []
+
+        low_to_take = min(len(low_cards), count)
+        if low_to_take > 0:
+            chosen_low = find_best_selection(low_cards, low_to_take)
+            cards_to_pass.extend(chosen_low)
+            count -= low_to_take
+
+        if count > 0:
+            chosen_high = find_best_selection(high_cards, count)
+            cards_to_pass.extend(chosen_high)
+        return cards_to_pass

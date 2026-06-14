@@ -10,3 +10,14 @@ class PresidentenRandomBot:
         if not legal_moves:
             return (0, 0, 0)
         return random.choice(legal_moves)
+
+    def choose_cards_to_pass(self, state):
+        _, _, count = next(
+            (
+                (hr, lr, c)
+                for hr, lr, c in state["role_pairs"]
+                if hr == state["my_role"]
+            ),
+            (None, None, 0),
+        )
+        return random.sample(state["hand"], count)
