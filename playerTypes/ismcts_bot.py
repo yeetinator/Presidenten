@@ -40,7 +40,7 @@ class ISMCTSNode:
         return best_child
 
 
-def _execute_mcts_batch(player_id, iterations, real_env):
+def _execute_mcts_batch(player_id, iterations, real_env: Presidenten):
     bot = PresidentenISMCTSBot(player_id, iterations)
     return bot.run_search_batch(real_env)
 
@@ -53,7 +53,7 @@ class PresidentenISMCTSBot:
     def get_move(
         self,
         state: dict,
-        real_env=None,
+        real_env: Presidenten,
         executor=None,
         num_workers=4,
         parallelism="g",
@@ -119,7 +119,7 @@ class PresidentenISMCTSBot:
             key=lambda move: legal_root_moves[move]["visits"],
         )
 
-    def run_search_batch(self, real_env):
+    def run_search_batch(self, real_env: Presidenten):
         root = ISMCTSNode()
         rollout_bots = {
             p: PresidentenBaselineBot(player_id=p) for p in range(real_env.players)
@@ -148,14 +148,57 @@ class PresidentenISMCTSBot:
                         if card in base_hidden_pool:
                             base_hidden_pool.remove(card)
 
+        guaranteed_cards = {p: [] for p in range(real_env.players)}
+        pair_id = None
+        min_received = None
+
+        if (
+            hasattr(real_env, "exchange_log")
+            and real_env.exchange_log
+            and self.player_id in real_env.exchange_log
+        ):
+            log_entry = real_env.exchange_log[self.player_id]
+            pair_id = log_entry["pair"]
+            cards_given = log_entry["gave"]
+
+            if log_entry["role_type"] == "high":
+                cards_received = log_entry["received"]
+                if cards_received:
+                    min_received = min(cards_received)
+
+            played_counts = Counter()
+            for p_id, move in real_env.history:
+                if p_id == pair_id and move != (0, 0, 0):
+                    card_val, count, twos = move
+                    played_counts[card_val] += count - twos
+                    played_counts[15] += twos
+
+            for card_val in set(cards_given):
+                cg_count = cards_given.count(card_val)
+                cp_count = played_counts[card_val]
+                rem = max(0, cg_count - cp_count)
+
+                if rem > 0:
+                    guaranteed_cards[pair_id].extend([card_val] * rem)
+                    for _ in range(rem):
+                        if card_val in base_hidden_pool:
+                            base_hidden_pool.remove(card_val)
+
         for _ in range(self.iterations):
             sim_env = self._determinize_environment(
-                real_env, base_hidden_pool, pending_finish_cards
+                real_env,
+                base_hidden_pool,
+                pending_finish_cards,
+                guaranteed_cards,
+                pair_id,
+                min_received,
             )
             curr_node = root
 
             while not sim_env.game_over:
                 curr_player = sim_env.curr_turn
+                if curr_player is None:
+                    break
                 sim_legal_moves = sim_env.get_legal_moves(curr_player)
 
                 if not sim_legal_moves:
@@ -197,6 +240,8 @@ class PresidentenISMCTSBot:
 
             while not sim_env.game_over:
                 curr_player = sim_env.curr_turn
+                if curr_player is None:
+                    break
                 sim_legal_moves = sim_env.get_legal_moves(curr_player)
 
                 if not sim_legal_moves:
@@ -230,29 +275,55 @@ class PresidentenISMCTSBot:
         }
 
     def _deal_hidden_cards(
-        self, real_env, hidden_pool, pending_finish_cards, opp_hand_counts
+        self,
+        real_env: Presidenten,
+        hidden_pool,
+        pending_finish_cards,
+        opp_hand_counts,
+        guaranteed_cards,
+        pair_id,
+        min_received,
     ):
         hands = {}
-        pool_pointer = 0
+        pool = list(hidden_pool)
 
         for p in range(real_env.players):
             if p == self.player_id:
                 continue
+            hands[p] = list(guaranteed_cards[p]) + list(pending_finish_cards[p])
 
-            base_hand_size = max(0, opp_hand_counts[p] - len(pending_finish_cards[p]))
-            hand = hidden_pool[pool_pointer : pool_pointer + base_hand_size]
-            pool_pointer += base_hand_size
+        if pair_id is not None and min_received is not None and pair_id in hands:
+            needed = opp_hand_counts[pair_id] - len(hands[pair_id])
+            if needed > 0:
+                candidates = [c for c in pool if c <= min_received]
+                if len(candidates) < needed:
+                    chosen = random.sample(pool, needed)
+                else:
+                    chosen = random.sample(candidates, needed)
+                for c in chosen:
+                    pool.remove(c)
+                    hands[pair_id].append(c)
 
-            if pending_finish_cards[p]:
-                hand.extend(pending_finish_cards[p])
-            hands[p] = sorted(hand)
+        for p in hands:
+            if p == pair_id and min_received is not None:
+                continue
+            needed = opp_hand_counts[p] - len(hands[p])
+            if needed > 0:
+                if len(pool) < needed:
+                    chosen = pool.copy()
+                else:
+                    chosen = random.sample(pool, needed)
+                for c in chosen:
+                    pool.remove(c)
+                    hands[p].append(c)
+            hands[p].sort()
         return hands
 
     def _is_valid_hand(
         self,
         p,
         assigned_cards,
-        real_env,
+        real_env: Presidenten,
         pile_card,
         pile_count,
         history_vector,
@@ -292,7 +363,13 @@ class PresidentenISMCTSBot:
         return True
 
     def _determinize_environment(
-        self, real_env, base_hidden_pool, pending_finish_cards
+        self,
+        real_env: Presidenten,
+        base_hidden_pool,
+        pending_finish_cards,
+        guaranteed_cards,
+        pair_id,
+        min_received,
     ):
         sim_env = Presidenten(players=real_env.players, verbose=False)
 
@@ -331,7 +408,13 @@ class PresidentenISMCTSBot:
             random.shuffle(hidden_pool)
 
             hands = self._deal_hidden_cards(
-                real_env, hidden_pool, pending_finish_cards, opp_hand_counts
+                real_env,
+                hidden_pool,
+                pending_finish_cards,
+                opp_hand_counts,
+                guaranteed_cards,
+                pair_id,
+                min_received,
             )
             if all(
                 self._is_valid_hand(
@@ -354,12 +437,21 @@ class PresidentenISMCTSBot:
         random.shuffle(hidden_pool)
 
         for p, hand in self._deal_hidden_cards(
-            real_env, hidden_pool, pending_finish_cards, opp_hand_counts
+            real_env,
+            hidden_pool,
+            pending_finish_cards,
+            opp_hand_counts,
+            guaranteed_cards,
+            pair_id,
+            min_received,
         ).items():
             sim_env.hands[p] = hand
         return sim_env
 
     def choose_cards_to_pass(self, state):
+        if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
+            return []
+
         return PresidentenBaselineBot(player_id=self.player_id).choose_cards_to_pass(
             state
         )

@@ -6,7 +6,7 @@ class HumanPlayer:
     def __init__(self, player_id):
         self.player_id = player_id
 
-    def get_move(self, state: dict, **kwargs):
+    def get_move(self, state: dict, *args, **kwargs):
         legal_moves = state["legal_moves"]
         if not legal_moves:
             return (0, 0, 0)
@@ -28,14 +28,21 @@ class HumanPlayer:
         return chosen_move
 
     def choose_cards_to_pass(self, state):
-        _, _, count = next(
+        hr, _, count = next(
             (
                 (hr, lr, c)
                 for hr, lr, c in state["role_pairs"]
-                if hr == state["my_role"]
+                if hr == state["my_role"] or lr == state["my_role"]
             ),
             (None, None, 0),
         )
+        if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
+            print(
+                f"Player {self.player_id}, a ({state["my_role"]}) must pass his highest {count} cards to the {hr}."
+            )
+            highest_cards = state["hand"][-count:] if count > 0 else []
+            print(f"You must pass: {Presidenten.visualize_hand(highest_cards)}")
+            return []
 
         print(
             f"Player {self.player_id} ({state["my_role"]}), choose {count} cards to give away!"

@@ -7,7 +7,7 @@ class PresidentenBaselineBot:
     def __init__(self, player_id):
         self.player_id = player_id
 
-    def get_ranked_moves(self, state: dict, **kwargs):
+    def get_ranked_moves(self, state: dict):
         hand = state["hand"]
         legal_moves = state["legal_moves"]
 
@@ -86,7 +86,7 @@ class PresidentenBaselineBot:
         if len(legal_moves) == 1:
             return legal_moves[0]
 
-        ranked_moves = self.get_ranked_moves(state, *args, **kwargs)
+        ranked_moves = self.get_ranked_moves(state)
         if not ranked_moves:
             return (0, 0, 0)
 
@@ -115,6 +115,9 @@ class PresidentenBaselineBot:
         return best_move
 
     def choose_cards_to_pass(self, state):
+        if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
+            return []
+
         _, _, count = next(
             (
                 (hr, lr, c)

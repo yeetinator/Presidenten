@@ -24,11 +24,11 @@ class Presidenten:
 
         self.history = []  # [(P_id, move), ...]
         self.last_move = (0, 0, 0)  # (card_value, count, twos_used)
-        self.pile_leader = 0  # P_id of the player who last played to the pile
+        self.pile_leader = None  # P_id of the player who last played to the pile
         self.passed = set()  # Players who have passed in the current pile
         self.playing = set(range(players))
         self.first_turn = True
-        self.curr_turn = 0  # P_id of the current player
+        self.curr_turn = None  # P_id of the current player
         self.game_over = False
         self.pending_finish = None  # {"queue": [(card, count, player_id), ...], "resume_turn": player_id, "pile_reset": bool}
 
@@ -89,6 +89,7 @@ class Presidenten:
 
         # Makes sure no cards are exchanged back and forth in the same round
         staged_outgoing = {player_id: [] for player_id in range(self.players)}
+        self.exchange_log = {}
 
         def pick_cards(player_id, count, highest=False, allow_custom=True):
             hand = self.hands[player_id]
@@ -130,6 +131,19 @@ class Presidenten:
 
             staged_outgoing[high_player].extend(high_cards)
             staged_outgoing[low_player].extend(low_cards)
+
+            self.exchange_log[high_player] = {
+                "pair": low_player,
+                "role_type": "high",
+                "gave": list(high_cards),
+                "received": list(low_cards),
+            }
+            self.exchange_log[low_player] = {
+                "pair": high_player,
+                "role_type": "low",
+                "gave": list(low_cards),
+                "received": list(high_cards),
+            }
 
         for player_id, cards in staged_outgoing.items():
             for card in cards:
@@ -173,17 +187,18 @@ class Presidenten:
 
         self.history = []
         self.last_move = (0, 0, 0)
-        self.pile_leader = 0
+        self.pile_leader = None
         self.passed = set()
         self.game_over = False
         self.playing = set(range(self.players))
         self.out_order = []
         self.ended_2 = []
         self.pending_finish = None
+        self.exchange_log = {}
 
         if next_round:
             scum_player = [p for p, role in self.roles.items() if role == "Scum"][0]
-            self.curr_turn = scum_player if scum_player else 0
+            self.curr_turn = scum_player if scum_player is not None else None
         else:
             self.curr_turn = random.choice(
                 [p for p, hand in self.hands.items() if 3 in hand]  # 3 of Clubs starts
@@ -355,7 +370,7 @@ class Presidenten:
         self.curr_turn = self._get_next_active_player(
             self.pile_leader, ignore_passed=True, include_start=True
         )
-        self.pile_leader = 0
+        self.pile_leader = None
 
     def _is_game_over(self):
         active_players = [p for p in range(self.players) if self.hands[p]]
@@ -526,7 +541,7 @@ def play_presidenten_game(
         if round_idx > 0:
             cards_to_pass = {}
             for p_id, role in env.roles.items():
-                if role in {"President", "Vice-President", "Secretary"}:
+                if role != "Citizen":
                     if has_human:
                         print(f"Player {p_id} ({role}) is choosing cards...")
                     p_state = env._get_state(p_id)
@@ -538,6 +553,8 @@ def play_presidenten_game(
 
         while not env.game_over:
             curr_player_id = env.curr_turn
+            if curr_player_id is None:
+                break
             curr_player_type = assigned_players[curr_player_id]
 
             if curr_player_id in ismcts_ids:
@@ -553,7 +570,7 @@ def play_presidenten_game(
                     executor=executor,
                 )
             else:
-                chosen_move = curr_player_type.get_move(state)
+                chosen_move = curr_player_type.get_move(state, env)
             if has_human:
                 print(
                     f"Player {curr_player_id} ({env.roles[curr_player_id]}, {player_types.get(curr_player_id, 'Unknown')}) chose: {Presidenten.visualize_move(chosen_move)}\n"
@@ -692,5 +709,5 @@ if __name__ == "__main__":
         BASE_ISMCTS_ITERATIONS = 400
         game_parallelism(parallelism, assign_p)
     else:
-        SEARCH_PARALLELISM_ITERS = 800 + 200 * (NUM_PLAYERS - 4)
+        SEARCH_PARALLELISM_ITERS = 1000 + 200 * (NUM_PLAYERS - 4)
         search_parallelism(parallelism, assign_p, has_human)
