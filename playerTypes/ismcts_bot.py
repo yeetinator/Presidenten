@@ -181,6 +181,8 @@ class PresidentenISMCTSBot:
                     played_counts[card_val] += count - twos
                     played_counts[15] += twos
 
+            # Determine guaranteed cards for the pair player based on what was
+            # given and what has been played
             for card_val in set(cards_given):
                 cg_count = cards_given.count(card_val)
                 cp_count = played_counts[card_val]
@@ -264,6 +266,11 @@ class PresidentenISMCTSBot:
             ]
             random.shuffle(remaining_players)
             sim_env.out_order.extend(remaining_players)
+
+            for p in reversed(sim_env.ended_2):
+                if p in sim_env.out_order:
+                    sim_env.out_order.remove(p)
+                    sim_env.out_order.append(p)
 
             node = curr_node
             while node is not None:
