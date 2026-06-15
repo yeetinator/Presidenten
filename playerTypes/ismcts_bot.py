@@ -60,15 +60,23 @@ class PresidentenISMCTSBot:
     ):
         legal_moves = state["legal_moves"]
         total_stats = {}
+        baseline_bot = PresidentenBaselineBot(player_id=self.player_id)
+        active_opp_counts = [
+            count for count in state["opp_hand_counts"].values() if count > 0
+        ]
+        avg_opp_count = (
+            sum(active_opp_counts) / len(active_opp_counts) if active_opp_counts else 0
+        )
 
         if not legal_moves:
             return (0, 0, 0)
         if len(legal_moves) == 1:
             return legal_moves[0]
-        if state["last_move"] == (0, 0, 0) and state["first_turn"]:
-            return PresidentenBaselineBot(player_id=self.player_id).get_ranked_moves(
-                state
-            )[0]
+        if state["first_turn"]:
+            return baseline_bot.get_ranked_moves(state)[0]
+
+        if avg_opp_count >= 8:
+            return baseline_bot.get_ranked_moves(state)[0]
 
         if parallelism == "s":
             iterations_per_worker = max(1, self.iterations // num_workers)
@@ -251,9 +259,11 @@ class PresidentenISMCTSBot:
                 chosen_move = rollout_bots[curr_player].get_move(sim_state)
                 sim_env.step(curr_player, chosen_move)
 
-            for p in range(sim_env.players):
-                if p not in sim_env.out_order:
-                    sim_env.out_order.append(p)
+            remaining_players = [
+                p for p in range(sim_env.players) if p not in sim_env.out_order
+            ]
+            random.shuffle(remaining_players)
+            sim_env.out_order.extend(remaining_players)
 
             node = curr_node
             while node is not None:
