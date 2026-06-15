@@ -303,33 +303,68 @@ class PresidentenISMCTSBot:
     ):
         hands = {}
         pool = list(hidden_pool)
+        state = real_env._get_state(self.player_id)
+        pass_count_list = []
+        high_to_low = sorted(
+            [c for c in pool if min_received is None or c > min_received], reverse=True
+        )
 
         for p in range(real_env.players):
             if p == self.player_id:
                 continue
             hands[p] = list(guaranteed_cards[p]) + list(pending_finish_cards[p])
 
-        if pair_id is not None and min_received is not None and pair_id in hands:
+        if min_received is not None and pair_id in hands:
             needed = opp_hand_counts[pair_id] - len(hands[pair_id])
             if needed > 0:
                 candidates = [c for c in pool if c <= min_received]
-                if len(candidates) < needed:
-                    chosen = random.sample(pool, needed)
-                else:
-                    chosen = random.sample(candidates, needed)
+                chosen = (
+                    random.sample(candidates, needed)
+                    if len(candidates) >= needed
+                    else random.sample(pool, needed)
+                )
+
                 for c in chosen:
                     pool.remove(c)
                     hands[pair_id].append(c)
 
+        eligible_players = [
+            p
+            for p in hands
+            if p != pair_id
+            and real_env.roles[p] in {"President", "Vice-President", "Secretary"}
+        ]
+
+        if (
+            min_received is not None
+            and real_env.players in {4, 6}
+            and max(pool, default=0) > min_received
+        ):
+            for p in eligible_players:
+                _, _, count = next(
+                    (
+                        (hr, lr, c)
+                        for hr, lr, c in state["role_pairs"]
+                        if hr == real_env.roles[p]
+                    ),
+                    (None, None, 0),
+                )
+                pass_count_list.append(count)
+            if pass_count_list:
+                min_count = min(pass_count_list)
+                cards_must_appear = high_to_low[:min_count]
+
+                for c in cards_must_appear:
+                    valid_players = [p for p in eligible_players if len(hands[p]) < opp_hand_counts[p]]
+                    if valid_players and c in pool:
+                        chosen_player = random.choice(valid_players)
+                        hands[chosen_player].append(c)
+                        pool.remove(c)
+
         for p in hands:
-            if p == pair_id and min_received is not None:
-                continue
             needed = opp_hand_counts[p] - len(hands[p])
             if needed > 0:
-                if len(pool) < needed:
-                    chosen = pool.copy()
-                else:
-                    chosen = random.sample(pool, needed)
+                chosen = random.sample(pool, needed) if len(pool) >= needed else pool.copy()
                 for c in chosen:
                     pool.remove(c)
                     hands[p].append(c)
@@ -375,7 +410,6 @@ class PresidentenISMCTSBot:
                 and pile_card < 14
             ):
                 continue
-
             return False
         return True
 
