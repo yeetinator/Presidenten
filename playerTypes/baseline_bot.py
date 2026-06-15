@@ -10,6 +10,7 @@ class PresidentenBaselineBot:
     def get_ranked_moves(self, state: dict):
         hand = state["hand"]
         legal_moves = state["legal_moves"]
+        unique_vals = set(hand)
 
         if not legal_moves:
             return []
@@ -25,23 +26,25 @@ class PresidentenBaselineBot:
             if finish_card != 15:
                 return [chosen_jump]
 
-            unique_vals = set(hand)
             if len(unique_vals) == 2:
-                return [chosen_jump]
+                return [chosen_jump]  # Jump in with 2's only if you can win immediately
             return [(0, 0, 0)]
 
-        unique_vals = set(hand)
         hand_counts = Counter(hand)
 
         playable_moves = [m for m in legal_moves if m != (0, 0, 0)]
         if not playable_moves:
             return [(0, 0, 0)]
 
-        if len(unique_vals) == 2 and 15 in unique_vals:
-            two_moves = [m for m in playable_moves if m[0] == 15]
-            if two_moves:
-                two_moves.sort(key=lambda x: x[1])
-                return two_moves
+        if 15 in unique_vals:  # Prefer playing less 2's
+            if len(unique_vals) == 1:
+                playable_moves.sort(key=lambda x: x[1])
+                return playable_moves
+            elif len(unique_vals) == 2:
+                two_moves = [m for m in playable_moves if m[0] == 15]
+                if two_moves:
+                    two_moves.sort(key=lambda x: x[1])
+                    return two_moves
 
         if state["last_move"] == (0, 0, 0) and state["first_turn"]:
             playable_moves.sort(key=lambda x: (x[2], x[0], -x[1]))
@@ -52,7 +55,7 @@ class PresidentenBaselineBot:
 
         for card_value, count in hand_counts.items():
             history_index = card_value - 3
-            if (
+            if (  # Preserve triplets
                 count == 3
                 and 0 <= history_index < len(history_vector)
                 and history_vector[history_index] == 0
@@ -103,7 +106,7 @@ class PresidentenBaselineBot:
         starting_cards = math.ceil(52 / num_players)
         junk_count = sum(1 for c in hand if c < 8)
 
-        if (
+        if (  # Preserve high cards
             card_val >= 10
             and (card_val >= 14 or twos > 0 or card_diff > 4)
             and len(hand) > starting_cards * 0.5

@@ -161,7 +161,7 @@ class Presidenten:
 
             if self.verbose:
                 print(
-                    f"Exchanging cards between {high_player} ({high_role}) and {low_player} ({low_role}):"
+                    f"\nExchanging cards between {high_player} ({high_role}) and {low_player} ({low_role})"
                 )
 
         for player_id in self.hands:
@@ -298,17 +298,11 @@ class Presidenten:
         if move == (0, 0, 0):
             # Current AI/Player DECLINED the jump-in. Resume normal play.
             self.pending_finish["queue"].pop(0)  # Remove the declined option
-            if self.verbose:
-                print(f"Player {player_id} declines the jump-in.")
-
             if self.pending_finish["queue"]:  # Next option's player gets the chance
                 self.curr_turn = self.pending_finish["queue"][0][2]
             else:
                 resume_turn = self.pending_finish["resume_turn"]
                 was_pile_reset = self.pending_finish["pile_reset"]
-                if self.verbose:
-                    print(f"Resuming normal play with Player {resume_turn}.")
-
                 self.pending_finish = None
                 self.curr_turn = resume_turn
 
@@ -317,7 +311,7 @@ class Presidenten:
         else:
             if self.verbose:
                 print(
-                    f"JUMP IN! Player {player_id} finishes the last move with [{self.visualize_move(move)}]"
+                    f"\nJUMP IN! Player {player_id} finishes the last move with [{self.visualize_move(move)}]"
                 )
 
             self._remove_cards(player_id, card_val, count)
@@ -326,6 +320,7 @@ class Presidenten:
             if not self.hands[player_id] and player_id not in self.out_order:
                 if self.verbose:
                     print(f"Player {player_id} is out!\n")
+                    input("Press Enter to continue...\n")
 
                 self.out_order.append(player_id)
                 self.ended_2.append(player_id) if card_val == 15 else None
@@ -419,6 +414,7 @@ class Presidenten:
         if not self.hands[player_id] and player_id not in self.out_order:
             if self.verbose:
                 print(f"Player {player_id} is out!\n")
+                input("Press Enter to continue...\n")
 
             self.out_order.append(player_id)
             self.ended_2.append(player_id) if card_val == 15 else None
@@ -523,7 +519,7 @@ def play_presidenten_game(
         state = env.full_reset(next_round=(round_idx > 0))
 
         if has_human:
-            print(f"\n=== ROUND {round_idx + 1} ===")
+            print(f"=== ROUND {round_idx + 1} ===")
             print("Player Roles for this Round:")
             if round_idx == 0:
                 role_items = sorted(env.roles.items())
@@ -559,10 +555,6 @@ def play_presidenten_game(
 
             if curr_player_id in ismcts_ids:
                 assert isinstance(curr_player_type, PresidentenISMCTSBot)
-                if has_human:
-                    print(
-                        f"Player {curr_player_id} (ISMCTS) is thinking... Please wait."
-                    )
                 chosen_move = curr_player_type.get_move(
                     state,
                     env,
@@ -571,20 +563,20 @@ def play_presidenten_game(
                 )
             else:
                 chosen_move = curr_player_type.get_move(state, env)
-            if has_human:
+            if has_human and not state["is_finish_prompt"]:
                 print(
-                    f"Player {curr_player_id} ({env.roles[curr_player_id]}, {player_types.get(curr_player_id, 'Unknown')}) chose: {Presidenten.visualize_move(chosen_move)}\n"
+                    f"\nPlayer {curr_player_id} ({state["my_role"]}, {player_types.get(curr_player_id, 'Unknown')}) chose: {Presidenten.visualize_move(chosen_move)}\n"
                 )
                 if not isinstance(curr_player_type, HumanPlayer):
-                    input("Press Enter to continue...")
+                    input("Press Enter to continue...\n")
             state, _ = env.step(curr_player_id, chosen_move)
 
         env.assign_roles()
         if has_human:
             print(
-                f"\nRound {round_idx + 1} Complete! Finishing Order: {env.out_order}. Players who finished with a 2: {env.ended_2}. Scores: {env.scores}"
+                f"Round {round_idx + 1} Complete! Finishing Order: {env.out_order}. Players who finished with a 2: {env.ended_2}. Scores: {env.scores}\n"
             )
-            input("Press Enter to continue to the next round...")
+            input("Press Enter to continue...\n")
     return env.scores
 
 
@@ -596,16 +588,18 @@ def get_settings():
         opt = input(
             f"Player {p} - 0: random bot, 1: baseline bot, 2: ISMCTS bot, 3: human: "
         )
-        if opt not in {"0", "1", "2", "3"}:
-            print("Invalid option. Please try again.")
-            return get_settings()
+        while opt not in {"0", "1", "2", "3"}:
+            print("Invalid option. Please try again.\n")
+            opt = input(
+                f"Player {p} - 0: random bot, 1: baseline bot, 2: ISMCTS bot, 3: human: "
+            )
 
         assign_p[p] = int(opt)
 
     has_human = any(opt == 3 for opt in assign_p.values())
     if any(opt == 2 for opt in assign_p.values()):
         parallelism = (
-            "s" if has_human else input("ISMCTS search or game parallelism? (G/s): ")
+            "s" if has_human else input("ISMCTS search or game parallelism? (G/s): \n")
         ).lower()
 
     if parallelism not in {"g", "s"}:
@@ -678,7 +672,7 @@ def search_parallelism(parallelism, assign_p, has_human):
     player_types = get_player_types(assign_p)
     with ProcessPoolExecutor(max_workers=NUM_WORKERS) as shared_executor:
         for game_idx in range(TOTAL_GAMES):
-            print(f"\n=== GAME {game_idx+1} ===")
+            print(f"\n=== GAME {game_idx+1} ===\n")
             score = play_presidenten_game(
                 game_idx,
                 NUM_PLAYERS,
