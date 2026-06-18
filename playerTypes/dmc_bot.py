@@ -7,7 +7,7 @@ from playerTypes.baseline_bot import PresidentenBaselineBot
 
 
 class PresidentenDMCBot:
-    def __init__(self, player_id, model, device, training=False):
+    def __init__(self, player_id, model: PresidentenValueNet, device, training=False):
         self.player_id = player_id
         self.model = model.to(device)
         self.device = device
@@ -28,7 +28,8 @@ class PresidentenDMCBot:
             features_tensor = torch.FloatTensor(np.array(features)).to(self.device)
 
             with torch.no_grad():
-                q_values = self.model(features_tensor).squeeze(-1).cpu().numpy()
+                output_tensor: torch.Tensor = self.model(features_tensor)
+                q_values = output_tensor.squeeze(-1).cpu().numpy()
 
             best_idx = np.argmax(q_values)
             chosen_move = legal_moves[best_idx]
@@ -71,6 +72,9 @@ def vectorize_state_action(state, move, num_players=4):
         "Scum": 0.0,
     }
 
+    opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
+    state_player_roles: dict[int, str] = state["player_roles"]
+
     hand_vector = np.zeros(13, dtype=np.float32)
     for card in state["hand"]:
         hand_vector[card - 3] += 1.0
@@ -84,7 +88,7 @@ def vectorize_state_action(state, move, num_players=4):
         last_move_vector[13] = float(p_count)
         last_move_vector[14] = float(p_twos)
 
-    my_id = [p for p in range(num_players) if p not in state["opp_hand_counts"]][0]
+    my_id = [p for p in range(num_players) if p not in opp_hand_counts][0]
     opp_counts = [float(len(state["hand"]))]
     player_roles = []
     pile_status = []
@@ -92,9 +96,9 @@ def vectorize_state_action(state, move, num_players=4):
     for i in range(num_players):
         opp_id = (my_id + i) % num_players
         if i > 0:
-            opp_counts.append(float(state["opp_hand_counts"].get(opp_id, 0)))
+            opp_counts.append(float(opp_hand_counts[opp_id]))
 
-        role_str = state["player_roles"].get(opp_id, "Citizen")
+        role_str = state_player_roles[opp_id]
         player_roles.append(ROLE_MAP.get(role_str, 0.5))
 
         is_active = 1.0 if opp_id in state["active_players"] else 0.0

@@ -10,12 +10,13 @@ class PresidentenBaselineBot:
     def get_ranked_moves(self, state: dict):
         hand = state["hand"]
         legal_moves = state["legal_moves"]
+        opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
         unique_vals = set(hand)
 
         if not legal_moves:
             return []
 
-        if state.get("is_finish_prompt", False):
+        if state["is_finish_prompt"]:
             jump_in_action = [m for m in legal_moves if m != (0, 0, 0)]
             if not jump_in_action:
                 return [(0, 0, 0)]
@@ -50,7 +51,7 @@ class PresidentenBaselineBot:
             playable_moves.sort(key=lambda x: (x[2], x[0], -x[1]))
             return playable_moves
 
-        history_vector = state.get("history_vector", [])
+        history_vector = state["history_vector"]
         filtered_moves = playable_moves
 
         for card_value, count in hand_counts.items():
@@ -60,9 +61,7 @@ class PresidentenBaselineBot:
                 and 0 <= history_index < len(history_vector)
                 and history_vector[history_index] == 0
                 and card_value >= 10
-                and any(
-                    hand_count <= 3 for hand_count in state["opp_hand_counts"].values()
-                )
+                and any(hand_count <= 3 for hand_count in opp_hand_counts.values())
             ):
                 candidate_moves = [
                     m for m in filtered_moves if not (m[0] == card_value and m[1] == 3)

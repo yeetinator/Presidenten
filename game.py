@@ -1,4 +1,5 @@
 import random
+from typing import Callable, overload, TypeVar, Any
 import torch
 import os
 from collections import Counter
@@ -24,15 +25,45 @@ class PlayerType(IntEnum):
         }[self]
 
 
-def get_val_input(prompt, cast_type, valid_choices=None):
+T = TypeVar("T")
+
+
+@overload
+def get_val_input(
+    prompt: str,
+    cast_type: Callable[[str], T],
+    valid_choices: Any = None,
+    delimiter: None = None,
+) -> T: ...
+@overload
+def get_val_input(
+    prompt: str,
+    cast_type: Callable[[str], T],
+    valid_choices: Any = None,
+    delimiter: str = ...,
+) -> list[T]: ...
+def get_val_input(prompt, cast_type, valid_choices=None, delimiter=None):
     while True:
         try:
-            val = cast_type(input(prompt).strip())
-            if valid_choices is None or val in valid_choices:
-                return val
+            raw = input(prompt).strip()
+            if delimiter:
+                val = [cast_type(t.strip()) for t in raw.split(delimiter) if t.strip()]
+            else:
+                val = cast_type(raw)
+
+            if valid_choices is not None:
+                if callable(valid_choices):
+                    if not valid_choices(val):
+                        raise ValueError()
+                else:
+                    if delimiter:
+                        if not all(item in valid_choices for item in val):
+                            raise ValueError()
+                    elif val not in valid_choices:
+                        raise ValueError()
+            return val
         except ValueError:
-            pass
-        print(f"Invalid input. Please try again.")
+            print(f"Invalid input. Please try again.")
 
 
 class Presidenten:
@@ -334,13 +365,14 @@ class Presidenten:
         if not self.pending_finish:
             return
 
-        card_val, count, _ = self.pending_finish["queue"][0]
+        queue: list = self.pending_finish["queue"]
+        card_val, count, _ = queue[0]
 
         if move == (0, 0, 0):
             # Current AI/Player DECLINED the jump-in. Resume normal play.
-            self.pending_finish["queue"].pop(0)  # Remove the declined option
-            if self.pending_finish["queue"]:  # Next option's player gets the chance
-                self.curr_turn = self.pending_finish["queue"][0][2]
+            queue.pop(0)  # Remove the declined option
+            if queue:  # Next option's player gets the chance
+                self.curr_turn = queue[0][2]
             else:
                 resume_turn = self.pending_finish["resume_turn"]
                 was_pile_reset = self.pending_finish["pile_reset"]
@@ -543,26 +575,21 @@ def get_settings():
 
     dmc_count = list(assign_p.values()).count(PlayerType.DMC)
     if dmc_count > 0:
-        while True:
-            dmc_input = input(
-                f"{dmc_count} DMC Bot(s) detected. Enter batch indices (comma-separated, e.g., 1000,2000): "
-            )
-            indices = [
-                int(idx.strip())
-                for idx in dmc_input.split(",")
-                if idx.strip().isdigit()
-            ]
-            paths = [f"snapshots/model_gen_{idx}.pt" for idx in indices]
 
-            if len(paths) == dmc_count and all(os.path.isfile(path) for path in paths):
-                dmc_p_ids = [
-                    p_id
-                    for p_id, p_type in assign_p.items()
-                    if p_type == PlayerType.DMC
-                ]
-                dmc_paths = dict(zip(dmc_p_ids, paths))
-                break
-            print("Invalid input or snapshot files missing. Try again.\n")
+        def val_dmc_indices(indices):
+            if len(indices) != dmc_count:
+                return False
+            return all(
+                os.path.isfile(f"snapshots/model_gen_{idx}.pt") for idx in indices
+            )
+
+        prompt = f"{dmc_count} DMC Bot(s) detected. Enter batch indices (comma-separated, e.g., 1000,2000): "
+        indices = get_val_input(prompt, int, val_dmc_indices, ",")
+        paths = [f"snapshots/model_gen_{idx}.pt" for idx in indices]
+        dmc_p_ids = [
+            p_id for p_id, p_type in assign_p.items() if p_type == PlayerType.DMC
+        ]
+        dmc_paths = dict(zip(dmc_p_ids, paths))
     return parallelism, assign_p, has_human, num_players, num_rounds, dmc_paths
 
 
@@ -574,7 +601,7 @@ def play_presidenten_game(
     iterations=400,
     has_human=False,
     executor=None,
-    assign_p=None,
+    assign_p: dict[int, PlayerType] | None = None,
     dmc_paths=None,
 ):
     from playerTypes.human import HumanPlayer
@@ -761,7 +788,7 @@ def update_final_scores(master_scores, round_scores):
     return master_scores
 
 
-def print_scores(scores, assign_p):
+def print_scores(scores, assign_p: dict[int, PlayerType]):
     print("\n" + "=" * 60)
     print(f"=== FINAL SCORES: {TOTAL_GAMES} Games | {num_rounds} Rounds Each ===")
     print("=" * 60)

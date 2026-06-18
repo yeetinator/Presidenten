@@ -1,4 +1,4 @@
-from game import Presidenten
+from game import Presidenten, get_val_input
 from collections import Counter
 
 
@@ -19,50 +19,60 @@ class HumanPlayer:
         for idx, move in enumerate(legal_moves):
             print(f"  {idx}: {Presidenten.visualize_move(move)}")
 
-        move_idx = int(input("Enter move index: "))
-        while move_idx < 0 or move_idx >= len(legal_moves):
-            print("Invalid move index. Try again.\n")
-            move_idx = int(input("Enter move index: "))
+        move_idx = get_val_input(
+            "Enter move index: ", int, lambda x: 0 <= x < len(legal_moves)
+        )
         chosen_move = legal_moves[move_idx]
 
         return chosen_move
 
     def choose_cards_to_pass(self, state):
+        my_role: str = state["my_role"]
         hr, _, count = next(
             (
                 (hr, lr, c)
                 for hr, lr, c in state["role_pairs"]
-                if hr == state["my_role"] or lr == state["my_role"]
+                if hr == my_role or lr == my_role
             ),
             (None, None, 0),
         )
-        if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
-            print(
-                f"\nA ({state["my_role"]}) must pass his highest {count} cards to the {hr}."
-            )
-            highest_cards = state["hand"][-count:] if count > 0 else []
-            print(f"You must pass: {Presidenten.visualize_hand(highest_cards)}")
+
+        if my_role not in {"President", "Vice-President", "Secretary"}:
+            if count > 0:
+                print(
+                    f"\nAs a {my_role}, your highest {count} card(s) will be passed to the {hr}."
+                )
+                highest_cards = state["hand"][-count:]
+                print(f"Cards passed: {Presidenten.visualize_hand(highest_cards)}")
             return []
 
-        print(f"\nChoose {count} cards to give away!")
+        def parse_card(card: str):
+            card = card.strip().upper()
+            mapping = {"J": 11, "Q": 12, "K": 13, "A": 14, "2": 15}
+            if card in mapping:
+                return mapping[card]
+            return int(card)
+
+        def val_hand_selection(chosen):
+            if len(chosen) != count:
+                print(f"Selection Error: You must select exactly {count} cards.")
+                return False
+
+            chosen_counts = Counter(chosen)
+            hand_counts = Counter(state["hand"])
+
+            for card, selected_count in chosen_counts.items():
+                if hand_counts[card] < selected_count:
+                    card_name = Presidenten.visualize_card(card)
+                    print(f"Selection Error: You don't have enough {card_name}s.")
+
+                    return False
+            return True
+
+        print(f"\n=== {my_role.upper()} CARD EXCHANGE ===")
         print(f"Your hand: {Presidenten.visualize_hand(state["hand"])}")
-        card_indices = input(
-            "Enter card values to pass (comma-separated, duplicates allowed): "
+
+        prompt = (
+            f"Enter {count} card values to pass (comma-separated, duplicates allowed): "
         )
-        indices = [
-            int(idx.strip()) for idx in card_indices.split(",") if idx.strip().isdigit()
-        ]
-
-        if len(indices) != count:
-            print(f"You must choose exactly {count} cards to pass. Try again.\n")
-            return self.choose_cards_to_pass(state)
-
-        indices_counts = Counter(indices)
-        hand_counts = Counter(state["hand"])
-
-        for card, selected_count in indices_counts.items():
-            if hand_counts[card] < selected_count:
-                print(f"You don't have enough {card}s to pass. Try again.\n")
-                return self.choose_cards_to_pass(state)
-
-        return indices
+        return get_val_input(prompt, parse_card, val_hand_selection, ",")

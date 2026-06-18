@@ -11,7 +11,7 @@ class ISMCTSNode:
         self.move = move
         self.parent = parent
         self.player_id = player_id
-        self.children = []
+        self.children: list[ISMCTSNode] = []
         self.visits = 0
         self.score = 0.0
 
@@ -54,16 +54,15 @@ class PresidentenISMCTSBot:
         self,
         state: dict,
         real_env: Presidenten,
-        executor=None,
+        executor: ProcessPoolExecutor | None = None,
         parallelism="g",
         num_workers=4,
     ):
         legal_moves = state["legal_moves"]
+        opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
         total_stats = {}
         baseline_bot = PresidentenBaselineBot(player_id=self.player_id)
-        active_opp_counts = [
-            count for count in state["opp_hand_counts"].values() if count > 0
-        ]
+        active_opp_counts = [count for count in opp_hand_counts.values() if count > 0]
         avg_opp_count = (
             sum(active_opp_counts) / len(active_opp_counts) if active_opp_counts else 0
         )
@@ -167,7 +166,7 @@ class PresidentenISMCTSBot:
         ):
             log_entry = real_env.exchange_log[self.player_id]
             pair_id = log_entry["pair"]
-            cards_given = log_entry["gave"]
+            cards_given: list[int] = log_entry["gave"]
 
             if log_entry["role_type"] == "high":
                 cards_received = log_entry["received"]
@@ -301,7 +300,7 @@ class PresidentenISMCTSBot:
         pair_id,
         min_received,
     ):
-        hands = {}
+        hands: dict[int, list[int]] = {}
         pool = list(hidden_pool)
         state = real_env._get_state(self.player_id)
         pass_count_list = []
@@ -386,7 +385,7 @@ class PresidentenISMCTSBot:
         pile_count,
         history_vector,
         starting_cards,
-        opp_hand_counts,
+        opp_hand_counts: dict[int, int],
     ):
         if p not in real_env.passed or pile_card == 0:
             return True
@@ -445,7 +444,7 @@ class PresidentenISMCTSBot:
         sim_env.game_over = real_env.game_over
         sim_env.pending_finish = (
             {
-                "queue": real_env.pending_finish["queue"].copy(),
+                "queue": real_env.pending_finish["queue"][:],
                 "resume_turn": real_env.pending_finish["resume_turn"],
                 "pile_reset": real_env.pending_finish["pile_reset"],
             }
