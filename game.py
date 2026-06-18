@@ -3,6 +3,36 @@ import torch
 import os
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
+from enum import IntEnum
+
+
+class PlayerType(IntEnum):
+    HUMAN = 0
+    RANDOM = 1
+    BASELINE = 2
+    ISMCTS = 3
+    DMC = 4
+
+    @property
+    def name(self):
+        return {
+            PlayerType.HUMAN: "Human",
+            PlayerType.RANDOM: "Random Bot",
+            PlayerType.BASELINE: "Baseline Bot",
+            PlayerType.ISMCTS: "ISMCTS Bot",
+            PlayerType.DMC: "DMC Bot",
+        }[self]
+
+
+def get_val_input(prompt, cast_type, valid_choices=None):
+    while True:
+        try:
+            val = cast_type(input(prompt).strip())
+            if valid_choices is None or val in valid_choices:
+                return val
+        except ValueError:
+            pass
+        print(f"Invalid input. Please try again.")
 
 
 class Presidenten:
@@ -15,11 +45,13 @@ class Presidenten:
 
         # 3 to Ace (14), plus 2 (15)
         self.deck = [rank for rank in range(3, 16) for _ in range(4)]
-        self.hands = {i: [] for i in range(players)}
+        self.hands = {p_id: [] for p_id in range(players)}
 
-        self.scores = {i: (0, 0) for i in range(players)}  # (total_score, rounds_won)
+        self.scores = {
+            p_id: (0, 0) for p_id in range(players)
+        }  # (total_score, rounds_won)
 
-        self.roles = {i: "Citizen" for i in range(players)}
+        self.roles = {p_id: "Citizen" for p_id in range(players)}
         self.out_order = []  # Track finishing order for role assignment
         self.round = 0
         self.ended_2 = []  # Track players who finished with a 2 for role assignment
@@ -68,42 +100,44 @@ class Presidenten:
         if not self.out_order:
             return
 
-        for p in range(self.players):  # Add any remaining players who haven't finished
-            if p not in self.out_order:
-                self.out_order.append(p)
+        for p_id in range(
+            self.players
+        ):  # Add any remaining players who haven't finished
+            if p_id not in self.out_order:
+                self.out_order.append(p_id)
 
         # Move players who finished with a 2 to the end of the order
-        for p in reversed(self.ended_2):
-            if p in self.out_order:
-                self.out_order.remove(p)
-                self.out_order.append(p)
+        for p_id in reversed(self.ended_2):
+            if p_id in self.out_order:
+                self.out_order.remove(p_id)
+                self.out_order.append(p_id)
 
         roles = self._get_roles()
-        for rank, player_id in enumerate(self.out_order):
-            self.roles[player_id] = roles[rank]
-            self.scores[player_id] = (
-                self.scores[player_id][0] + self.players - 1 - rank,
-                self.scores[player_id][1] + (1 if rank == 0 else 0),
+        for rank, p_id in enumerate(self.out_order):
+            self.roles[p_id] = roles[rank]
+            self.scores[p_id] = (
+                self.scores[p_id][0] + self.players - 1 - rank,
+                self.scores[p_id][1] + (1 if rank == 0 else 0),
             )
 
     def exchange_cards(self, cards_to_pass: dict[int | str, list[int]] | None = None):
-        role_to_player = {role: player_id for player_id, role in self.roles.items()}
+        role_to_player = {role: p_id for p_id, role in self.roles.items()}
 
         # Makes sure no cards are exchanged back and forth in the same round
-        staged_outgoing = {player_id: [] for player_id in range(self.players)}
+        staged_outgoing = {p_id: [] for p_id in range(self.players)}
         self.exchange_log = {}
 
-        def pick_cards(player_id, count, highest=False, allow_custom=True):
-            hand = self.hands[player_id]
+        def pick_cards(p_id, count, highest=False, allow_custom=True):
+            hand = self.hands[p_id]
             if allow_custom and cards_to_pass is not None:
-                if player_id in cards_to_pass:
-                    chosen = list(cards_to_pass[player_id])
+                if p_id in cards_to_pass:
+                    chosen = list(cards_to_pass[p_id])
                 else:
-                    chosen = list(cards_to_pass.get(self.roles[player_id], []))
+                    chosen = list(cards_to_pass.get(self.roles[p_id], []))
 
                 if len(chosen) != count:
                     raise ValueError(
-                        f"Player {player_id} must exchange {count} card(s), got {len(chosen)}."
+                        f"Player {p_id} must exchange {count} card(s), got {len(chosen)}."
                     )
 
                 chosen_counts = Counter(chosen)
@@ -112,7 +146,7 @@ class Presidenten:
                 for card, selected_count in chosen_counts.items():
                     if hand_counts[card] < selected_count:
                         raise ValueError(
-                            f"Player {player_id} cannot exchange {selected_count} copy/copies of {card}."
+                            f"Player {p_id} cannot exchange {selected_count} copy/copies of {card}."
                         )
                 return chosen
 
@@ -147,9 +181,9 @@ class Presidenten:
                 "received": list(high_cards),
             }
 
-        for player_id, cards in staged_outgoing.items():
+        for p_id, cards in staged_outgoing.items():
             for card in cards:
-                self.hands[player_id].remove(card)
+                self.hands[p_id].remove(card)
 
         for high_role, low_role, _ in self.role_pairs:
             high_player = role_to_player.get(high_role)
@@ -166,26 +200,26 @@ class Presidenten:
                     f"\nExchanging cards between {high_player} ({high_role}) and {low_player} ({low_role})"
                 )
 
-        for player_id in self.hands:
-            self.hands[player_id].sort()
+        for p_id in self.hands:
+            self.hands[p_id].sort()
 
     def full_reset(self, next_round=False):
         if next_round:
             self.round += 1
         else:
-            self.roles = {i: "Citizen" for i in range(self.players)}
+            self.roles = {p_id: "Citizen" for p_id in range(self.players)}
             self.round = 1
-            self.scores = {i: (0, 0) for i in range(self.players)}
+            self.scores = {p_id: (0, 0) for p_id in range(self.players)}
 
         random.shuffle(self.deck)
-        self.hands = {i: [] for i in range(self.players)}
+        self.hands = {p_id: [] for p_id in range(self.players)}
 
         for i, card in enumerate(self.deck):
-            player_id = i % self.players
-            self.hands[player_id].append(card)
+            p_id = i % self.players
+            self.hands[p_id].append(card)
 
-        for player_id in self.hands:
-            self.hands[player_id].sort()
+        for p_id in self.hands:
+            self.hands[p_id].sort()
 
         self.history = []
         self.last_move = (0, 0, 0)
@@ -199,16 +233,20 @@ class Presidenten:
         self.exchange_log = {}
 
         if next_round:
-            scum_player = [p for p, role in self.roles.items() if role == "Scum"][0]
+            scum_player = [p_id for p_id, role in self.roles.items() if role == "Scum"][
+                0
+            ]
             self.curr_turn = scum_player if scum_player is not None else None
         else:
             self.curr_turn = random.choice(
-                [p for p, hand in self.hands.items() if 3 in hand]  # 3 of Clubs starts
+                [
+                    p_id for p_id, hand in self.hands.items() if 3 in hand
+                ]  # 3 of Clubs starts
             )
             self.first_turn = True
         return self._get_state(self.curr_turn)
 
-    def _get_state(self, player_id):
+    def _get_state(self, p_id):
         flat_history_cards = []
         for _, move in self.history:
             if move != (0, 0, 0):
@@ -218,12 +256,12 @@ class Presidenten:
         history_counts = Counter(flat_history_cards)
 
         return {
-            "hand": self.hands[player_id].copy(),
-            "legal_moves": self.get_legal_moves(player_id),
-            "my_role": self.roles[player_id],
+            "hand": self.hands[p_id].copy(),
+            "legal_moves": self.get_legal_moves(p_id),
+            "my_role": self.roles[p_id],
             "last_move": self.last_move,
             "opp_hand_counts": {
-                p: len(self.hands[p]) for p in range(self.players) if p != player_id
+                p: len(self.hands[p]) for p in range(self.players) if p != p_id
             },
             "passed": self.passed.copy(),
             "active_players": self.playing.copy(),
@@ -232,20 +270,20 @@ class Presidenten:
             "player_roles": self.roles.copy(),
             "history_vector": [history_counts[rank] for rank in range(3, 16)],
             "is_finish_prompt": self.pending_finish
-            and self.pending_finish["queue"][0][2] == player_id,
+            and self.pending_finish["queue"][0][2] == p_id,
             "round": self.round,
             "scores": self.scores.copy(),
             "role_pairs": self.role_pairs.copy(),
         }
 
-    def get_legal_moves(self, player_id):
+    def get_legal_moves(self, p_id):
         if self.pending_finish:
             finish_card, finish_count, finish_player = self.pending_finish["queue"][0]
-            if player_id == finish_player:
+            if p_id == finish_player:
                 return [(0, 0, 0), (finish_card, finish_count, 0)]
             return []
 
-        hand = self.hands[player_id]
+        hand = self.hands[p_id]
 
         # Can't pass on an empty pile
         legal_moves = [(0, 0, 0)] if self.last_move[0] != 0 else []
@@ -269,30 +307,30 @@ class Presidenten:
                             legal_moves.append((card, c, 0))
         return legal_moves
 
-    def _remove_cards(self, player_id, card_val, count):
+    def _remove_cards(self, p_id, card_val, count):
         for _ in range(count):
-            self.hands[player_id].remove(card_val)
+            self.hands[p_id].remove(card_val)
 
-    def _finishing_option(self, card, played_count, player_id):
+    def _finishing_option(self, card, played_count, p_id):
         if played_count >= 4 or any(item[1][0] == card for item in self.history[:-1]):
             return None
 
         players_with_card = {  # If multiple players have the card, it's impossible for it to be the finishing move
             p: hand
             for p, hand in self.hands.items()
-            if p != player_id and hand.count(card) + played_count == 4
+            if p != p_id and hand.count(card) + played_count == 4
         }
         if len(players_with_card) != 1:
             return None
 
-        player, hand = players_with_card.popitem()
+        p_id, hand = players_with_card.popitem()
         return (
             card,
             hand.count(card),
-            player,
+            p_id,
         )
 
-    def handle_pending_finish(self, move, player_id):
+    def handle_pending_finish(self, move, p_id):
         if not self.pending_finish:
             return
 
@@ -314,37 +352,37 @@ class Presidenten:
         else:
             if self.verbose:
                 print(
-                    f"\nJUMP IN! Player {player_id} finishes the last move with [{self.visualize_move(move)}]"
+                    f"\nJUMP IN! Player {p_id} finishes the last move with [{self.visualize_move(move)}]"
                 )
 
-            self._remove_cards(player_id, card_val, count)
-            self.history.append((player_id, move))
+            self._remove_cards(p_id, card_val, count)
+            self.history.append((p_id, move))
 
-            if not self.hands[player_id] and player_id not in self.out_order:
+            if not self.hands[p_id] and p_id not in self.out_order:
                 if self.verbose:
-                    print(f"Player {player_id} is out!\n")
+                    print(f"Player {p_id} is out!\n")
                     input("Press Enter to continue...\n")
 
-                self.out_order.append(player_id)
-                self.ended_2.append(player_id) if card_val == 15 else None
+                self.out_order.append(p_id)
+                self.ended_2.append(p_id) if card_val == 15 else None
 
-                if player_id in self.playing:
-                    self.playing.remove(player_id)
+                if p_id in self.playing:
+                    self.playing.remove(p_id)
 
             self.game_over = self._is_game_over()
             self._pile_reset()
-            self.curr_turn = player_id
+            self.curr_turn = p_id
             self.pending_finish = None
 
     def handle_finishing(
-        self, card_val, rcount, player_id, twos, temp_next_turn, pile_reset
+        self, card_val, rcount, p_id, twos, temp_next_turn, pile_reset
     ):
         options = []
-        if option := self._finishing_option(card_val, rcount, player_id):
+        if option := self._finishing_option(card_val, rcount, p_id):
             options.append(option)
 
         if twos:
-            if option := self._finishing_option(15, twos, player_id):
+            if option := self._finishing_option(15, twos, p_id):
                 options.append(option)
 
         if not options:
@@ -372,36 +410,34 @@ class Presidenten:
         self.pile_leader = None
 
     def _is_game_over(self):
-        active_players = [p for p in range(self.players) if self.hands[p]]
+        active_players = [p_id for p_id in range(self.players) if self.hands[p_id]]
         return len(active_players) <= 1
 
-    def _get_next_active_player(
-        self, from_player, ignore_passed=False, include_start=False
-    ):
-        curr = from_player if include_start else (from_player + 1) % self.players
+    def _get_next_active_player(self, p_id, ignore_passed=False, include_start=False):
+        curr = p_id if include_start else (p_id + 1) % self.players
         for _ in range(self.players):
             if curr in self.playing and (ignore_passed or curr not in self.passed):
                 return curr
             curr = (curr + 1) % self.players
-        return from_player
+        return p_id
 
-    def step(self, player_id, move):
+    def step(self, p_id, move):
         card_val, count, twos = move
         pile_reset = False
 
         if self.pending_finish:
-            self.handle_pending_finish(move, player_id)
+            self.handle_pending_finish(move, p_id)
             return self._get_state(self.curr_turn), self.game_over
 
         if move == (0, 0, 0):
-            self.passed.add(player_id)
+            self.passed.add(p_id)
         else:
             self.last_move = move
-            self.pile_leader = player_id
+            self.pile_leader = p_id
             rcount = count - twos
 
-            self._remove_cards(player_id, card_val, rcount)
-            self._remove_cards(player_id, 15, twos)
+            self._remove_cards(p_id, card_val, rcount)
+            self._remove_cards(p_id, 15, twos)
 
         if self.pile_leader is not None:
             pile_reset = all(
@@ -411,23 +447,23 @@ class Presidenten:
         if card_val == 15:
             pile_reset = True  # Playing a 2 always resets the pile
 
-        self.history.append((player_id, move))
+        self.history.append((p_id, move))
         self.first_turn = False
 
-        if not self.hands[player_id] and player_id not in self.out_order:
+        if not self.hands[p_id] and p_id not in self.out_order:
             if self.verbose:
-                print(f"Player {player_id} is out!\n")
+                print(f"Player {p_id} is out!\n")
                 input("Press Enter to continue...\n")
 
-            self.out_order.append(player_id)
-            self.ended_2.append(player_id) if card_val == 15 else None
+            self.out_order.append(p_id)
+            self.ended_2.append(p_id) if card_val == 15 else None
 
-            if player_id in self.playing:
-                self.playing.remove(player_id)
+            if p_id in self.playing:
+                self.playing.remove(p_id)
             self.game_over = self._is_game_over()
 
         if self.game_over:
-            self.curr_turn = player_id
+            self.curr_turn = p_id
             return self._get_state(self.curr_turn), self.game_over
 
         if pile_reset:
@@ -435,11 +471,11 @@ class Presidenten:
                 self.pile_leader, ignore_passed=True, include_start=True
             )
         else:
-            temp_next_turn = self._get_next_active_player(player_id)
+            temp_next_turn = self._get_next_active_player(p_id)
 
         if move != (0, 0, 0) and not self.game_over:
             finish = self.handle_finishing(
-                card_val, rcount, player_id, twos, temp_next_turn, pile_reset
+                card_val, rcount, p_id, twos, temp_next_turn, pile_reset
             )
             if finish:
                 return self._get_state(self.curr_turn), self.game_over
@@ -479,23 +515,78 @@ class Presidenten:
         return f"{count}x {card_name}"
 
 
+def get_settings():
+    assign_p = {}
+    dmc_paths = {}
+
+    num_players = get_val_input(
+        "Number of players (4-7): ", int, valid_choices={4, 5, 6, 7}
+    )
+    num_rounds = get_val_input("Number of rounds: ", int)
+
+    for p_id in range(num_players):
+        prompt = (
+            f"Player {p_id} - 0: Human, 1: Random, 2: Baseline, 3: ISMCTS, 4: DMC: "
+        )
+        raw_choice = get_val_input(prompt, int, valid_choices={0, 1, 2, 3, 4})
+        assign_p[p_id] = PlayerType(raw_choice)
+
+    has_human = PlayerType.HUMAN in assign_p.values()
+    parallelism = None
+
+    if PlayerType.ISMCTS in assign_p.values():
+        choices = {"g", "s"} if not has_human else {"s"}
+        prompt = "ISMCTS search or game parallelism? (g/s): " if not has_human else ""
+        parallelism = (
+            get_val_input(prompt, str, valid_choices=choices).lower() if prompt else "s"
+        )
+
+    dmc_count = list(assign_p.values()).count(PlayerType.DMC)
+    if dmc_count > 0:
+        while True:
+            dmc_input = input(
+                f"{dmc_count} DMC Bot(s) detected. Enter batch indices (comma-separated, e.g., 1000,2000): "
+            )
+            indices = [
+                int(idx.strip())
+                for idx in dmc_input.split(",")
+                if idx.strip().isdigit()
+            ]
+            paths = [f"snapshots/model_gen_{idx}.pt" for idx in indices]
+
+            if len(paths) == dmc_count and all(os.path.isfile(path) for path in paths):
+                dmc_p_ids = [
+                    p_id
+                    for p_id, p_type in assign_p.items()
+                    if p_type == PlayerType.DMC
+                ]
+                dmc_paths = dict(zip(dmc_p_ids, paths))
+                break
+            print("Invalid input or snapshot files missing. Try again.\n")
+    return parallelism, assign_p, has_human, num_players, num_rounds, dmc_paths
+
+
 def play_presidenten_game(
     game_id,
     num_players,
     num_rounds,
-    player_types,
-    iterations=200,
     parallelism="g",
+    iterations=400,
     has_human=False,
     executor=None,
-    assign_p=dict(),
-    dmc_paths=list(),
+    assign_p=None,
+    dmc_paths=None,
 ):
     from playerTypes.human import HumanPlayer
     from playerTypes.random_bot import PresidentenRandomBot
     from playerTypes.baseline_bot import PresidentenBaselineBot
     from playerTypes.ismcts_bot import PresidentenISMCTSBot
     from playerTypes.dmc_bot import PresidentenDMCBot, PresidentenValueNet
+
+    if assign_p is None:
+        assign_p = {}
+    if dmc_paths is None:
+        dmc_paths = {}
 
     ismcts_ids: set[int] = set()
     env = Presidenten(players=num_players, verbose=has_human)
@@ -508,41 +599,38 @@ def play_presidenten_game(
         | PresidentenDMCBot,
     ] = {}
 
-    for p_id, bot_type in assign_p.items():
-        if bot_type == 0:
-            assigned_players[p_id] = HumanPlayer(player_id=p_id)
-        elif bot_type == 1:
-            assigned_players[p_id] = PresidentenRandomBot(player_id=p_id)
-        elif bot_type == 2:
-            assigned_players[p_id] = PresidentenBaselineBot(player_id=p_id)
-        elif bot_type == 3:
+    for p_id, p_type in assign_p.items():
+        if p_type == PlayerType.HUMAN:
+            assigned_players[p_id] = HumanPlayer(p_id)
+        elif p_type == PlayerType.RANDOM:
+            assigned_players[p_id] = PresidentenRandomBot(p_id)
+        elif p_type == PlayerType.BASELINE:
+            assigned_players[p_id] = PresidentenBaselineBot(p_id)
+        elif p_type == PlayerType.ISMCTS:
             ismcts_ids.add(p_id)
-            assigned_players[p_id] = PresidentenISMCTSBot(
-                player_id=p_id, iterations=iterations
-            )
-        elif bot_type == 4:
+            assigned_players[p_id] = PresidentenISMCTSBot(p_id, iterations)
+        elif p_type == PlayerType.DMC:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             dmc_model = PresidentenValueNet().to(device)
 
-            if dmc_paths:
-                dmc_model.load_state_dict(torch.load(dmc_paths[0], map_location=device))
-                dmc_paths.pop(0)
+            if p_id in dmc_paths:
+                dmc_model.load_state_dict(
+                    torch.load(dmc_paths[p_id], map_location=device)
+                )
 
             dmc_model.eval()
-            assigned_players[p_id] = PresidentenDMCBot(
-                player_id=p_id, model=dmc_model, device=device
-            )
+            assigned_players[p_id] = PresidentenDMCBot(p_id, dmc_model, device)
 
-    for round_idx in range(num_rounds):
-        state = env.full_reset(next_round=(round_idx > 0))
+    for idx in range(num_rounds):
+        state = env.full_reset(next_round=(idx > 0))
         if has_human:
-            print(f"=== ROUND {round_idx + 1} ===")
+            print(f"=== ROUND {idx+1} ===")
             print("Player Roles for this Round:")
 
-            if round_idx == 0:
+            if idx == 0:
                 role_items = sorted(env.roles.items())
             else:
-                role_order = {role: idx for idx, role in enumerate(env._get_roles())}
+                role_order = {role: i for i, role in enumerate(env._get_roles())}
                 role_items = sorted(
                     env.roles.items(),
                     key=lambda item: (role_order[item[1]], item[0]),
@@ -552,7 +640,7 @@ def play_presidenten_game(
                 print(f" -> Player {p_id}: {role}")
             print("-" * 50, "\n")
 
-        if round_idx > 0:
+        if idx > 0:
             cards_to_pass = {}
             for p_id, role in env.roles.items():
                 if role != "Citizen":
@@ -566,194 +654,120 @@ def play_presidenten_game(
             state = env._get_state(env.curr_turn)
 
         while not env.game_over:
-            curr_player_id = env.curr_turn
-            if curr_player_id is None:
+            curr_p_id = env.curr_turn
+            if curr_p_id is None:
                 break
-            curr_player_type = assigned_players[curr_player_id]
+            curr_p_type = assigned_players[curr_p_id]
 
-            if curr_player_id in ismcts_ids:
-                assert isinstance(curr_player_type, PresidentenISMCTSBot)
-                chosen_move = curr_player_type.get_move(
+            if curr_p_id in ismcts_ids:
+                assert isinstance(curr_p_type, PresidentenISMCTSBot)
+                chosen_move = curr_p_type.get_move(
                     state,
                     env,
-                    parallelism=parallelism,
-                    executor=executor,
+                    executor,
+                    parallelism,
                 )
             else:
-                chosen_move = curr_player_type.get_move(state, env)
+                chosen_move = curr_p_type.get_move(state, env)
 
             if has_human and not state["is_finish_prompt"]:
+                p_name = assign_p[curr_p_id].name if assign_p[curr_p_id] else "Unknown"
                 print(
-                    f"\nPlayer {curr_player_id} ({state["my_role"]}, {player_types.get(curr_player_id, 'Unknown')}) chose: "
+                    f"\nPlayer {curr_p_id} ({state["my_role"]}, {p_name}) chose: "
                     f"{Presidenten.visualize_move(chosen_move)}\n"
                 )
-                if not isinstance(curr_player_type, HumanPlayer):
+                if not isinstance(curr_p_type, HumanPlayer):
                     input("Press Enter to continue...\n")
-            state, _ = env.step(curr_player_id, chosen_move)
+            state, _ = env.step(curr_p_id, chosen_move)
 
         env.assign_roles()
         if has_human:
             print(
-                f"Round {round_idx + 1} Complete! Finishing Order: {env.out_order}. "
+                f"Round {idx+1} Complete! Finishing Order: {env.out_order}. "
                 f"Players who finished with a 2: {env.ended_2}. Scores: {env.scores}\n"
             )
             input("Press Enter to continue...\n")
     return env.scores
 
 
-def get_settings():
-    assign_p = {}
-    parallelism = None
-    dmc_indices = []
-
-    num_players = int(input("Number of players (4-7): "))
-    while num_players not in {4, 5, 6, 7}:
-        print("Invalid number of players. Please enter a number between 4 and 7.\n")
-        num_players = int(input("Number of players (4-7): "))
-
-    num_rounds = int(input("Number of rounds: "))
-
-    for p in range(num_players):
-        opt = input(
-            f"Player {p} - 0: Human, 1: Random Bot, 2: Baseline Bot, 3: ISMCTS Bot, 4: DMC Bot: "
-        )
-        while opt not in {"0", "1", "2", "3", "4"}:
-            print("Invalid option. Please try again.\n")
-            opt = input(
-                f"Player {p} - 0: Human, 1: Random Bot, 2: Baseline Bot, 3: ISMCTS Bot, 4: DMC Bot: "
-            )
-
-        assign_p[p] = int(opt)
-
-    has_human = any(opt == 0 for opt in assign_p.values())
-
-    if any(opt == 3 for opt in assign_p.values()):
-        parallelism = (
-            "s" if has_human else input("ISMCTS search or game parallelism? (G/s): \n")
-        ).lower()
-        while parallelism not in {"g", "s"}:
-            parallelism = input("ISMCTS search or game parallelism? (G/s): \n").lower()
-
-    if (count := list(assign_p.values()).count(4)) > 0:
-        dmc_input = input(
-            f"{count} DMC Bot(s) detected. Please enter the batch idxes of the trained models to load, separated by commas (e.g. 1000,2000): "
-        )
-        dmc_indices = [
-            int(x.strip()) for x in dmc_input.split(",") if x.strip().isdigit()
-        ]
-        dmc_paths = [f"snapshots/model_gen_{idx}.pt" for idx in dmc_indices]
-
-        while len(dmc_paths) != count or not all(
-            os.path.isfile(path) for path in dmc_paths
-        ):
-            print("Invalid input or file not found. Please try again.\n")
-            dmc_input = input(
-                f"{count} DMC Bot(s) detected. Please enter the batch idxes of the trained models to load, separated by commas (e.g. 1000,2000): "
-            )
-            dmc_indices = [
-                int(x.strip()) for x in dmc_input.split(",") if x.strip().isdigit()
-            ]
-            dmc_paths = [f"snapshots/model_gen_{idx}.pt" for idx in dmc_indices]
-
-    return (parallelism, assign_p, has_human, num_players, num_rounds, dmc_paths)
-
-
-def get_player_types(assign_p):
-    mapping = {
-        0: "Human",
-        1: "Random Bot",
-        2: "Baseline Bot",
-        3: "ISMCTS Bot",
-        4: "DMC Bot",
-    }
-
-    return {
-        p_id: mapping.get(player_type, "Unknown")
-        for p_id, player_type in assign_p.items()
-    }
-
-
 def game_parallelism(
-    parallelism,
     assign_p,
-    player_types,
-    final_score,
-    num_players=4,
-    num_rounds=10,
-    dmc_paths=None,
+    num_players,
+    num_rounds,
+    dmc_paths,
+    total_games,
+    num_workers,
 ):
-    print(f"Starting Tournament: {TOTAL_GAMES} games, {num_rounds} rounds each.")
-    print(f"Deploying across {NUM_WORKERS} parallel game workers...\n")
+    print(f"Starting Tournament: {total_games} games, {num_rounds} rounds each.")
+    print(f"Deploying across {num_workers} parallel game workers...\n")
 
-    futures = []
-    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as tournament_executor:
-        for game_idx in range(TOTAL_GAMES):
-            f = tournament_executor.submit(
+    master_scores = {p_id: (0, 0) for p_id in range(num_players)}
+    with ProcessPoolExecutor(num_workers) as executor:
+        futures = [
+            executor.submit(
                 play_presidenten_game,
-                game_idx,
+                idx,
                 num_players,
                 num_rounds,
-                player_types,
-                BASE_ISMCTS_ITERATIONS,
-                parallelism,
+                "g",
+                400,
                 assign_p=assign_p,
                 dmc_paths=dmc_paths,
             )
-            futures.append(f)
-
-        for idx, f in enumerate(futures):
-            game_result = f.result()
-            print(f" -> Game {idx+1}/{TOTAL_GAMES} finished processing.")
-
-            final_score = {
-                p: (
-                    final_score[p][0] + game_result[p][0],
-                    final_score[p][1] + game_result[p][1],
-                )
-                for p in range(num_players)
-            }
-    return final_score
+            for idx in range(total_games)
+        ]
+        for i, f in enumerate(futures):
+            master_scores = update_final_scores(master_scores, f.result())
+            print(f" -> Game {i+1}/{total_games} finished processing.")
+    return master_scores
 
 
 def search_parallelism(
-    parallelism,
     assign_p,
     has_human,
-    player_types,
-    final_score,
-    num_players=4,
-    num_rounds=10,
-    dmc_paths=None,
+    num_players,
+    num_rounds,
+    dmc_paths,
+    total_games,
+    num_workers,
 ):
-    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as shared_executor:
-        for game_idx in range(TOTAL_GAMES):
-            print(f"\n=== GAME {game_idx+1} ===\n")
-            score = play_presidenten_game(
-                game_idx,
+    master_scores = {p_id: (0, 0) for p_id in range(num_players)}
+    iters = 1000 + 200 * (num_players - 4)
+
+    with ProcessPoolExecutor(num_workers) as shared_executor:
+        for idx in range(total_games):
+            print(f"\n=== GAME {idx+1} ===\n")
+            round_scores = play_presidenten_game(
+                idx,
                 num_players,
                 num_rounds,
-                player_types,
-                SEARCH_PARALLELISM_ITERS,
-                parallelism,
-                executor=shared_executor,
-                assign_p=assign_p,
-                has_human=has_human,
-                dmc_paths=dmc_paths,
+                "s",
+                iters,
+                has_human,
+                shared_executor,
+                assign_p,
+                dmc_paths,
             )
-            final_score = {
-                p: (final_score[p][0] + score[p][0], final_score[p][1] + score[p][1])
-                for p in range(num_players)
-            }
-    return final_score
+            master_scores = update_final_scores(master_scores, round_scores)
+    return master_scores
 
 
-def print_scores(scores, player_types):
+def update_final_scores(master_scores, round_scores):
+    for p_id in master_scores:
+        master_scores[p_id] = (
+            master_scores[p_id][0] + round_scores[p_id][0],
+            master_scores[p_id][1] + round_scores[p_id][1],
+        )
+    return master_scores
+
+
+def print_scores(scores, assign_p):
     print("\n" + "=" * 60)
     print(f"=== FINAL SCORES: {TOTAL_GAMES} Games | {num_rounds} Rounds Each ===")
     print("=" * 60)
 
     for p_id in sorted(scores, key=lambda x: scores[x][0], reverse=True):
-        player_type = player_types.get(p_id, "Unknown") if player_types else "Unknown"
+        p_name = assign_p[p_id].name if assign_p[p_id] else "Unknown"
         avg_finish_pos = num_players - (scores[p_id][0] / (TOTAL_GAMES * num_rounds))
         win_rate = scores[p_id][1] / (TOTAL_GAMES * num_rounds) * 100
         avg_norm_score = (
@@ -761,7 +775,7 @@ def print_scores(scores, player_types):
         ) * 2 - 1
 
         print(
-            f"Player {p_id} ({player_type}): "
+            f"Player {p_id} ({p_name}): "
             f"Average Finishing Position: {avg_finish_pos:.2f} | "
             f"Win Rate: {win_rate:.2f}% | "
             f"Average Normalized Score: {avg_norm_score:.2f}"
@@ -776,47 +790,39 @@ if __name__ == "__main__":
     parallelism, assign_p, has_human, num_players, num_rounds, dmc_paths = (
         get_settings()
     )
-
-    final_score = {i: (0, 0) for i in range(num_players)}
-    player_types = get_player_types(assign_p)
+    master_scores = {p_id: (0, 0) for p_id in range(num_players)}
 
     if parallelism == "g":
         BASE_ISMCTS_ITERATIONS = 400
-        final_score = game_parallelism(
-            parallelism,
+        master_scores = game_parallelism(
             assign_p,
-            player_types,
-            final_score,
             num_players,
             num_rounds,
-            dmc_paths=dmc_paths,
+            dmc_paths,
+            TOTAL_GAMES,
+            NUM_WORKERS,
         )
     elif parallelism == "s":
         SEARCH_PARALLELISM_ITERS = 1000 + 200 * (num_players - 4)
-        final_score = search_parallelism(
-            parallelism,
+        master_scores = search_parallelism(
             assign_p,
             has_human,
-            player_types,
-            final_score,
             num_players,
             num_rounds,
-            dmc_paths=dmc_paths,
+            dmc_paths,
+            TOTAL_GAMES,
+            NUM_WORKERS,
         )
     else:
-        for game_idx in range(TOTAL_GAMES):
-            print(f"\n=== GAME {game_idx+1} ===\n")
-            score = play_presidenten_game(
-                game_idx,
+        for idx in range(TOTAL_GAMES):
+            print(f"\n=== GAME {idx+1} ===\n")
+            round_scores = play_presidenten_game(
+                idx,
                 num_players,
                 num_rounds,
-                player_types,
                 assign_p=assign_p,
                 has_human=has_human,
                 dmc_paths=dmc_paths,
             )
-            final_score = {
-                p: (final_score[p][0] + score[p][0], final_score[p][1] + score[p][1])
-                for p in range(num_players)
-            }
-    print_scores(final_score, player_types)
+            master_scores = update_final_scores(master_scores, round_scores)
+    print_scores(master_scores, assign_p)

@@ -55,8 +55,8 @@ class PresidentenISMCTSBot:
         state: dict,
         real_env: Presidenten,
         executor=None,
-        num_workers=4,
         parallelism="g",
+        num_workers=4,
     ):
         legal_moves = state["legal_moves"]
         total_stats = {}
@@ -355,7 +355,11 @@ class PresidentenISMCTSBot:
                 cards_must_appear = high_to_low[:min_count]
 
                 for c in cards_must_appear:
-                    valid_players = [p for p in eligible_players if len(hands[p]) < opp_hand_counts[p]]
+                    valid_players = [
+                        p
+                        for p in eligible_players
+                        if len(hands[p]) < opp_hand_counts[p]
+                    ]
                     if valid_players and c in pool:
                         chosen_player = random.choice(valid_players)
                         hands[chosen_player].append(c)
@@ -364,7 +368,9 @@ class PresidentenISMCTSBot:
         for p in hands:
             needed = opp_hand_counts[p] - len(hands[p])
             if needed > 0:
-                chosen = random.sample(pool, needed) if len(pool) >= needed else pool.copy()
+                chosen = (
+                    random.sample(pool, needed) if len(pool) >= needed else pool.copy()
+                )
                 for c in chosen:
                     pool.remove(c)
                     hands[p].append(c)
