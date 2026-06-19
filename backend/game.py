@@ -812,7 +812,7 @@ def print_scores(scores, assign_p: dict[int, PlayerType]):
 
 if __name__ == "__main__":
     TOTAL_GAMES = 1000
-    NUM_WORKERS = 10
+    NUM_WORKERS = 10  # Adjust based on your system's CPU cores and memory
 
     parallelism, assign_p, has_human, num_players, num_rounds, dmc_paths = (
         get_settings()

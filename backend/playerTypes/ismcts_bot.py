@@ -56,7 +56,7 @@ class PresidentenISMCTSBot:
         real_env: Presidenten,
         executor: ProcessPoolExecutor | None = None,
         parallelism="g",
-        num_workers=4,
+        num_workers=10,
     ):
         legal_moves = state["legal_moves"]
         opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
@@ -427,7 +427,7 @@ class PresidentenISMCTSBot:
         pair_id,
         min_received,
     ):
-        sim_env = Presidenten(players=real_env.players, verbose=False)
+        sim_env = Presidenten(players=real_env.players)
 
         sim_env.last_move = real_env.last_move
         sim_env.pile_leader = real_env.pile_leader

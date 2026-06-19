@@ -30,7 +30,7 @@ def run_single_game(live_model, device, league_models=None):
             )
             bot_instances[seat].trajectory = []
 
-    env = Presidenten(players=4, verbose=False)
+    env = Presidenten(players=4)
     for round_idx in range(ROUNDS_PER_GAME):
         state = env.full_reset(next_round=(round_idx > 0))
         if round_idx > 0:
