@@ -1,10 +1,18 @@
+from __future__ import annotations
 import random
-from typing import Callable, overload, TypeVar, Any
 import torch
 import os
+from typing import Callable, overload, TypeVar, Any, TYPE_CHECKING
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from enum import IntEnum
+
+if TYPE_CHECKING:
+    from playerTypes.human import HumanPlayer
+    from playerTypes.random_bot import PresidentenRandomBot
+    from playerTypes.baseline_bot import PresidentenBaselineBot
+    from playerTypes.ismcts_bot import PresidentenISMCTSBot
+    from playerTypes.dmc_bot import PresidentenDMCBot
 
 
 class PlayerType(IntEnum):
@@ -566,12 +574,11 @@ def get_settings():
     has_human = PlayerType.HUMAN in assign_p.values()
     parallelism = None
 
-    if PlayerType.ISMCTS in assign_p.values():
-        choices = {"g", "s"} if not has_human else {"s"}
-        prompt = "ISMCTS search or game parallelism? (g/s): " if not has_human else ""
-        parallelism = (
-            get_val_input(prompt, str, valid_choices=choices).lower() if prompt else "s"
-        )
+    choices = {"g", "s"} if not has_human else {"s"}
+    prompt = "Search or game parallelism? (g/s): " if not has_human else ""
+    parallelism = (
+        get_val_input(prompt, str, valid_choices=choices).lower() if prompt else "s"
+    )
 
     dmc_count = list(assign_p.values()).count(PlayerType.DMC)
     if dmc_count > 0:
@@ -593,30 +600,13 @@ def get_settings():
     return parallelism, assign_p, has_human, num_players, num_rounds, dmc_paths
 
 
-def play_presidenten_game(
-    game_id,
-    num_players,
-    num_rounds,
-    parallelism="g",
-    iterations=400,
-    has_human=False,
-    executor=None,
-    assign_p: dict[int, PlayerType] | None = None,
-    dmc_paths=None,
-):
+def create_players(assign_p: dict[int, PlayerType], iterations=400, dmc_paths=None):
     from playerTypes.human import HumanPlayer
     from playerTypes.random_bot import PresidentenRandomBot
     from playerTypes.baseline_bot import PresidentenBaselineBot
     from playerTypes.ismcts_bot import PresidentenISMCTSBot
     from playerTypes.dmc_bot import PresidentenDMCBot, PresidentenValueNet
 
-    if assign_p is None:
-        assign_p = {}
-    if dmc_paths is None:
-        dmc_paths = {}
-
-    ismcts_ids: set[int] = set()
-    env = Presidenten(players=num_players, verbose=has_human)
     assigned_players: dict[
         int,
         HumanPlayer
@@ -625,7 +615,6 @@ def play_presidenten_game(
         | PresidentenISMCTSBot
         | PresidentenDMCBot,
     ] = {}
-
     for p_id, p_type in assign_p.items():
         if p_type == PlayerType.HUMAN:
             assigned_players[p_id] = HumanPlayer(p_id)
@@ -634,19 +623,41 @@ def play_presidenten_game(
         elif p_type == PlayerType.BASELINE:
             assigned_players[p_id] = PresidentenBaselineBot(p_id)
         elif p_type == PlayerType.ISMCTS:
-            ismcts_ids.add(p_id)
             assigned_players[p_id] = PresidentenISMCTSBot(p_id, iterations)
         elif p_type == PlayerType.DMC:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             dmc_model = PresidentenValueNet().to(device)
 
-            if p_id in dmc_paths:
-                dmc_model.load_state_dict(
-                    torch.load(dmc_paths[p_id], map_location=device)
-                )
+            if dmc_paths and p_id in dmc_paths:
+                snap = torch.load(dmc_paths[p_id], map_location=device)
+                dmc_model.load_state_dict(snap["model_state_dict"])
 
             dmc_model.eval()
             assigned_players[p_id] = PresidentenDMCBot(p_id, dmc_model, device)
+    return assigned_players
+
+
+def play_presidenten_game(
+    game_id,
+    num_players,
+    num_rounds,
+    assigned_players: dict[
+        int,
+        HumanPlayer
+        | PresidentenRandomBot
+        | PresidentenBaselineBot
+        | PresidentenISMCTSBot
+        | PresidentenDMCBot,
+    ],
+    assign_p: dict[int, PlayerType],
+    parallelism="g",
+    has_human=False,
+    executor=None,
+):
+    ismcts_ids: set[int] = {
+        p_id for p_id, p_type in assign_p.items() if p_type == PlayerType.ISMCTS
+    }
+    env = Presidenten(players=num_players, verbose=has_human)
 
     for idx in range(num_rounds):
         state = env.full_reset(next_round=(idx > 0))
@@ -687,7 +698,7 @@ def play_presidenten_game(
             curr_p_type = assigned_players[curr_p_id]
 
             if curr_p_id in ismcts_ids:
-                assert isinstance(curr_p_type, PresidentenISMCTSBot)
+                assert curr_p_type.__class__.__name__ == "PresidentenISMCTSBot"
                 chosen_move = curr_p_type.get_move(
                     state,
                     env,
@@ -703,7 +714,7 @@ def play_presidenten_game(
                     f"\nPlayer {curr_p_id} ({state["my_role"]}, {p_name}) chose: "
                     f"{Presidenten.visualize_move(chosen_move)}\n"
                 )
-                if not isinstance(curr_p_type, HumanPlayer):
+                if curr_p_type.__class__.__name__ != "HumanPlayer":
                     input("Press Enter to continue...\n")
             state, _ = env.step(curr_p_id, chosen_move)
 
@@ -715,6 +726,37 @@ def play_presidenten_game(
             )
             input("Press Enter to continue...\n")
     return env.scores
+
+
+worker_players: (
+    dict[
+        int,
+        HumanPlayer
+        | PresidentenRandomBot
+        | PresidentenBaselineBot
+        | PresidentenISMCTSBot
+        | PresidentenDMCBot,
+    ]
+    | None
+) = None
+
+
+def init_worker(assign_p, iterations, dmc_paths):
+    global worker_players
+    worker_players = create_players(assign_p, iterations, dmc_paths)
+
+
+def worker_game_task(game_id, num_players, num_rounds, assign_p):
+    global worker_players
+    assert worker_players is not None, "Worker players not initialized"
+    return play_presidenten_game(
+        game_id,
+        num_players,
+        num_rounds,
+        worker_players,
+        assign_p,
+        "g",
+    )
 
 
 def game_parallelism(
@@ -729,17 +771,18 @@ def game_parallelism(
     print(f"Deploying across {num_workers} parallel game workers...\n")
 
     master_scores = {p_id: (0, 0) for p_id in range(num_players)}
-    with ProcessPoolExecutor(num_workers) as executor:
+    iters = 400
+
+    with ProcessPoolExecutor(
+        num_workers, initializer=init_worker, initargs=(assign_p, iters, dmc_paths)
+    ) as executor:
         futures = [
             executor.submit(
-                play_presidenten_game,
+                worker_game_task,
                 idx,
                 num_players,
                 num_rounds,
-                "g",
-                400,
-                assign_p=assign_p,
-                dmc_paths=dmc_paths,
+                assign_p,
             )
             for idx in range(total_games)
         ]
@@ -759,21 +802,22 @@ def search_parallelism(
     num_workers,
 ):
     master_scores = {p_id: (0, 0) for p_id in range(num_players)}
-    iters = 1000 + 200 * (num_players - 4)
+    iters = 1200 + 200 * (num_players - 4)
+    assigned_players = create_players(assign_p, iters, dmc_paths)
 
     with ProcessPoolExecutor(num_workers) as shared_executor:
         for idx in range(total_games):
-            print(f"\n=== GAME {idx+1} ===\n")
+            if idx % 10 == 0:
+                print(f"\n=== GAME {idx+1} ===\n")
             round_scores = play_presidenten_game(
                 idx,
                 num_players,
                 num_rounds,
+                assigned_players,
+                assign_p,
                 "s",
-                iters,
                 has_human,
                 shared_executor,
-                assign_p,
-                dmc_paths,
             )
             master_scores = update_final_scores(master_scores, round_scores)
     return master_scores
@@ -811,8 +855,8 @@ def print_scores(scores, assign_p: dict[int, PlayerType]):
 
 
 if __name__ == "__main__":
-    TOTAL_GAMES = 1000
-    NUM_WORKERS = 10  # Adjust based on your system's CPU cores and memory
+    TOTAL_GAMES = 996
+    NUM_WORKERS = 12  # Adjust based on your system's CPU cores and memory
 
     parallelism, assign_p, has_human, num_players, num_rounds, dmc_paths = (
         get_settings()
@@ -820,7 +864,6 @@ if __name__ == "__main__":
     master_scores = {p_id: (0, 0) for p_id in range(num_players)}
 
     if parallelism == "g":
-        BASE_ISMCTS_ITERATIONS = 400
         master_scores = game_parallelism(
             assign_p,
             num_players,
@@ -830,7 +873,6 @@ if __name__ == "__main__":
             NUM_WORKERS,
         )
     elif parallelism == "s":
-        SEARCH_PARALLELISM_ITERS = 1000 + 200 * (num_players - 4)
         master_scores = search_parallelism(
             assign_p,
             has_human,
@@ -841,15 +883,17 @@ if __name__ == "__main__":
             NUM_WORKERS,
         )
     else:
+        assigned_players = create_players(assign_p, 400, dmc_paths)
         for idx in range(TOTAL_GAMES):
-            print(f"\n=== GAME {idx+1} ===\n")
+            if idx % 10 == 0:
+                print(f"\n=== GAME {idx+1} ===\n")
             round_scores = play_presidenten_game(
                 idx,
                 num_players,
                 num_rounds,
-                assign_p=assign_p,
+                assigned_players,
+                assign_p,
                 has_human=has_human,
-                dmc_paths=dmc_paths,
             )
             master_scores = update_final_scores(master_scores, round_scores)
     print_scores(master_scores, assign_p)

@@ -1,20 +1,42 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import random
 
 from game import Presidenten
 from playerTypes.baseline_bot import PresidentenBaselineBot
 
 
+class PresidentenValueNet(nn.Module):
+    def __init__(self, input_dim=91):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 512),
+            nn.LayerNorm(512),
+            nn.LeakyReLU(0.1),
+            nn.Linear(512, 512),
+            nn.LeakyReLU(0.1),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.1),
+            nn.Linear(256, 1),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
 class PresidentenDMCBot:
-    def __init__(self, player_id, model: PresidentenValueNet, device, training=False):
+    def __init__(
+        self, player_id, model: PresidentenValueNet, device, training=False, epsilon=0.2
+    ):
         self.player_id = player_id
         self.model = model.to(device)
         self.device = device
         self.trajectory = []
         self.training = training
+        self.epsilon = epsilon
 
-    def get_move(self, state, env: Presidenten):
+    def get_move(self, state, env: Presidenten, *args, **kwargs):
         legal_moves = state["legal_moves"]
         if not legal_moves:
             return (0, 0, 0)
@@ -25,13 +47,14 @@ class PresidentenDMCBot:
             features = [
                 vectorize_state_action(state, move, env.players) for move in legal_moves
             ]
-            features_tensor = torch.FloatTensor(np.array(features)).to(self.device)
-
-            with torch.no_grad():
-                output_tensor: torch.Tensor = self.model(features_tensor)
-                q_values = output_tensor.squeeze(-1).cpu().numpy()
-
-            best_idx = np.argmax(q_values)
+            if self.training and random.random() < self.epsilon:
+                best_idx = random.randint(0, len(legal_moves) - 1)
+            else:
+                features_tensor = torch.FloatTensor(np.array(features)).to(self.device)
+                with torch.no_grad():
+                    output_tensor: torch.Tensor = self.model(features_tensor)
+                    q_values = output_tensor.squeeze(-1).cpu().numpy()
+                best_idx = np.argmax(q_values)
             chosen_move = legal_moves[best_idx]
 
             if self.training:
@@ -44,21 +67,6 @@ class PresidentenDMCBot:
         return PresidentenBaselineBot(player_id=self.player_id).choose_cards_to_pass(
             state
         )
-
-
-class PresidentenValueNet(nn.Module):
-    def __init__(self, input_dim=91):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
-        )
-
-    def forward(self, x):
-        return self.net(x)
 
 
 def vectorize_state_action(state, move, num_players=4):
@@ -78,25 +86,26 @@ def vectorize_state_action(state, move, num_players=4):
     hand_vector = np.zeros(13, dtype=np.float32)
     for card in state["hand"]:
         hand_vector[card - 3] += 1.0
+    hand_vector /= 4.0  # Normalize to [0, 1] range
 
-    history_vector = np.array(state["history_vector"], dtype=np.float32)
+    history_vector = np.array(state["history_vector"], dtype=np.float32) / 4.0
 
     last_move_vector = np.zeros(15, dtype=np.float32)
     p_card, p_count, p_twos = state["last_move"]
     if p_card != 0:
         last_move_vector[p_card - 3] = 1.0
-        last_move_vector[13] = float(p_count)
-        last_move_vector[14] = float(p_twos)
+        last_move_vector[13] = float(p_count) / 4.0
+        last_move_vector[14] = float(p_twos) / 4.0
 
     my_id = [p for p in range(num_players) if p not in opp_hand_counts][0]
-    opp_counts = [float(len(state["hand"]))]
+    opp_counts = [float(len(state["hand"])) / 13.0]
     player_roles = []
     pile_status = []
 
     for i in range(num_players):
         opp_id = (my_id + i) % num_players
         if i > 0:
-            opp_counts.append(float(opp_hand_counts[opp_id]))
+            opp_counts.append(float(opp_hand_counts[opp_id]) / 13.0)
 
         role_str = state_player_roles[opp_id]
         player_roles.append(ROLE_MAP.get(role_str, 0.5))
@@ -113,13 +122,14 @@ def vectorize_state_action(state, move, num_players=4):
     recent_history = state["history"][-4:]
 
     for idx, (act_p_id, act_move) in enumerate(recent_history):
-        rel_pos = float((act_p_id - my_id) % num_players)
+        rel_pos = float((act_p_id - my_id) % num_players) / float(num_players)
         m_card, m_count, m_twos = act_move
+        norm_card = float(m_card - 3) / 12.0 if m_card != 0 else 0.0
         offset = idx * 4
         action_window[offset] = rel_pos
-        action_window[offset + 1] = float(m_card)
-        action_window[offset + 2] = float(m_count)
-        action_window[offset + 3] = float(m_twos)
+        action_window[offset + 1] = norm_card
+        action_window[offset + 2] = float(m_count) / 4.0
+        action_window[offset + 3] = float(m_twos) / 4.0
 
     misc_vector = np.array(
         [
@@ -148,6 +158,6 @@ def vectorize_state_action(state, move, num_players=4):
         action_vector[15] = 1.0
     else:
         action_vector[m_card - 3] = 1.0
-        action_vector[13] = float(m_count)
-        action_vector[14] = float(m_twos)
+        action_vector[13] = float(m_count) / 4.0
+        action_vector[14] = float(m_twos) / 4.0
     return np.concatenate([state_vector, action_vector])
