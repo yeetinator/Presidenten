@@ -4,16 +4,19 @@ import random
 import os
 import concurrent.futures
 import numpy as np
+import multiprocessing
+from playerTypes.baseline_bot import PresidentenBaselineBot
 from playerTypes.dmc_bot import PresidentenDMCBot, PresidentenValueNet
 from game import Presidenten
 
 BATCH_GAMES = 48
 ROUNDS_PER_GAME = 10
-SAVE_SNAPSHOT_EVERY = 500
+SAVE_SNAPSHOT_EVERY = 250
 LEARNING_RATE = 1e-4
-INPUT_DIM = 91
+INPUT_DIM = 119
 GRADIENT_CLIP = 1.0
 NUM_WORKERS = 12
+
 _GLOBAL_LIVE_MODEL = None
 _SNAPSHOT_CACHE = {}
 
@@ -25,28 +28,22 @@ def init_worker():
     _GLOBAL_LIVE_MODEL.eval()
 
 
-def parallel_worker(model_state, epsilon, snapshot_paths=None):
+def parallel_worker(model_state, epsilon, youngest_paths=None, oldest_paths=None):
     global _GLOBAL_LIVE_MODEL, _SNAPSHOT_CACHE
     if _GLOBAL_LIVE_MODEL is not None:
         _GLOBAL_LIVE_MODEL.load_state_dict(model_state)
 
-    local_league_models = []
-    if snapshot_paths:
-        for path in snapshot_paths:
+    paths = (youngest_paths or []) + (oldest_paths or [])
+    if paths:
+        for path in paths:
             if path not in _SNAPSHOT_CACHE:
                 snap_model = PresidentenValueNet(INPUT_DIM).to("cpu")
                 checkpoint = torch.load(path, map_location="cpu")
-
-                if "model_state_dict" in checkpoint:
-                    snap_model.load_state_dict(checkpoint["model_state_dict"])
-                else:
-                    snap_model.load_state_dict(checkpoint)
-
+                snap_model.load_state_dict(checkpoint["model_state_dict"])
                 snap_model.eval()
                 _SNAPSHOT_CACHE[path] = snap_model
-            local_league_models.append(_SNAPSHOT_CACHE[path])
-    if snapshot_paths and len(_SNAPSHOT_CACHE) > 200:
-        active_paths = set(snapshot_paths)
+    if len(_SNAPSHOT_CACHE) > 200:
+        active_paths = set(paths)
         _SNAPSHOT_CACHE = {
             k: v for k, v in _SNAPSHOT_CACHE.items() if k in active_paths
         }
@@ -54,21 +51,37 @@ def parallel_worker(model_state, epsilon, snapshot_paths=None):
         _GLOBAL_LIVE_MODEL,
         torch.device("cpu"),
         epsilon,
-        local_league_models if local_league_models else None,
+        youngest_paths,
+        oldest_paths,
     )
 
 
-def run_single_game(live_model, device, epsilon, league_models=None):
-    bot_instances: dict[int, PresidentenDMCBot] = {}
-    use_snapshot = league_models is not None and random.random() < 0.5
+def run_single_game(
+    live_model, device, epsilon, youngest_paths=None, oldest_paths=None
+):
+    global _SNAPSHOT_CACHE
+    bot_instances: dict[int, PresidentenDMCBot | PresidentenBaselineBot] = {}
+    has_snapshots = bool(youngest_paths or oldest_paths)
+    use_snapshot = has_snapshots and random.random() < 0.5
     snapshot_seats = random.sample(range(4), k=2) if use_snapshot else []
 
     for seat in range(4):
-        if seat in snapshot_seats and league_models:
-            snap_model = random.choice(league_models)
-            bot_instances[seat] = PresidentenDMCBot(
-                player_id=seat, model=snap_model, device=device, training=False
-            )
+        if seat in snapshot_seats:
+            roll = random.random()
+            if roll < 0.8 and youngest_paths:
+                snap_path = random.choice(youngest_paths)
+                snap_model = _SNAPSHOT_CACHE[snap_path]
+                bot_instances[seat] = PresidentenDMCBot(
+                    player_id=seat, model=snap_model, device=device, training=False
+                )
+            elif roll < 0.95 and oldest_paths:
+                snap_path = random.choice(oldest_paths)
+                snap_model = _SNAPSHOT_CACHE[snap_path]
+                bot_instances[seat] = PresidentenDMCBot(
+                    player_id=seat, model=snap_model, device=device, training=False
+                )
+            else:
+                bot_instances[seat] = PresidentenBaselineBot(player_id=seat)
         else:
             bot_instances[seat] = PresidentenDMCBot(
                 player_id=seat,
@@ -77,7 +90,6 @@ def run_single_game(live_model, device, epsilon, league_models=None):
                 training=True,
                 epsilon=epsilon,
             )
-            bot_instances[seat].trajectory = []
 
     env = Presidenten(players=4)
     game_x, game_y = [], []
@@ -95,7 +107,17 @@ def run_single_game(live_model, device, epsilon, league_models=None):
             env.exchange_cards(cards_to_pass)
             state = env._get_state(env.curr_turn)
 
+        move_count = 0
         while not env.game_over:
+            move_count += 1
+            if move_count > 500:
+                for bot in bot_instances.values():
+                    if isinstance(bot, PresidentenDMCBot):
+                        bot.trajectory.clear()
+                return np.empty((0, INPUT_DIM), dtype=np.float32), np.empty(
+                    (0, 1), dtype=np.float32
+                )
+
             curr_player = env.curr_turn
             if curr_player is None:
                 break
@@ -107,15 +129,16 @@ def run_single_game(live_model, device, epsilon, league_models=None):
         max_possible_score = env.players - 1
         for rank, p_id in enumerate(env.out_order):
             bot = bot_instances[p_id]
-            if bot.training and len(bot.trajectory) > 0:
-                round_score = env.players - 1 - rank
-                normalized_score = (round_score / max_possible_score) * 2 - 1
+            if isinstance(bot, PresidentenDMCBot):
+                if bot.training and len(bot.trajectory) > 0:
+                    round_score = env.players - 1 - rank
+                    normalized_score = (round_score / max_possible_score) * 2 - 1
 
-                for features in bot.trajectory:
-                    game_x.append(features)
-                    game_y.append([normalized_score])
-                bot.trajectory.clear()
-    return game_x, game_y
+                    for features in bot.trajectory:
+                        game_x.append(features)
+                        game_y.append([normalized_score])
+                    bot.trajectory.clear()
+    return np.array(game_x, dtype=np.float32), np.array(game_y, dtype=np.float32)
 
 
 def main():
@@ -128,12 +151,14 @@ def main():
     live_model = PresidentenValueNet(INPUT_DIM).to(device)
     optimizer = torch.optim.Adam(live_model.parameters(), lr=LEARNING_RATE)
     loss_fn = torch.nn.MSELoss()
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20000)
 
     if os.path.exists(resume_path):
         print(f"Resuming checkpoint from {resume_path}...")
         checkpoint = torch.load(resume_path, map_location=device)
         live_model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         batch_idx = checkpoint["batch_idx"]
         epsilon = checkpoint["epsilon"]
     else:
@@ -151,27 +176,44 @@ def main():
                 all_x, all_y = [], []
                 current_weights = live_model.state_dict()
                 snapshot_files = glob.glob("snapshots/model_gen_*.pt")
-                selected_files = None
+                youngest_files, oldest_files = None, None
 
                 if snapshot_files:
-                    selected_files = random.sample(
-                        snapshot_files, k=min(3, len(snapshot_files))
+                    snapshot_files.sort(
+                        key=lambda x: int(
+                            os.path.basename(x).split("_")[2].split(".")[0]
+                        )
                     )
+                    youngest_files = snapshot_files[-10:]
+                    oldest_files = snapshot_files[:10]
 
                 futures = [
                     executor.submit(
-                        parallel_worker, current_weights, epsilon, selected_files
+                        parallel_worker,
+                        current_weights,
+                        epsilon,
+                        youngest_files,
+                        oldest_files,
                     )
                     for _ in range(BATCH_GAMES)
                 ]
-                for f in concurrent.futures.as_completed(futures):
-                    game_x, game_y = f.result()
-                    all_x.extend(game_x)
-                    all_y.extend(game_y)
+                try:
+                    for f in concurrent.futures.as_completed(futures, timeout=90.0):
+                        game_x, game_y = f.result()
+                        all_x.append(game_x)
+                        all_y.append(game_y)
+                except concurrent.futures.TimeoutError:
+                    print(f"\nBatch {batch_idx} timed out.")
+                    for f in futures:
+                        f.cancel()
+                    continue
 
                 if all_x:
-                    x_tensor = torch.FloatTensor(np.array(all_x)).to(device)
-                    y_tensor = torch.FloatTensor(np.array(all_y)).to(device)
+                    merged_x = np.concatenate(all_x, axis=0)
+                    merged_y = np.concatenate(all_y, axis=0)
+
+                    x_tensor = torch.from_numpy(merged_x).to(device)
+                    y_tensor = torch.from_numpy(merged_y).to(device)
 
                     dataset_size = x_tensor.size(0)
                     mini_batch_size = 512
@@ -197,8 +239,10 @@ def main():
                             epoch_losses.append(loss.item())
 
                     avg_loss = np.mean(epoch_losses)
+                    scheduler.step()
                     print(
-                        f"Batch {batch_idx}: Avg Loss = {avg_loss:.6f} | Epsilon = {epsilon:.4f} | Total Move Rows = {dataset_size}"
+                        f"Batch {batch_idx}: Avg Loss = {avg_loss:.6f} | LR = {scheduler.get_last_lr()[0]:.6f} | "
+                        f"Epsilon = {epsilon:.4f} | Total Move Rows = {dataset_size}"
                     )
                 else:
                     print(f"Batch {batch_idx}: No training data collected.")
@@ -209,6 +253,7 @@ def main():
                         "batch_idx": batch_idx,
                         "model_state_dict": live_model.state_dict(),
                         "optimizer_state_dict": optimizer.state_dict(),
+                        "scheduler_state_dict": scheduler.state_dict(),
                         "epsilon": epsilon,
                     }
                     torch.save(checkpoint, snapshot_path)
@@ -218,6 +263,13 @@ def main():
                     )
         except KeyboardInterrupt:
             print("Training interrupted.")
+            executor.shutdown(wait=False, cancel_futures=True)
+            active_workers = multiprocessing.active_children()
+            for worker in active_workers:
+                worker.kill()
+            for worker in active_workers:
+                worker.join(timeout=0.1)
+            os._exit(0)
 
 
 if __name__ == "__main__":

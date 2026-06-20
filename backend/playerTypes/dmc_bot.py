@@ -2,13 +2,14 @@ import torch
 import torch.nn as nn
 import numpy as np
 import random
+import itertools
 
 from game import Presidenten
 from playerTypes.baseline_bot import PresidentenBaselineBot
 
 
 class PresidentenValueNet(nn.Module):
-    def __init__(self, input_dim=91):
+    def __init__(self, input_dim=119):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 512),
@@ -61,12 +62,43 @@ class PresidentenDMCBot:
                 self.trajectory.append(features[best_idx])
             return chosen_move
 
-    def choose_cards_to_pass(self, state):
+    def choose_cards_to_pass(self, state: dict):
         if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
             return []
-        return PresidentenBaselineBot(player_id=self.player_id).choose_cards_to_pass(
-            state
+
+        _, _, count = next(
+            (
+                (hr, lr, c)
+                for hr, lr, c in state["role_pairs"]
+                if hr == state["my_role"]
+            ),
+            (None, None, 0),
         )
+        hand = state["hand"]
+        possible_passes = list(set(itertools.combinations(hand, count)))
+        best_pass = None
+        best_value = -float("inf")
+        num_players = len(state["opp_hand_counts"]) + 1
+
+        for pass_combo in possible_passes:
+            hypothetical_state = state.copy()
+            hypo_hand = list(hand)
+
+            for c in pass_combo:
+                hypo_hand.remove(c)
+            hypothetical_state["hand"] = hypo_hand
+
+            features = vectorize_state_action(
+                hypothetical_state, (0, 0, 0), num_players
+            )
+            features_tensor = torch.FloatTensor(np.array([features])).to(self.device)
+
+            with torch.no_grad():
+                value = self.model(features_tensor).item()
+            if value > best_value:
+                best_value = value
+                best_pass = pass_combo
+        return list(best_pass) if best_pass else []
 
 
 def vectorize_state_action(state, move, num_players=4):
@@ -89,6 +121,11 @@ def vectorize_state_action(state, move, num_players=4):
     hand_vector /= 4.0  # Normalize to [0, 1] range
 
     history_vector = np.array(state["history_vector"], dtype=np.float32) / 4.0
+
+    unseen_vector = np.zeros(13, dtype=np.float32)
+    for i in range(3, 16):
+        total_seen = hand_vector[i - 3] + history_vector[i - 3]
+        unseen_vector[i - 3] = max(0.0, 1.0 - total_seen)
 
     last_move_vector = np.zeros(15, dtype=np.float32)
     p_card, p_count, p_twos = state["last_move"]
@@ -131,6 +168,20 @@ def vectorize_state_action(state, move, num_players=4):
         action_window[offset + 2] = float(m_count) / 4.0
         action_window[offset + 3] = float(m_twos) / 4.0
 
+    pile_vector = np.zeros(15, dtype=np.float32)
+    if state["pile_leader"] is not None:
+        rel_leader_pos = float((state["pile_leader"] - my_id) % num_players) / float(
+            num_players
+        )
+    else:
+        rel_leader_pos = -1.0
+
+    for card in state["cards_in_pile"]:
+        pile_vector[card - 3] += 0.25
+
+    pile_vector[13] = len(state["cards_in_pile"]) / 4.0
+    pile_vector[14] = rel_leader_pos
+
     misc_vector = np.array(
         [
             1.0 if state["is_finish_prompt"] else 0.0,
@@ -143,11 +194,13 @@ def vectorize_state_action(state, move, num_players=4):
         [
             hand_vector,  # 13
             history_vector,  # 13
+            unseen_vector,  # 13
             last_move_vector,  # 15
             opp_vector,  # 4
             role_vector,  # 4
             status_vector,  # 8
             action_window,  # 16
+            pile_vector,  # 15
             misc_vector,  # 2
         ]
     )

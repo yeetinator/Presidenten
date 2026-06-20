@@ -97,6 +97,8 @@ class Presidenten:
 
         self.history = []  # [(P_id, move), ...]
         self.last_move = (0, 0, 0)  # (card_value, count, twos_used)
+        self.pile = []  # Cards currently on the pile
+
         self.pile_leader = None  # P_id of the player who last played to the pile
         self.passed = set()  # Players who have passed in the current pile
         self.playing = set(range(players))
@@ -262,6 +264,7 @@ class Presidenten:
 
         self.history = []
         self.last_move = (0, 0, 0)
+        self.pile = []
         self.pile_leader = None
         self.passed = set()
         self.game_over = False
@@ -313,6 +316,8 @@ class Presidenten:
             "round": self.round,
             "scores": self.scores.copy(),
             "role_pairs": self.role_pairs.copy(),
+            "cards_in_pile": self.pile.copy(),
+            "pile_leader": self.pile_leader,
         }
 
     def get_legal_moves(self, p_id):
@@ -448,6 +453,7 @@ class Presidenten:
             self.pile_leader, ignore_passed=True, include_start=True
         )
         self.pile_leader = None
+        self.pile = []
 
     def _is_game_over(self):
         active_players = [p_id for p_id in range(self.players) if self.hands[p_id]]
@@ -488,6 +494,8 @@ class Presidenten:
             pile_reset = True  # Playing a 2 always resets the pile
 
         self.history.append((p_id, move))
+        self.pile.extend([card_val] * (count - twos))
+        self.pile.extend([15] * twos)
         self.first_turn = False
 
         if not self.hands[p_id] and p_id not in self.out_order:
@@ -496,7 +504,7 @@ class Presidenten:
                 input("Press Enter to continue...\n")
 
             self.out_order.append(p_id)
-            self.ended_2.append(p_id) if card_val == 15 else None
+            self.ended_2.append(p_id) if card_val == 15 or twos > 0 else None
 
             if p_id in self.playing:
                 self.playing.remove(p_id)
@@ -583,20 +591,33 @@ def get_settings():
     dmc_count = list(assign_p.values()).count(PlayerType.DMC)
     if dmc_count > 0:
 
-        def val_dmc_indices(indices):
-            if len(indices) != dmc_count:
-                return False
-            return all(
-                os.path.isfile(f"snapshots/model_gen_{idx}.pt") for idx in indices
-            )
+        use_best_model = get_val_input(
+            f"{dmc_count} DMC Bot(s) detected. Use best model? (y/n): ",
+            str,
+            valid_choices={"y", "n"},
+        ).lower()
 
-        prompt = f"{dmc_count} DMC Bot(s) detected. Enter batch indices (comma-separated, e.g., 1000,2000): "
-        indices = get_val_input(prompt, int, val_dmc_indices, ",")
-        paths = [f"snapshots/model_gen_{idx}.pt" for idx in indices]
         dmc_p_ids = [
             p_id for p_id, p_type in assign_p.items() if p_type == PlayerType.DMC
         ]
-        dmc_paths = dict(zip(dmc_p_ids, paths))
+
+        if use_best_model == "y":
+            dmc_paths = {
+                p_id: "backend/playerTypes/best_model.pt" for p_id in dmc_p_ids
+            }
+        else:
+
+            def val_dmc_indices(indices):
+                if len(indices) != dmc_count:
+                    return False
+                return all(
+                    os.path.isfile(f"snapshots/model_gen_{idx}.pt") for idx in indices
+                )
+
+            prompt = "Enter batch indices (comma-separated, e.g., 1000,2000): "
+            indices = get_val_input(prompt, int, val_dmc_indices, ",")
+            paths = [f"snapshots/model_gen_{idx}.pt" for idx in indices]
+            dmc_paths = dict(zip(dmc_p_ids, paths))
     return parallelism, assign_p, has_human, num_players, num_rounds, dmc_paths
 
 
@@ -832,7 +853,7 @@ def update_final_scores(master_scores, round_scores):
     return master_scores
 
 
-def print_scores(scores, assign_p: dict[int, PlayerType]):
+def print_scores(scores, assign_p: dict[int, PlayerType], num_players, num_rounds):
     print("\n" + "=" * 60)
     print(f"=== FINAL SCORES: {TOTAL_GAMES} Games | {num_rounds} Rounds Each ===")
     print("=" * 60)
@@ -854,10 +875,7 @@ def print_scores(scores, assign_p: dict[int, PlayerType]):
     print("=" * 60)
 
 
-if __name__ == "__main__":
-    TOTAL_GAMES = 996
-    NUM_WORKERS = 12  # Adjust based on your system's CPU cores and memory
-
+def main():
     parallelism, assign_p, has_human, num_players, num_rounds, dmc_paths = (
         get_settings()
     )
@@ -896,4 +914,10 @@ if __name__ == "__main__":
                 has_human=has_human,
             )
             master_scores = update_final_scores(master_scores, round_scores)
-    print_scores(master_scores, assign_p)
+    print_scores(master_scores, assign_p, num_players, num_rounds)
+
+
+if __name__ == "__main__":
+    TOTAL_GAMES = 996
+    NUM_WORKERS = 12  # Adjust based on your system's CPU cores and memory
+    main()
