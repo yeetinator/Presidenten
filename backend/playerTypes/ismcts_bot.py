@@ -456,10 +456,9 @@ class PresidentenISMCTSBot:
         history_vector = real_env._get_state(self.player_id)["history_vector"]
         pile_card, pile_count, _ = real_env.last_move
         starting_cards = math.ceil(52 / real_env.players)
-        max_attempts = 40
         opp_hand_counts = real_env._get_state(self.player_id)["opp_hand_counts"]
 
-        for _ in range(max_attempts):
+        for _ in range(10):
             hidden_pool = list(base_hidden_pool)
             random.shuffle(hidden_pool)
 
