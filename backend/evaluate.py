@@ -8,8 +8,8 @@ from game import Presidenten
 
 TOTAL_GAMES = 1000
 NUM_ROUNDS = 10
-NUM_WORKERS = 12  # Adjust based on your system's CPU cores and memory
-INPUT_DIM = 119
+NUM_WORKERS = 10  # Adjust based on your system's CPU cores and memory
+INPUT_DIM = 131
 ELITE_BATCHES = {""" 11250,
     11000,
     11750,
@@ -38,18 +38,19 @@ def evaluate_snapshot(snapshot_file):
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
-    bot_instances = {
-        0: PresidentenDMCBot(0, model, device),
-        1: PresidentenBaselineBot(1),
-        2: PresidentenBaselineBot(2),
-        3: PresidentenBaselineBot(3),
-    }
-
-    accumulated_score = 0
+    accumulated_norm_score = 0
     accumulated_wins = 0
 
-    for _ in range(TOTAL_GAMES):
-        env = Presidenten()
+    for game_idx in range(TOTAL_GAMES):
+        num_players = 4 + (game_idx % 4)
+        bot_instances: dict[int, PresidentenDMCBot | PresidentenBaselineBot] = {
+            0: PresidentenDMCBot(0, model, device)
+        }
+
+        for seat in range(1, num_players):
+            bot_instances[seat] = PresidentenBaselineBot(seat)
+
+        env = Presidenten(num_players)
         for round_idx in range(NUM_ROUNDS):
             state = env.full_reset(next_round=(round_idx > 0))
             if round_idx > 0:
@@ -76,17 +77,18 @@ def evaluate_snapshot(snapshot_file):
                 state, _ = env.step(curr_player, chosen_move)
             env.assign_roles()
 
-        accumulated_score += env.scores[0][0]
+        max_pos_score = (num_players - 1) * NUM_ROUNDS
+        raw_score = env.scores[0][0]
+        norm_score = (raw_score / max_pos_score) * 2 - 1
+        accumulated_norm_score += norm_score
         accumulated_wins += env.scores[0][1]
 
-    total_rounds = TOTAL_GAMES * NUM_ROUNDS
-    avg_score = accumulated_score / total_rounds
+    avg_norm_score = accumulated_norm_score / TOTAL_GAMES
 
     return {
         "batch": batch_num,
-        "total_score": accumulated_score,
         "wins": accumulated_wins,
-        "avg_score_per_round": avg_score,
+        "avg_norm_score": avg_norm_score,
     }
 
 
@@ -121,17 +123,17 @@ def main():
             results.append(res)
             print(f" -> Completed {completed}/{len(snapshot_files)}: {res["batch"]}")
 
-    results.sort(key=lambda x: (x["total_score"], x["wins"]), reverse=True)
+    results.sort(key=lambda x: (x["avg_norm_score"], x["wins"]), reverse=True)
 
     print("\n" + "=" * 65)
-    print(f" RANK  | BATCH GENERATION | TOTAL POINTS | ROUND WINS | AVG PTS/RD ")
+    print(f" RANK  | BATCH GENERATION | ROUND WINS | AVG NORM SCORE ")
     print("=" * 65)
 
     for rank, res in enumerate(results, start=1):
-        marker = " <- BEST" if rank <= 12 else ""
+        marker = " <- BEST" if rank <= 10 else ""
         print(
-            f" {rank:<5} {marker} | Batch {res['batch']:<10} | {res['total_score']:<12} | "
-            f"{res['wins']:<10} | {res['avg_score_per_round']:.3f}"
+            f" {rank:<5} {marker} | Batch {res['batch']:<10} | "
+            f"{res['wins']:<10} | {res['avg_norm_score']:.4f}"
         )
     print("=" * 65)
 

@@ -5,11 +5,10 @@ import random
 import itertools
 
 from game import Presidenten
-from playerTypes.baseline_bot import PresidentenBaselineBot
 
 
 class PresidentenValueNet(nn.Module):
-    def __init__(self, input_dim=119):
+    def __init__(self, input_dim=131):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 512),
@@ -111,6 +110,7 @@ def vectorize_state_action(state, move, num_players=4):
         "High-Scum": 0.2,
         "Scum": 0.0,
     }
+    MAX_PLAYERS = 7
 
     opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
     state_player_roles: dict[int, str] = state["player_roles"]
@@ -139,17 +139,23 @@ def vectorize_state_action(state, move, num_players=4):
     player_roles = []
     pile_status = []
 
-    for i in range(num_players):
-        opp_id = (my_id + i) % num_players
-        if i > 0:
-            opp_counts.append(float(opp_hand_counts[opp_id]) / 13.0)
+    for i in range(MAX_PLAYERS):
+        if i < num_players:
+            opp_id = (my_id + i) % num_players
+            if i > 0:
+                opp_counts.append(float(opp_hand_counts[opp_id]) / 13.0)
 
-        role_str = state_player_roles[opp_id]
-        player_roles.append(ROLE_MAP.get(role_str, 0.5))
+            role_str = state_player_roles[opp_id]
+            player_roles.append(ROLE_MAP.get(role_str, 0.5))
 
-        is_active = 1.0 if opp_id in state["active_players"] else 0.0
-        has_passed = 1.0 if opp_id in state["passed"] else 0.0
-        pile_status.extend([is_active, has_passed])
+            is_active = 1.0 if opp_id in state["active_players"] else 0.0
+            has_passed = 1.0 if opp_id in state["passed"] else 0.0
+            pile_status.extend([is_active, has_passed])
+        else:
+            if i > 0:
+                opp_counts.append(-1.0)
+            player_roles.append(-1.0)
+            pile_status.extend([-1.0, -1.0])
 
     opp_vector = np.array(opp_counts, dtype=np.float32)
     role_vector = np.array(player_roles, dtype=np.float32)
@@ -196,9 +202,9 @@ def vectorize_state_action(state, move, num_players=4):
             history_vector,  # 13
             unseen_vector,  # 13
             last_move_vector,  # 15
-            opp_vector,  # 4
-            role_vector,  # 4
-            status_vector,  # 8
+            opp_vector,  # 7
+            role_vector,  # 7
+            status_vector,  # 14
             action_window,  # 16
             pile_vector,  # 15
             misc_vector,  # 2

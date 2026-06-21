@@ -9,13 +9,13 @@ from playerTypes.baseline_bot import PresidentenBaselineBot
 from playerTypes.dmc_bot import PresidentenDMCBot, PresidentenValueNet
 from game import Presidenten
 
-BATCH_GAMES = 48
+BATCH_GAMES = 50
 ROUNDS_PER_GAME = 10
 SAVE_SNAPSHOT_EVERY = 250
 LEARNING_RATE = 1e-4
-INPUT_DIM = 119
+INPUT_DIM = 131
 GRADIENT_CLIP = 1.0
-NUM_WORKERS = 12
+NUM_WORKERS = 10
 
 _GLOBAL_LIVE_MODEL = None
 _SNAPSHOT_CACHE = {}
@@ -60,12 +60,15 @@ def run_single_game(
     live_model, device, epsilon, youngest_paths=None, oldest_paths=None
 ):
     global _SNAPSHOT_CACHE
+    num_players = random.randint(4, 7)
     bot_instances: dict[int, PresidentenDMCBot | PresidentenBaselineBot] = {}
     has_snapshots = bool(youngest_paths or oldest_paths)
     use_snapshot = has_snapshots and random.random() < 0.5
-    snapshot_seats = random.sample(range(4), k=2) if use_snapshot else []
+    snapshot_seats = (
+        random.sample(range(num_players), k=num_players // 2) if use_snapshot else []
+    )
 
-    for seat in range(4):
+    for seat in range(num_players):
         if seat in snapshot_seats:
             roll = random.random()
             if roll < 0.8 and youngest_paths:
@@ -91,7 +94,7 @@ def run_single_game(
                 epsilon=epsilon,
             )
 
-    env = Presidenten(players=4)
+    env = Presidenten(num_players)
     game_x, game_y = [], []
 
     for round_idx in range(ROUNDS_PER_GAME):
