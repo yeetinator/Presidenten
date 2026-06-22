@@ -197,14 +197,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         assigned_players[p_id] = PresidentenISMCTSBot(p_id, 1000)
                     elif p_type == PlayerType.DMC:
                         dmc_model = PresidentenValueNet().to(device)
-                        model_path = data.get(
-                            "dmc_model_path", "snapshots/model_gen_1000.pt"
-                        )
+                        model_path = "backend/playerTypes/best_model.pt"
 
                         try:
-                            dmc_model.load_state_dict(
-                                torch.load(model_path, map_location=device)
-                            )
+                            load_path = torch.load(model_path, map_location=device)
+                            dmc_model.load_state_dict(load_path["model_state_dict"])
                         except Exception:
                             print(f"Warning: Could not load weights from {model_path}.")
                         dmc_model.eval()
