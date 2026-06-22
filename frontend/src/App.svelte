@@ -11,6 +11,7 @@
     roundSummary,
     selectedCards,
     state as gameState,
+    type VisualCard,
   } from "./stores/gameStore";
 
   const websocketUrl =
@@ -30,6 +31,9 @@
   let totalPlayers = 4;
   let playerTypes: number[] = [1, 1, 1];
   let selectedIndices: number[] = [];
+  let visualHand: VisualCard[] = [];
+  let lastHandChecksum = "";
+
   const jumpInShake = new Tween(0, { duration: 1500, easing: cubicIn });
 
   $: requiredPlayerSlots = totalPlayers - 1;
@@ -127,6 +131,14 @@
             currentState.hand.length - exchangeRequiredCards + index,
         );
       }
+    }
+  }
+
+  $: if (ownHand.length > 0) {
+    const checksum = ownHand.join(",");
+    if (checksum !== lastHandChecksum) {
+      syncVisualHand(ownHand);
+      lastHandChecksum = checksum;
     }
   }
 
@@ -276,6 +288,14 @@
       return;
     }
 
+    const clickedCardValue = ownHand[index];
+    const finishMove = gameStore.getAutoFinishMove();
+
+    if (jumpInVisible && finishMove && clickedCardValue === finishMove[0]) {
+      handleJumpIn();
+      return;
+    }
+
     if (selectedIndices.includes(index)) {
       selectedIndices = selectedIndices.filter((i) => i !== index);
     } else {
@@ -289,6 +309,57 @@
   function handleManualClear() {
     selectedIndices = [];
     gameStore.clearSelectedCards();
+  }
+
+  function syncVisualHand(backendHand: number[]) {
+    if (visualHand.length === 0 || backendHand.length > visualHand.length) {
+      const suits: ("clubs" | "diamonds" | "hearts" | "spades")[] = [
+        "diamonds",
+        "hearts",
+        "spades",
+      ];
+      let suitIndex = 0;
+      let forcedClubsGiven = false;
+
+      visualHand = backendHand.map((value, idx) => {
+        let assignedSuit: "clubs" | "diamonds" | "hearts" | "spades";
+        if (
+          value === 3 &&
+          $gameState?.clubs_3_holder === 0 &&
+          !forcedClubsGiven
+        ) {
+          assignedSuit = "clubs";
+          forcedClubsGiven = true;
+        } else {
+          assignedSuit = suits[suitIndex % suits.length];
+          suitIndex++;
+        }
+        return {
+          id: `${value}-${idx}-${Math.random()}`,
+          value,
+          suit: assignedSuit,
+        };
+      });
+    } else {
+      const currentBackendCounts = backendHand.reduce(
+        (acc, val) => {
+          acc[val] = (acc[val] || 0) + 1;
+          return acc;
+        },
+        {} as Record<number, number>,
+      );
+      const newVisualHand: VisualCard[] = [];
+      for (const card of visualHand) {
+        if (
+          currentBackendCounts[card.value] &&
+          currentBackendCounts[card.value] > 0
+        ) {
+          newVisualHand.push(card);
+          currentBackendCounts[card.value]--;
+        }
+      }
+      visualHand = newVisualHand;
+    }
   }
 </script>
 

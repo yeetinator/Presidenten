@@ -104,6 +104,7 @@ class Presidenten:
         self.playing = set(range(players))
         self.first_turn = True
         self.curr_turn = None  # P_id of the current player
+        self.clubs_3_holder = None
         self.game_over = False
         self.pending_finish = None  # {"queue": [(card, count, player_id), ...], "resume_turn": player_id, "pile_reset": bool}
 
@@ -285,6 +286,7 @@ class Presidenten:
                     p_id for p_id, hand in self.hands.items() if 3 in hand
                 ]  # 3 of Clubs starts
             )
+            self.clubs_3_holder = self.curr_turn
             self.first_turn = True
         return self._get_state(self.curr_turn)
 
@@ -308,6 +310,7 @@ class Presidenten:
             "passed": self.passed.copy(),
             "active_players": self.playing.copy(),
             "first_turn": self.first_turn,
+            "clubs_3_holder": self.clubs_3_holder,
             "history": self.history.copy(),
             "player_roles": self.roles.copy(),
             "history_vector": [history_counts[rank] for rank in range(3, 16)],

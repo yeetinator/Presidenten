@@ -10,6 +10,15 @@ export interface GameStateUpdate {
   legal_moves: [number, number, number][];
   last_move: [number, number, number];
   role_pairs: [string, string, number][];
+  opp_hand_counts: Record<number, number>;
+  first_turn: boolean;
+  clubs_3_holder: number;
+}
+
+export interface VisualCard {
+  id: string;
+  value: number;
+  suit: "hearts" | "diamonds" | "clubs" | "spades";
 }
 
 export interface StateUpdateMessage {
@@ -410,4 +419,5 @@ export const gameStore = {
   nextRound,
   sendExchangeCards,
   quitGame,
+  getAutoFinishMove,
 };
