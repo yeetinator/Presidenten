@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { gameStore, logs } from "./stores/gameStore";
 
   const websocketUrl =
     import.meta.env.VITE_WS_URL ?? "ws://localhost:8000/ws/game";
@@ -16,7 +17,6 @@
   let totalPlayers = 4;
   let numRounds = 10;
   let playerTypes: number[] = [1, 1, 1];
-  let socket: WebSocket | null = null;
 
   $: requiredPlayerSlots = totalPlayers - 1;
 
@@ -28,54 +28,20 @@
   }
 
   onMount(() => {
-    socket = new WebSocket(websocketUrl);
+    gameStore.connect(websocketUrl);
   });
 
   onDestroy(() => {
-    socket?.close();
+    gameStore.disconnect();
   });
 
-  function sendStartGameMessage(payload: Record<string, unknown>) {
-    const message = JSON.stringify(payload);
-
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(message);
-      return Promise.resolve();
-    }
-
-    if (!socket || socket.readyState === WebSocket.CLOSED) {
-      socket = new WebSocket(websocketUrl);
-    }
-
-    return new Promise<void>((resolve, reject) => {
-      if (!socket) {
-        reject(new Error("WebSocket is not available."));
-        return;
-      }
-
-      const handleOpen = () => {
-        socket?.send(message);
-        cleanup();
-        resolve();
-      };
-
-      const handleError = () => {
-        cleanup();
-        reject(new Error("Unable to open the game websocket."));
-      };
-
-      const cleanup = () => {
-        socket?.removeEventListener("open", handleOpen);
-        socket?.removeEventListener("error", handleError);
-      };
-
-      socket.addEventListener("open", handleOpen);
-      socket.addEventListener("error", handleError);
-    });
-  }
-
   async function handleStartGame() {
-    const payload = {
+    const payload: {
+      type: "START_GAME";
+      num_players: number;
+      num_rounds: number;
+      player_types: number[];
+    } = {
       type: "START_GAME",
       num_players: totalPlayers,
       num_rounds: numRounds,
@@ -83,7 +49,7 @@
     };
 
     try {
-      await sendStartGameMessage(payload);
+      await gameStore.startGame(payload);
       gameStarted = true;
     } catch (error) {
       console.error(error);
