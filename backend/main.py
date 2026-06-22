@@ -47,6 +47,71 @@ def make_json_serializable(state: dict):
     return clean_state
 
 
+def get_exchange_count(env: Presidenten, role: str) -> int:
+    for high_role, low_role, count in env.role_pairs:
+        if role == high_role or role == low_role:
+            return count
+    return 0
+
+
+async def run_exchange_phase(
+    env: Presidenten,
+    assigned_players: dict[
+        int,
+        PresidentenRandomBot
+        | PresidentenBaselineBot
+        | PresidentenISMCTSBot
+        | PresidentenDMCBot,
+    ],
+    websocket: WebSocket,
+    human_id: int,
+    shared_executor,
+):
+    cards_to_pass: dict[int | str, list[int]] = {}
+    human_role = env.roles[human_id]
+    required_cards = get_exchange_count(env, human_role)
+    can_choose = human_role in {"President", "Vice-President", "Secretary"}
+
+    for p_id, role in env.roles.items():
+        if role == "Citizen" or p_id == human_id:
+            continue
+
+        bot = assigned_players[p_id]
+        state = env._get_state(p_id)
+        chosen_cards = await asyncio.to_thread(bot.choose_cards_to_pass, state)
+
+        cards_to_pass[p_id] = chosen_cards
+
+    await websocket.send_json(
+        {
+            "type": "EXCHANGE_PROMPT",
+            "state": make_json_serializable(env._get_state(human_id)),
+            "required_cards": required_cards,
+            "can_choose": can_choose,
+        }
+    )
+
+    while True:
+        raw_data = await websocket.receive_json()
+        if raw_data.get("type") != "EXCHANGE_CARDS":
+            continue
+
+        cards = raw_data.get("cards", [])
+        if not isinstance(cards, list):
+            continue
+
+        cards_to_pass[human_id] = cards
+        break
+
+    env.exchange_cards(cards_to_pass)
+    await websocket.send_json(
+        {
+            "type": "GAME_LOG",
+            "message": f"Cards exchanged for round {env.round}.",
+        }
+    )
+
+
 async def run(
     env: Presidenten,
     assigned_players: dict[
@@ -254,6 +319,13 @@ async def websocket_endpoint(websocket: WebSocket):
                             "type": "LOG_ALERT",
                             "message": f"Starting Round {env.round}...",
                         }
+                    )
+                    await run_exchange_phase(
+                        env,
+                        assigned_players,
+                        websocket,
+                        human_id,
+                        shared_executor,
                     )
                     await run(
                         env,

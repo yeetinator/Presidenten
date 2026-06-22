@@ -4,9 +4,12 @@ export interface GameStateUpdate {
   hand: number[];
   cards_in_pile: number[];
   is_finish_prompt: boolean;
+  my_role: string;
+  round: number;
   player_roles: Record<number, string | null>;
   legal_moves: [number, number, number][];
   last_move: [number, number, number];
+  role_pairs: [string, string, number][];
 }
 
 export interface StateUpdateMessage {
@@ -33,15 +36,37 @@ export interface RoundSummary {
   out_order: number[];
 }
 
+export interface JumpInPromptMessage {
+  type: "JUMP_IN_PROMPT";
+  state: GameStateUpdate;
+  timeout_seconds: number;
+  message: string;
+}
+
+export interface JumpInPrompt {
+  message: string;
+  timeoutSeconds: number;
+  state: GameStateUpdate;
+}
+
+export interface ExchangePrompt {
+  state: GameStateUpdate;
+  requiredCards: number;
+  canChoose: boolean;
+}
+
 export const logs = writable<string[]>([]);
 export const state = writable<GameStateUpdate | null>(null);
 export const connectionStatus = writable<ConnectionStatus>("disconnected");
 export const lastMessageType = writable<string | null>(null);
 export const selectedCards = writable<number[]>([]);
 export const roundSummary = writable<RoundSummary | null>(null);
+export const jumpInPrompt = writable<JumpInPrompt | null>(null);
+export const exchangePrompt = writable<ExchangePrompt | null>(null);
 
 type IncomingWebSocketMessage =
   | StateUpdateMessage
+  | JumpInPromptMessage
   | RoundOverMessage
   | {
       type: string;
@@ -53,42 +78,35 @@ type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 let socket: WebSocket | null = null;
 let currentUrl: string | null = null;
 let latestSelectedCards: number[] = [];
+let latestState: GameStateUpdate | null = null;
+let jumpInPromptTimeout: ReturnType<typeof setTimeout> | null = null;
 
 selectedCards.subscribe((value) => {
   latestSelectedCards = value;
 });
 
+state.subscribe((value) => {
+  latestState = value;
+});
+
 function isGameStateUpdate(value: unknown): value is GameStateUpdate {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+  if (!value || typeof value !== "object") return false;
 
   const candidate = value as Partial<GameStateUpdate>;
-  const hasHand = Array.isArray(candidate.hand);
-  const hasCardsInPile = Array.isArray(candidate.cards_in_pile);
-  const hasFinishPrompt = typeof candidate.is_finish_prompt === "boolean";
-  const hasPlayerRoles =
+  return (
+    Array.isArray(candidate.hand) &&
+    Array.isArray(candidate.cards_in_pile) &&
+    typeof candidate.is_finish_prompt === "boolean" &&
     !!candidate.player_roles &&
     typeof candidate.player_roles === "object" &&
-    !Array.isArray(candidate.player_roles);
-
-  const hasLegalMoves = Array.isArray(candidate.legal_moves);
-  const hasLastMove = Array.isArray(candidate.last_move);
-
-  return (
-    hasHand &&
-    hasCardsInPile &&
-    hasFinishPrompt &&
-    hasPlayerRoles &&
-    hasLegalMoves &&
-    hasLastMove
+    !Array.isArray(candidate.player_roles) &&
+    Array.isArray(candidate.legal_moves) &&
+    Array.isArray(candidate.last_move)
   );
 }
 
 function isRoundOverMessage(value: unknown): value is RoundOverMessage {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+  if (!value || typeof value !== "object") return false;
 
   const candidate = value as Partial<RoundOverMessage>;
   return (
@@ -100,18 +118,14 @@ function isRoundOverMessage(value: unknown): value is RoundOverMessage {
 }
 
 function normalizeSelectedCards(cards: number[]): MoveTuple | null {
-  if (cards.length === 0) {
-    return null;
-  }
+  if (cards.length === 0) return null;
 
   const twosUsed = cards.filter((card) => card === 15).length;
   const nonTwoCards = cards.filter((card) => card !== 15);
 
   if (nonTwoCards.length > 0) {
     const [firstCard] = nonTwoCards;
-    if (!nonTwoCards.every((card) => card === firstCard)) {
-      return null;
-    }
+    if (!nonTwoCards.every((card) => card === firstCard)) return null;
 
     return {
       card_value: firstCard,
@@ -135,8 +149,20 @@ function clearRoundSummary() {
   roundSummary.set(null);
 }
 
+function clearExchangePrompt() {
+  exchangePrompt.set(null);
+}
+
 function clearLogs() {
   logs.set([]);
+}
+
+function clearJumpInPrompt() {
+  if (jumpInPromptTimeout) {
+    clearTimeout(jumpInPromptTimeout);
+    jumpInPromptTimeout = null;
+  }
+  jumpInPrompt.set(null);
 }
 
 function selectCard(card: number) {
@@ -147,15 +173,16 @@ function getSelectedMoveTuple() {
   return normalizeSelectedCards(latestSelectedCards);
 }
 
+function getAutoFinishMove() {
+  if (!latestState?.legal_moves) return null;
+  return latestState.legal_moves.find((move) => move[0] !== 0) ?? null;
+}
+
 function attachSocketListeners(activeSocket: WebSocket) {
-  activeSocket.addEventListener("open", () => {
-    connectionStatus.set("connected");
-  });
-
-  activeSocket.addEventListener("error", () => {
-    connectionStatus.set("error");
-  });
-
+  activeSocket.addEventListener("open", () =>
+    connectionStatus.set("connected"),
+  );
+  activeSocket.addEventListener("error", () => connectionStatus.set("error"));
   activeSocket.addEventListener("close", () => {
     if (socket === activeSocket) {
       connectionStatus.set("disconnected");
@@ -170,6 +197,7 @@ function attachSocketListeners(activeSocket: WebSocket) {
 
       if (payload.type === "STATE_UPDATE" && isGameStateUpdate(payload.state)) {
         state.set(payload.state);
+        clearExchangePrompt();
       }
 
       if (
@@ -178,9 +206,54 @@ function attachSocketListeners(activeSocket: WebSocket) {
         isGameStateUpdate(payload.state)
       ) {
         state.set(payload.state);
+        clearJumpInPrompt();
+        jumpInPrompt.set({
+          message:
+            typeof payload.message === "string" ? payload.message : "JUMP IN!",
+          timeoutSeconds:
+            typeof payload.timeout_seconds === "number"
+              ? payload.timeout_seconds
+              : 1.5,
+          state: payload.state,
+        });
+
+        const promptTimeout =
+          typeof payload.timeout_seconds === "number"
+            ? payload.timeout_seconds
+            : 1.5;
+
+        jumpInPromptTimeout = setTimeout(() => {
+          jumpInPrompt.set(null);
+          jumpInPromptTimeout = null;
+        }, promptTimeout * 1000);
+      }
+
+      if (
+        payload.type === "EXCHANGE_PROMPT" &&
+        payload.state &&
+        isGameStateUpdate(payload.state) &&
+        typeof payload.required_cards === "number" &&
+        typeof payload.can_choose === "boolean"
+      ) {
+        state.set(payload.state);
+        if (!payload.can_choose && payload.required_cards > 0) {
+          const hand = payload.state.hand;
+          const count = payload.required_cards;
+          const highCards = hand.slice(hand.length - count);
+          selectedCards.set(highCards);
+        } else {
+          selectedCards.set([]);
+        }
+        exchangePrompt.set({
+          state: payload.state,
+          requiredCards: payload.required_cards,
+          canChoose: payload.can_choose,
+        });
       }
 
       if (isRoundOverMessage(payload)) {
+        clearJumpInPrompt();
+        clearExchangePrompt();
         roundSummary.set({
           scores: payload.scores,
           roles: payload.roles,
@@ -201,9 +274,8 @@ function attachSocketListeners(activeSocket: WebSocket) {
 }
 
 function connect(url: string) {
-  if (socket && socket.readyState <= WebSocket.OPEN && currentUrl === url) {
+  if (socket && socket.readyState <= WebSocket.OPEN && currentUrl === url)
     return;
-  }
 
   if (socket) {
     socket.close();
@@ -219,9 +291,7 @@ function connect(url: string) {
 }
 
 function disconnect() {
-  if (!socket) {
-    return;
-  }
+  if (!socket) return;
 
   socket.close();
   socket = null;
@@ -230,20 +300,10 @@ function disconnect() {
 
 function waitForSocketOpen() {
   return new Promise<void>((resolve, reject) => {
-    if (!socket) {
-      reject(new Error("WebSocket is not initialized."));
-      return;
-    }
-
-    if (socket.readyState === WebSocket.OPEN) {
-      resolve();
-      return;
-    }
-
-    if (socket.readyState !== WebSocket.CONNECTING) {
-      reject(new Error("WebSocket is not connected."));
-      return;
-    }
+    if (!socket) return reject(new Error("WebSocket is not initialized."));
+    if (socket.readyState === WebSocket.OPEN) return resolve();
+    if (socket.readyState !== WebSocket.CONNECTING)
+      return reject(new Error("WebSocket is not connected."));
 
     const handleOpen = () => {
       cleanup();
@@ -267,11 +327,7 @@ function waitForSocketOpen() {
 
 async function send(payload: Record<string, unknown>) {
   if (!socket || socket.readyState === WebSocket.CLOSED) {
-    if (!currentUrl) {
-      throw new Error(
-        "No websocket URL has been configured. Call connect(url) first.",
-      );
-    }
+    if (!currentUrl) throw new Error("No websocket URL has been configured.");
     connect(currentUrl);
   }
 
@@ -290,12 +346,7 @@ async function startGame(payload: {
 
 async function playSelectedCards() {
   const cards = getSelectedMoveTuple();
-
-  if (!cards) {
-    throw new Error(
-      "Selected cards must all be the same rank, optionally with 2s.",
-    );
-  }
+  if (!cards) throw new Error("Invalid selection structure.");
 
   await send({
     type: "PLAY_MOVE",
@@ -304,25 +355,35 @@ async function playSelectedCards() {
   clearSelectedCards();
 }
 
+async function playJumpInPrompt() {
+  const move = getAutoFinishMove();
+  if (!move) throw new Error("No finishing move is available.");
+
+  clearJumpInPrompt();
+  clearSelectedCards();
+  await send({ type: "PLAY_MOVE", move });
+}
+
 async function passTurn() {
-  await send({
-    type: "PLAY_MOVE",
-    move: [0, 0, 0],
-  });
+  await send({ type: "PLAY_MOVE", move: [0, 0, 0] });
   clearSelectedCards();
 }
 
 async function nextRound() {
   clearSelectedCards();
+  clearExchangePrompt();
   clearRoundSummary();
-  await send({
-    type: "NEXT_ROUND",
-  });
+  await send({ type: "NEXT_ROUND" });
 }
 
 function quitGame() {
   clearSelectedCards();
+  clearExchangePrompt();
   disconnect();
+}
+
+async function sendExchangeCards(cards: number[]) {
+  await send({ type: "EXCHANGE_CARDS", cards });
 }
 
 export const gameStore = {
@@ -331,6 +392,8 @@ export const gameStore = {
   lastMessageType,
   selectedCards,
   roundSummary,
+  jumpInPrompt,
+  exchangePrompt,
   connect,
   disconnect,
   send,
@@ -338,9 +401,13 @@ export const gameStore = {
   selectCard,
   clearSelectedCards,
   clearRoundSummary,
+  clearExchangePrompt,
   clearLogs,
+  clearJumpInPrompt,
   playSelectedCards,
+  playJumpInPrompt,
   passTurn,
   nextRound,
+  sendExchangeCards,
   quitGame,
 };

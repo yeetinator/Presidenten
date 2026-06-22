@@ -1,9 +1,13 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { cubicIn } from "svelte/easing";
+  import { Tween } from "svelte/motion";
   import {
     connectionStatus,
     gameStore,
     logs,
+    exchangePrompt,
+    jumpInPrompt,
     roundSummary,
     selectedCards,
     state as gameState,
@@ -26,6 +30,7 @@
   let totalPlayers = 4;
   let playerTypes: number[] = [1, 1, 1];
   let selectedIndices: number[] = [];
+  const jumpInShake = new Tween(0, { duration: 1500, easing: cubicIn });
 
   $: requiredPlayerSlots = totalPlayers - 1;
 
@@ -37,13 +42,20 @@
   }
 
   $: currentState = $gameState;
+  $: exchangePromptData = $exchangePrompt;
+  $: jumpInPromptData = $jumpInPrompt;
   $: lobbyLogs = $logs;
   $: roundSummaryData = $roundSummary;
   $: ownHand = currentState?.hand ?? [];
   $: cardsInPile = currentState?.cards_in_pile ?? [];
   $: selectedHandCards = $selectedCards;
+  $: exchangeRequiredCards = exchangePromptData?.requiredCards ?? 0;
+  $: exchangeCanChoose = exchangePromptData?.canChoose ?? false;
+  $: isExchangeVisible = !!exchangePromptData;
+  $: jumpInVisible = !!jumpInPromptData && !!currentState?.is_finish_prompt;
   $: isSelectionLegal = (() => {
-    if (!selectedMoveTuple || !currentState?.legal_moves) return false;
+    if (!selectedMoveTuple || !currentState?.legal_moves || isExchangeVisible)
+      return false;
     return currentState.legal_moves.some(
       (move) =>
         move[0] === selectedMoveTuple[0] &&
@@ -65,20 +77,57 @@
   $: topOpponents = opponentSeats.slice(1, -1);
   $: selectedMoveTuple = formatSelectedMove(selectedHandCards);
   $: selectedMoveLabel = selectedMoveTuple
-    ? isSelectionLegal
-      ? `Valid Move: ${selectedMoveTuple[1]}x ${displayCard(selectedMoveTuple[0])}`
-      : "Illegal Move"
+    ? isExchangeVisible
+      ? `Selected ${selectedHandCards.length}/${exchangeRequiredCards} cards`
+      : isSelectionLegal
+        ? `Valid Move: ${selectedMoveTuple[1]}x ${displayCard(selectedMoveTuple[0])}`
+        : "Illegal Move"
     : selectedHandCards.length > 0
-      ? "Invalid selection"
-      : "Click cards from your hand to queue them for play";
+      ? isExchangeVisible
+        ? `Selected ${selectedHandCards.length}/${exchangeRequiredCards} cards`
+        : "Invalid selection"
+      : isExchangeVisible
+        ? exchangeRequiredCards === 0
+          ? "Citizen's are exempt from exchanging"
+          : exchangeCanChoose
+            ? `Select ${exchangeRequiredCards} cards to give away`
+            : `Highest ${exchangeRequiredCards} cards pre-selected`
+        : "Click cards from your hand to queue them for play";
   $: roundSummaryEntries = roundSummaryData
     ? Object.entries(roundSummaryData.scores).sort(
         (left, right) => Number(left[0]) - Number(right[0]),
       )
     : [];
-  $: if (currentState) {
-    selectedIndices = [];
-    gameStore.clearSelectedCards();
+  $: if (jumpInVisible) {
+    jumpInShake.target = 1;
+  } else {
+    jumpInShake.target = 0;
+  }
+
+  let lastStateRef: typeof currentState = null;
+  $: if (currentState && !isExchangeVisible) {
+    if (currentState !== lastStateRef) {
+      lastStateRef = currentState;
+      selectedIndices = [];
+      gameStore.clearSelectedCards();
+    }
+  }
+
+  let lastExchangeActive = false;
+  $: if (isExchangeVisible !== lastExchangeActive) {
+    lastExchangeActive = isExchangeVisible;
+    if (isExchangeVisible) {
+      if (exchangeCanChoose) {
+        selectedIndices = [];
+        gameStore.clearSelectedCards();
+      } else if (exchangeRequiredCards > 0 && currentState) {
+        selectedIndices = Array.from(
+          { length: exchangeRequiredCards },
+          (_, index) =>
+            currentState.hand.length - exchangeRequiredCards + index,
+        );
+      }
+    }
   }
 
   onMount(() => {
@@ -147,6 +196,7 @@
     try {
       gameStore.clearLogs();
       gameStore.clearRoundSummary();
+      gameStore.clearExchangePrompt();
       gameStore.clearSelectedCards();
       await gameStore.startGame(payload);
       gameStarted = true;
@@ -172,9 +222,33 @@
     }
   }
 
+  async function handleJumpIn() {
+    try {
+      await gameStore.playJumpInPrompt();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
   async function handleNextRound() {
     try {
       await gameStore.nextRound();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  async function handleConfirmExchange() {
+    if (!currentState || !exchangePromptData) return;
+
+    const cards = selectedHandCards;
+    if (cards.length !== exchangeRequiredCards) return;
+
+    try {
+      await gameStore.sendExchangeCards(cards);
+      selectedIndices = [];
+      gameStore.clearSelectedCards();
+      gameStore.clearExchangePrompt();
     } catch (error) {
       console.error(error);
     }
@@ -190,16 +264,23 @@
     gameStarted = false;
     selectedIndices = [];
     gameStore.clearSelectedCards();
+    gameStore.clearExchangePrompt();
     gameStore.clearRoundSummary();
     gameStore.clearLogs();
+    gameStore.clearJumpInPrompt();
     gameStore.connect(websocketUrl);
   }
 
   function handleToggleCard(index: number) {
+    if (isExchangeVisible && !exchangeCanChoose && exchangeRequiredCards > 0) {
+      return;
+    }
+
     if (selectedIndices.includes(index)) {
       selectedIndices = selectedIndices.filter((i) => i !== index);
     } else {
-      if (selectedIndices.length >= 4) return;
+      const selectionLimit = isExchangeVisible ? exchangeRequiredCards : 4;
+      if (selectedIndices.length >= selectionLimit) return;
       selectedIndices = [...selectedIndices, index];
     }
     gameStore.selectedCards.set(selectedIndices.map((i) => ownHand[i]));
@@ -482,18 +563,61 @@
         class="rounded-3xl border border-white/10 bg-black/25 p-4 backdrop-blur-md md:p-6"
       >
         <div class="grid gap-4">
+          {#if jumpInVisible}
+            <div class="rounded-2xl border border-red-400/30 bg-red-500/10 p-4">
+              <div
+                class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
+              >
+                <div>
+                  <p
+                    class="text-xs uppercase tracking-[0.35em] text-red-200/80"
+                  >
+                    Jump-in window
+                  </p>
+                  <h2 class="mt-1 text-lg font-black text-red-50">
+                    A finishing move is available
+                  </h2>
+                </div>
+                <button
+                  class="jump-in-button rounded-2xl border border-red-200/40 bg-red-500 px-5 py-3 text-lg font-black tracking-[0.25em] text-white shadow-lg shadow-red-950/30 transition hover:bg-red-400 active:scale-[0.99]"
+                  style={`--jump-in-shake: ${2 + 10 * jumpInShake.current}; --jump-in-tilt: ${0.6 + 2.2 * jumpInShake.current};`}
+                  type="button"
+                  on:click={handleJumpIn}
+                >
+                  JUMP IN
+                </button>
+              </div>
+            </div>
+          {/if}
+
           <div>
             <div class="flex items-center justify-between gap-3">
               <h2 class="text-lg font-semibold text-green-50">
-                Selected Cards
+                {isExchangeVisible ? "Exchange Cards" : "Selected Cards"}
               </h2>
               <div class="text-sm text-green-100/70">{selectedMoveLabel}</div>
             </div>
+            {#if isExchangeVisible}
+              <div
+                class="mt-3 rounded-2xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-50/90"
+              >
+                {#if exchangeRequiredCards === 0}
+                  Citizen's are exempt from exchanging
+                {:else if exchangeCanChoose}
+                  Choose {exchangeRequiredCards} card(s) to hand away.
+                {:else}
+                  The highest {exchangeRequiredCards} card(s) are pre-selected for
+                  this exchange.
+                {/if}
+              </div>
+            {/if}
             <div class="mt-3 flex flex-wrap gap-2">
               {#if selectedHandCards.length === 0}
                 <span
                   class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm text-green-50/70"
-                  >No cards selected</span
+                  >{isExchangeVisible
+                    ? "No exchange cards selected"
+                    : "No cards selected"}</span
                 >
               {:else}
                 {#each selectedHandCards as card, index}
@@ -529,11 +653,13 @@
               {:else}
                 {#each ownHand as card, index}
                   <button
-                    class="min-w-14 rounded-2xl border px-4 py-3 text-lg font-black shadow-lg transition hover:-translate-y-0.5 active:translate-y-0
+                    class="min-w-14 rounded-2xl border px-4 py-3 text-lg font-black shadow-lg transition hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70
                     {selectedIndices.includes(index)
                       ? 'bg-emerald-400 text-emerald-950 border-emerald-300 scale-105 ring-2 ring-emerald-400/50'
                       : 'border-white/10 bg-white text-slate-950 hover:bg-slate-100'}"
                     type="button"
+                    disabled={isExchangeVisible &&
+                      (!exchangeCanChoose || exchangeRequiredCards === 0)}
                     on:click={() => handleToggleCard(index)}
                   >
                     {displayCard(card)}
@@ -548,21 +674,36 @@
           >
             <div class="text-sm text-green-50/75">{selectedMoveLabel}</div>
             <div class="flex flex-wrap gap-3">
-              <button
-                class="rounded-xl border border-emerald-300/30 bg-emerald-400 px-5 py-3 font-semibold text-emerald-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
-                type="button"
-                disabled={!isSelectionLegal}
-                on:click={handlePlay}
-              >
-                Play
-              </button>
-              <button
-                class="rounded-xl border border-white/10 bg-white/10 px-5 py-3 font-semibold text-white transition hover:bg-white/15"
-                type="button"
-                on:click={handlePass}
-              >
-                Pass
-              </button>
+              {#if isExchangeVisible}
+                <button
+                  class={`rounded-xl px-5 py-3 font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                    selectedHandCards.length === exchangeRequiredCards
+                      ? "border border-emerald-200/30 bg-emerald-300 text-emerald-950 hover:bg-emerald-200"
+                      : "border border-emerald-300/20 bg-emerald-500/40 text-emerald-50 hover:bg-emerald-400/50"
+                  }`}
+                  type="button"
+                  disabled={selectedHandCards.length !== exchangeRequiredCards}
+                  on:click={handleConfirmExchange}
+                >
+                  Confirm Exchange
+                </button>
+              {:else}
+                <button
+                  class="rounded-xl border border-emerald-300/30 bg-emerald-400 px-5 py-3 font-semibold text-emerald-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
+                  type="button"
+                  disabled={!isSelectionLegal}
+                  on:click={handlePlay}
+                >
+                  Play
+                </button>
+                <button
+                  class="rounded-xl border border-white/10 bg-white/10 px-5 py-3 font-semibold text-white transition hover:bg-white/15"
+                  type="button"
+                  on:click={handlePass}
+                >
+                  Pass
+                </button>
+              {/if}
             </div>
           </div>
         </div>
@@ -689,3 +830,35 @@
     </section>
   </main>
 {/if}
+
+<style>
+  @keyframes jump-in-shake {
+    0% {
+      transform: translateX(0) rotate(0deg);
+    }
+    20% {
+      transform: translateX(calc(var(--jump-in-shake) * -1px))
+        rotate(calc(var(--jump-in-tilt) * -1deg));
+    }
+    40% {
+      transform: translateX(calc(var(--jump-in-shake) * 0.8px))
+        rotate(calc(var(--jump-in-tilt) * 0.7deg));
+    }
+    60% {
+      transform: translateX(calc(var(--jump-in-shake) * -0.6px))
+        rotate(calc(var(--jump-in-tilt) * -0.45deg));
+    }
+    80% {
+      transform: translateX(calc(var(--jump-in-shake) * 0.4px))
+        rotate(calc(var(--jump-in-tilt) * 0.3deg));
+    }
+    100% {
+      transform: translateX(0) rotate(0deg);
+    }
+  }
+
+  .jump-in-button {
+    animation: jump-in-shake 140ms linear infinite;
+    will-change: transform;
+  }
+</style>
