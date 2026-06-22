@@ -311,8 +311,9 @@ class Presidenten:
             "history": self.history.copy(),
             "player_roles": self.roles.copy(),
             "history_vector": [history_counts[rank] for rank in range(3, 16)],
-            "is_finish_prompt": self.pending_finish
-            and self.pending_finish["queue"][0][2] == p_id,
+            "is_finish_prompt": bool(
+                self.pending_finish and self.pending_finish["queue"][0][2] == p_id
+            ),
             "round": self.round,
             "scores": self.scores.copy(),
             "role_pairs": self.role_pairs.copy(),

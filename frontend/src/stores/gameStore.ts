@@ -5,6 +5,8 @@ export interface GameStateUpdate {
   cards_in_pile: number[];
   is_finish_prompt: boolean;
   player_roles: Record<number, string | null>;
+  legal_moves: [number, number, number][];
+  last_move: [number, number, number];
 }
 
 export interface StateUpdateMessage {
@@ -12,10 +14,35 @@ export interface StateUpdateMessage {
   state: GameStateUpdate;
 }
 
+export interface MoveTuple {
+  card_value: number;
+  count: number;
+  twos_used: number;
+}
+
+export interface RoundOverMessage {
+  type: "ROUND_OVER";
+  scores: Record<string, [number, number]>;
+  roles: Record<string, string>;
+  out_order: number[];
+}
+
+export interface RoundSummary {
+  scores: Record<string, [number, number]>;
+  roles: Record<string, string>;
+  out_order: number[];
+}
+
 export const logs = writable<string[]>([]);
+export const state = writable<GameStateUpdate | null>(null);
+export const connectionStatus = writable<ConnectionStatus>("disconnected");
+export const lastMessageType = writable<string | null>(null);
+export const selectedCards = writable<number[]>([]);
+export const roundSummary = writable<RoundSummary | null>(null);
 
 type IncomingWebSocketMessage =
   | StateUpdateMessage
+  | RoundOverMessage
   | {
       type: string;
       [key: string]: unknown;
@@ -23,12 +50,13 @@ type IncomingWebSocketMessage =
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
-const state = writable<GameStateUpdate | null>(null);
-const connectionStatus = writable<ConnectionStatus>("disconnected");
-const lastMessageType = writable<string | null>(null);
-
 let socket: WebSocket | null = null;
 let currentUrl: string | null = null;
+let latestSelectedCards: number[] = [];
+
+selectedCards.subscribe((value) => {
+  latestSelectedCards = value;
+});
 
 function isGameStateUpdate(value: unknown): value is GameStateUpdate {
   if (!value || typeof value !== "object") {
@@ -44,18 +72,79 @@ function isGameStateUpdate(value: unknown): value is GameStateUpdate {
     typeof candidate.player_roles === "object" &&
     !Array.isArray(candidate.player_roles);
 
-  return hasHand && hasCardsInPile && hasFinishPrompt && hasPlayerRoles;
+  const hasLegalMoves = Array.isArray(candidate.legal_moves);
+  const hasLastMove = Array.isArray(candidate.last_move);
+
+  return (
+    hasHand &&
+    hasCardsInPile &&
+    hasFinishPrompt &&
+    hasPlayerRoles &&
+    hasLegalMoves &&
+    hasLastMove
+  );
 }
 
-function isStateUpdateMessage(value: unknown): value is StateUpdateMessage {
+function isRoundOverMessage(value: unknown): value is RoundOverMessage {
   if (!value || typeof value !== "object") {
     return false;
   }
 
-  const candidate = value as Partial<StateUpdateMessage>;
+  const candidate = value as Partial<RoundOverMessage>;
   return (
-    candidate.type === "STATE_UPDATE" && isGameStateUpdate(candidate.state)
+    candidate.type === "ROUND_OVER" &&
+    !!candidate.scores &&
+    !!candidate.roles &&
+    Array.isArray(candidate.out_order)
   );
+}
+
+function normalizeSelectedCards(cards: number[]): MoveTuple | null {
+  if (cards.length === 0) {
+    return null;
+  }
+
+  const twosUsed = cards.filter((card) => card === 15).length;
+  const nonTwoCards = cards.filter((card) => card !== 15);
+
+  if (nonTwoCards.length > 0) {
+    const [firstCard] = nonTwoCards;
+    if (!nonTwoCards.every((card) => card === firstCard)) {
+      return null;
+    }
+
+    return {
+      card_value: firstCard,
+      count: cards.length,
+      twos_used: twosUsed,
+    };
+  }
+
+  return {
+    card_value: 15,
+    count: cards.length,
+    twos_used: 0,
+  };
+}
+
+function clearSelectedCards() {
+  selectedCards.set([]);
+}
+
+function clearRoundSummary() {
+  roundSummary.set(null);
+}
+
+function clearLogs() {
+  logs.set([]);
+}
+
+function selectCard(card: number) {
+  selectedCards.update((cards) => [...cards, card]);
+}
+
+function getSelectedMoveTuple() {
+  return normalizeSelectedCards(latestSelectedCards);
 }
 
 function attachSocketListeners(activeSocket: WebSocket) {
@@ -79,13 +168,24 @@ function attachSocketListeners(activeSocket: WebSocket) {
       const payload = JSON.parse(event.data) as IncomingWebSocketMessage;
       lastMessageType.set(payload.type);
 
+      if (payload.type === "STATE_UPDATE" && isGameStateUpdate(payload.state)) {
+        state.set(payload.state);
+      }
+
       if (
-        payload.type === "STATUS_UPDATE" ||
-        payload.type === "JUMP_IN_PROMPT"
+        payload.type === "JUMP_IN_PROMPT" &&
+        payload.state &&
+        isGameStateUpdate(payload.state)
       ) {
-        if (payload.state && isGameStateUpdate(payload.state)) {
-          state.set(payload.state);
-        }
+        state.set(payload.state);
+      }
+
+      if (isRoundOverMessage(payload)) {
+        roundSummary.set({
+          scores: payload.scores,
+          roles: payload.roles,
+          out_order: payload.out_order,
+        });
       }
 
       if (
@@ -188,12 +288,59 @@ async function startGame(payload: {
   await send(payload);
 }
 
+async function playSelectedCards() {
+  const cards = getSelectedMoveTuple();
+
+  if (!cards) {
+    throw new Error(
+      "Selected cards must all be the same rank, optionally with 2s.",
+    );
+  }
+
+  await send({
+    type: "PLAY_MOVE",
+    move: [cards.card_value, cards.count, cards.twos_used],
+  });
+  clearSelectedCards();
+}
+
+async function passTurn() {
+  await send({
+    type: "PLAY_MOVE",
+    move: [0, 0, 0],
+  });
+  clearSelectedCards();
+}
+
+async function nextRound() {
+  clearSelectedCards();
+  clearRoundSummary();
+  await send({
+    type: "NEXT_ROUND",
+  });
+}
+
+function quitGame() {
+  clearSelectedCards();
+  disconnect();
+}
+
 export const gameStore = {
   state,
   connectionStatus,
   lastMessageType,
+  selectedCards,
+  roundSummary,
   connect,
   disconnect,
   send,
   startGame,
+  selectCard,
+  clearSelectedCards,
+  clearRoundSummary,
+  clearLogs,
+  playSelectedCards,
+  passTurn,
+  nextRound,
+  quitGame,
 };
