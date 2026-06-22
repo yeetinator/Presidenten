@@ -1,7 +1,5 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { cubicIn } from "svelte/easing";
-  import { Tween } from "svelte/motion";
   import Card from "./lib/Card.svelte";
   import {
     connectionStatus,
@@ -34,8 +32,6 @@
   let visualHand: VisualCard[] = [];
   let lastHandChecksum = "";
 
-  const jumpInShake = new Tween(0, { duration: 1500, easing: cubicIn });
-
   $: requiredPlayerSlots = totalPlayers - 1;
 
   $: if (playerTypes.length !== requiredPlayerSlots) {
@@ -56,6 +52,9 @@
   $: exchangeCanChoose = exchangePromptData?.canChoose ?? false;
   $: isExchangeVisible = !!exchangePromptData;
   $: jumpInVisible = !!jumpInPromptData && !!currentState?.is_finish_prompt;
+  $: jumpInAutoMove =
+    jumpInVisible && currentState ? gameStore.getAutoFinishMove() : null;
+  $: jumpInTargetValue = jumpInAutoMove?.[0] ?? null;
   $: isSelectionLegal = (() => {
     if (!selectedMoveTuple || !currentState?.legal_moves || isExchangeVisible)
       return false;
@@ -118,11 +117,6 @@
         (left, right) => Number(left[0]) - Number(right[0]),
       )
     : [];
-  $: if (jumpInVisible) {
-    jumpInShake.target = 1;
-  } else {
-    jumpInShake.target = 0;
-  }
 
   let lastStateRef: typeof currentState = null;
   $: if (currentState && !isExchangeVisible) {
@@ -664,16 +658,16 @@
                 {#if currentState?.last_move && currentState.last_move[0] !== 0}
                   {@const [cardValue, count, twosUsed] = currentState.last_move}
                   <div class="flex flex-col items-center gap-3">
-                    <div
-                      class="flex items-end justify-center overflow-visible"
-                    >
+                    <div class="flex items-end justify-center overflow-visible">
                       {#each Array.from({ length: count }) as _, cardIndex}
                         <div
                           class="relative"
                           style={`margin-left: ${cardIndex === 0 ? 0 : -4}rem; z-index: ${cardIndex};`}
                         >
                           <Card
-                            value={cardIndex >= count - twosUsed ? 15 : cardValue}
+                            value={cardIndex >= count - twosUsed
+                              ? 15
+                              : cardValue}
                             isFaceUp={true}
                             disabled={true}
                             className="shrink-0 scale-[0.9] origin-bottom"
@@ -681,7 +675,9 @@
                         </div>
                       {/each}
                     </div>
-                    <div class="text-center text-xs uppercase tracking-[0.4em] text-emerald-200/70">
+                    <div
+                      class="text-center text-xs uppercase tracking-[0.4em] text-emerald-200/70"
+                    >
                       Current move to beat
                     </div>
                   </div>
@@ -759,33 +755,6 @@
         class="rounded-3xl border border-white/10 bg-black/25 p-4 backdrop-blur-md md:p-6"
       >
         <div class="grid gap-4">
-          {#if jumpInVisible}
-            <div class="rounded-2xl border border-red-400/30 bg-red-500/10 p-4">
-              <div
-                class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
-              >
-                <div>
-                  <p
-                    class="text-xs uppercase tracking-[0.35em] text-red-200/80"
-                  >
-                    Jump-in window
-                  </p>
-                  <h2 class="mt-1 text-lg font-black text-red-50">
-                    A finishing move is available
-                  </h2>
-                </div>
-                <button
-                  class="jump-in-button rounded-2xl border border-red-200/40 bg-red-500 px-5 py-3 text-lg font-black tracking-[0.25em] text-white shadow-lg shadow-red-950/30 transition hover:bg-red-400 active:scale-[0.99]"
-                  style={`--jump-in-shake: ${2 + 10 * jumpInShake.current}; --jump-in-tilt: ${0.6 + 2.2 * jumpInShake.current};`}
-                  type="button"
-                  on:click={handleJumpIn}
-                >
-                  JUMP IN
-                </button>
-              </div>
-            </div>
-          {/if}
-
           <div
             class="rounded-4xl border border-white/10 bg-black/20 px-4 pb-6 pt-5 overflow-visible"
           >
@@ -809,6 +778,7 @@
                       suit={visualHand[index]?.suit ?? "clubs"}
                       isFaceUp={true}
                       isSelected={selectedIndices.includes(index)}
+                      isBlinking={jumpInVisible && jumpInTargetValue === card}
                       disabled={isExchangeVisible &&
                         (!exchangeCanChoose || exchangeRequiredCards === 0)}
                       className="shrink-0 scale-[0.98]"
