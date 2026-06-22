@@ -4,12 +4,16 @@
   export let isFaceUp: boolean = true;
   export let isSelected: boolean = false;
   export let isBlinking: boolean = false;
+  export let disabled: boolean = false;
+  export let className: string = "";
+  export let onClick: ((event: MouseEvent) => void) | undefined = undefined;
 
   function getCardImage(val: number, cardSuit: string): string {
     if (!isFaceUp) return "/cards/1B.svg";
 
     let rankStr = String(val);
-    if (val === 11) rankStr = "J";
+    if (val === 10) rankStr = "T";
+    else if (val === 11) rankStr = "J";
     else if (val === 12) rankStr = "Q";
     else if (val === 13) rankStr = "K";
     else if (val === 14) rankStr = "A";
@@ -24,18 +28,20 @@
 
 <button
   type="button"
-  class="relative w-20 h-28 md:w-24 md:h-36 rounded-xl overflow-hidden bg-white transition-all duration-200 ease-out shadow-md select-none outline-none {isSelected
-    ? '-translate-y-6 shadow-xl ring-4 ring-emerald-400 scale-105'
-    : 'hover:-translate-y-2 hover:shadow-lg'} {isBlinking
-    ? 'animate-jump-ready'
-    : 'border border-slate-200'}"
-  on:click
-  ><img
+  class={`relative h-28 w-20 select-none overflow-hidden rounded-xl bg-white shadow-md outline-none transition-all duration-200 ease-out md:h-36 md:w-24 ${className} ${
+    isSelected
+      ? "-translate-y-6 scale-105 shadow-xl ring-4 ring-emerald-400"
+      : "hover:-translate-y-2 hover:shadow-lg"
+  } ${isBlinking ? "animate-jump-ready" : "border border-slate-200"}`}
+  {disabled}
+  on:click={onClick}
+>
+  <img
     src={imgSrc}
     alt="Playing Card"
-    class="w-full h-full object-contain pointer-events-none"
-  /></button
->
+    class="pointer-events-none h-full w-full object-contain"
+  />
+</button>
 
 <style>
   @keyframes red-flash {

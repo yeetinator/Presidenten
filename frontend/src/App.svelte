@@ -2,10 +2,10 @@
   import { onDestroy, onMount } from "svelte";
   import { cubicIn } from "svelte/easing";
   import { Tween } from "svelte/motion";
+  import Card from "./lib/Card.svelte";
   import {
     connectionStatus,
     gameStore,
-    logs,
     exchangePrompt,
     jumpInPrompt,
     roundSummary,
@@ -48,7 +48,6 @@
   $: currentState = $gameState;
   $: exchangePromptData = $exchangePrompt;
   $: jumpInPromptData = $jumpInPrompt;
-  $: lobbyLogs = $logs;
   $: roundSummaryData = $roundSummary;
   $: ownHand = currentState?.hand ?? [];
   $: cardsInPile = currentState?.cards_in_pile ?? [];
@@ -79,6 +78,23 @@
   $: rightOpponent =
     opponentSeats.length > 1 ? opponentSeats[opponentSeats.length - 1] : null;
   $: topOpponents = opponentSeats.slice(1, -1);
+  $: opponentViews = opponentSeats.map((opponent, index) => ({
+    ...opponent,
+    handCount: currentState?.opp_hand_counts?.[opponent.seat] ?? 0,
+    position:
+      index === 0
+        ? "left"
+        : index === opponentSeats.length - 1
+          ? "right"
+          : "top",
+  }));
+  $: leftOpponentView =
+    opponentViews.find((opponent) => opponent.position === "left") ?? null;
+  $: rightOpponentView =
+    opponentViews.find((opponent) => opponent.position === "right") ?? null;
+  $: topOpponentViews = opponentViews.filter(
+    (opponent) => opponent.position === "top",
+  );
   $: selectedMoveTuple = formatSelectedMove(selectedHandCards);
   $: selectedMoveLabel = selectedMoveTuple
     ? isExchangeVisible
@@ -159,8 +175,42 @@
     return String(card);
   }
 
-  function displayRole(role: string | null) {
-    return role ?? "Waiting";
+  function displayBotType(role: string | null) {
+    if (!role) return "Waiting";
+    return role.replace(/\s*Bot$/i, "");
+  }
+
+  function getFanSpacingClass(
+    handCount: number,
+    orientation: "horizontal" | "vertical",
+  ) {
+    if (handCount <= 3) {
+      return orientation === "horizontal" ? "-space-x-3" : "-space-y-3";
+    }
+
+    if (handCount <= 6) {
+      return orientation === "horizontal" ? "-space-x-4" : "-space-y-4";
+    }
+
+    if (handCount <= 9) {
+      return orientation === "horizontal" ? "-space-x-5" : "-space-y-5";
+    }
+
+    return orientation === "horizontal" ? "-space-x-6" : "-space-y-6";
+  }
+
+  function getFanDirectionClass(orientation: "horizontal" | "vertical") {
+    return orientation === "horizontal"
+      ? "flex-row items-end"
+      : "flex-col items-center";
+  }
+
+  function getOpponentLabel(role: string | null) {
+    return displayBotType(role);
+  }
+
+  function getHorizontalOverlapStyle(index: number) {
+    return index === 0 ? "" : "margin-left: -4rem;";
   }
 
   function isValidSelectedMove(cards: number[]) {
@@ -459,7 +509,7 @@
     class="min-h-screen bg-[radial-gradient(circle_at_center,#154d2a_0%,#0b2414_48%,#050b07_100%)] px-4 py-4 text-white md:px-6 md:py-6"
   >
     <section
-      class="mx-auto grid min-h-[calc(100vh-2rem)] max-w-7xl grid-rows-[auto_auto_1fr_auto] gap-4 md:min-h-[calc(100vh-3rem)]"
+      class="mx-auto grid min-h-[calc(100vh-2rem)] max-w-screen-2xl grid-rows-[auto_1fr_auto] gap-4 md:min-h-[calc(100vh-3rem)]"
     >
       <header
         class="rounded-3xl border border-white/10 bg-black/25 px-5 py-4 backdrop-blur-md md:px-6"
@@ -487,148 +537,223 @@
       </header>
 
       <section
-        class="rounded-3xl border border-white/10 bg-black/25 px-5 py-4 backdrop-blur-md md:px-6"
+        class="rounded-[2.5rem] border border-emerald-300/15 bg-[radial-gradient(circle_at_top,rgba(52,211,153,0.18),rgba(6,20,12,0.96)_68%)] px-5 py-5 shadow-[0_42px_120px_rgba(0,0,0,0.45)] backdrop-blur-md md:px-6 md:py-6"
       >
-        <div class="flex items-center justify-between gap-3">
-          <div>
-            <p class="text-xs uppercase tracking-[0.35em] text-amber-200/75">
-              Temporary Log Board
-            </p>
-            <h2 class="mt-1 text-lg font-semibold text-white">
-              Lobby messages
-            </h2>
-          </div>
-          <span class="text-xs text-slate-300"
-            >Clears when a new game starts</span
-          >
-        </div>
         <div
-          class="mt-4 max-h-40 overflow-y-auto rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-slate-200"
+          class="grid gap-5 xl:grid-cols-[20rem_minmax(0,1.7fr)_20rem] xl:grid-rows-[auto_1fr]"
         >
-          {#if lobbyLogs.length === 0}
-            <p class="text-slate-400">No lobby messages yet.</p>
-          {:else}
-            <div class="space-y-2">
-              {#each lobbyLogs as line}
-                <div
-                  class="rounded-xl border border-white/5 bg-white/5 px-3 py-2"
-                >
-                  {line}
+          <div class="xl:col-span-3">
+            {#if topOpponentViews.length > 0}
+              <div class="flex flex-wrap justify-center gap-5 overflow-visible">
+                {#each topOpponentViews as opponent}
+                  <article
+                    class="flex w-80 shrink-0 flex-col rounded-4xl border border-white/10 bg-black/25 px-4 py-4 shadow-lg shadow-black/20 backdrop-blur-md"
+                  >
+                    <div class="flex items-center gap-3">
+                      <img
+                        src="/bot.svg"
+                        alt="Bot profile icon"
+                        class="h-10 w-10 rounded-2xl border border-white/10 bg-white/10 p-2"
+                      />
+                      <div class="min-w-0">
+                        <div
+                          class="text-[0.65rem] uppercase tracking-[0.35em] text-green-200/70"
+                        >
+                          Seat {opponent.seat}
+                        </div>
+                        <div class="truncate text-lg font-black text-white">
+                          {getOpponentLabel(opponent.role)} Bot
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      class="mt-2 flex items-center justify-between text-xs uppercase tracking-[0.3em] text-green-100/65"
+                    >
+                      <span>Hand</span>
+                      <span>{opponent.handCount} cards</span>
+                    </div>
+
+                    <div
+                      class="flex w-full items-end justify-center overflow-visible"
+                    >
+                      {#each Array.from( { length: opponent.handCount }, ) as _, cardIndex}
+                        <div
+                          class="relative"
+                          style={`margin-left: ${cardIndex === 0 ? 0 : -5.1}rem; z-index: ${cardIndex};`}
+                        >
+                          <Card
+                            value={cardIndex + 1}
+                            isFaceUp={false}
+                            disabled={true}
+                            className="shrink-0 scale-[0.5] origin-bottom md:scale-[0.56]"
+                          />
+                        </div>
+                      {/each}
+                    </div>
+                  </article>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <aside class="flex items-center justify-center xl:row-start-2">
+            {#if leftOpponentView}
+              <div
+                class="flex w-full min-h-84 max-w-72 flex-col rounded-4xl border border-white/10 bg-black/25 p-4 shadow-2xl shadow-black/25 backdrop-blur-md"
+              >
+                <div class="flex items-center gap-3">
+                  <img
+                    src="/bot.svg"
+                    alt="Bot profile icon"
+                    class="h-10 w-10 rounded-2xl border border-white/10 bg-white/10 p-2"
+                  />
+                  <div class="min-w-0">
+                    <div
+                      class="text-[0.65rem] uppercase tracking-[0.35em] text-green-200/70"
+                    >
+                      Left
+                    </div>
+                    <div class="truncate text-lg font-black text-white">
+                      {getOpponentLabel(leftOpponentView.role)} Bot
+                    </div>
+                  </div>
                 </div>
-              {/each}
+
+                <div
+                  class="mt-2 flex items-center justify-between text-xs uppercase tracking-[0.3em] text-green-100/65"
+                >
+                  <span>Seat {leftOpponentView.seat}</span>
+                  <span>{leftOpponentView.handCount} cards</span>
+                </div>
+
+                <div
+                  class="flex w-full items-end justify-center overflow-visible"
+                >
+                  {#each Array.from( { length: leftOpponentView.handCount }, ) as _, cardIndex}
+                    <div
+                      class="relative"
+                      style={`margin-left: ${cardIndex === 0 ? 0 : -5.1}rem; z-index: ${cardIndex};`}
+                    >
+                      <Card
+                        value={cardIndex + 1}
+                        isFaceUp={false}
+                        disabled={true}
+                        className="shrink-0 scale-[0.5] origin-bottom md:scale-[0.56]"
+                      />
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </aside>
+
+          <div class="flex items-center justify-center xl:row-start-2">
+            <div
+              class="w-full max-w-2xl rounded-[2.5rem] border border-emerald-300/20 bg-[radial-gradient(circle_at_top,rgba(34,197,94,0.24),rgba(7,23,12,0.92)_70%)] p-6 shadow-[0_40px_100px_rgba(0,0,0,0.45)] backdrop-blur-md"
+            >
+              <div
+                class="flex items-center justify-between text-sm text-emerald-100/75"
+              >
+                <span>Pile</span>
+                <span>{cardsInPile.length} cards total</span>
+              </div>
+              <div
+                class="mt-4 flex min-h-56 items-center justify-center rounded-3xl border border-emerald-300/15 bg-black/20 p-6"
+              >
+                {#if currentState?.last_move && currentState.last_move[0] !== 0}
+                  {@const [cardValue, count, twosUsed] = currentState.last_move}
+                  <div class="flex flex-col items-center gap-3">
+                    <div
+                      class="flex items-end justify-center overflow-visible"
+                    >
+                      {#each Array.from({ length: count }) as _, cardIndex}
+                        <div
+                          class="relative"
+                          style={`margin-left: ${cardIndex === 0 ? 0 : -4}rem; z-index: ${cardIndex};`}
+                        >
+                          <Card
+                            value={cardIndex >= count - twosUsed ? 15 : cardValue}
+                            isFaceUp={true}
+                            disabled={true}
+                            className="shrink-0 scale-[0.9] origin-bottom"
+                          />
+                        </div>
+                      {/each}
+                    </div>
+                    <div class="text-center text-xs uppercase tracking-[0.4em] text-emerald-200/70">
+                      Current move to beat
+                    </div>
+                  </div>
+                {:else}
+                  <div class="text-center text-emerald-50/70">
+                    <div class="text-[0.65rem] uppercase tracking-[0.4em]">
+                      Game Pile
+                    </div>
+                    <div class="mt-3 text-4xl font-black text-white/70">
+                      Empty
+                    </div>
+                    <div class="mt-2 text-sm">
+                      Play any valid combination to lead
+                    </div>
+                  </div>
+                {/if}
+              </div>
             </div>
-          {/if}
+          </div>
+
+          <aside class="flex items-center justify-center xl:row-start-2">
+            {#if rightOpponentView}
+              <div
+                class="flex w-full min-h-84 max-w-72 flex-col rounded-4xl border border-white/10 bg-black/25 p-4 shadow-2xl shadow-black/25 backdrop-blur-md"
+              >
+                <div class="flex items-center gap-3">
+                  <img
+                    src="/bot.svg"
+                    alt="Bot profile icon"
+                    class="h-10 w-10 rounded-2xl border border-white/10 bg-white/10 p-2"
+                  />
+                  <div class="min-w-0">
+                    <div
+                      class="text-[0.65rem] uppercase tracking-[0.35em] text-green-200/70"
+                    >
+                      Right
+                    </div>
+                    <div class="truncate text-lg font-black text-white">
+                      {getOpponentLabel(rightOpponentView.role)} Bot
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  class="mt-2 flex items-center justify-between text-xs uppercase tracking-[0.3em] text-green-100/65"
+                >
+                  <span>Seat {rightOpponentView.seat}</span>
+                  <span>{rightOpponentView.handCount} cards</span>
+                </div>
+
+                <div
+                  class="flex w-full items-end justify-center overflow-visible"
+                >
+                  {#each Array.from( { length: rightOpponentView.handCount }, ) as _, cardIndex}
+                    <div
+                      class="relative"
+                      style={`margin-left: ${cardIndex === 0 ? 0 : -5.1}rem; z-index: ${cardIndex};`}
+                    >
+                      <Card
+                        value={cardIndex + 1}
+                        isFaceUp={false}
+                        disabled={true}
+                        className="shrink-0 scale-[0.5] origin-bottom md:scale-[0.56]"
+                      />
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </aside>
         </div>
       </section>
-      <div
-        class="grid gap-4 lg:grid-cols-[1fr_1.3fr_1fr] lg:grid-rows-[auto_1fr]"
-      >
-        <div class="lg:col-span-3 lg:row-start-1">
-          {#if topOpponents.length > 0}
-            <div
-              class="flex flex-wrap justify-center gap-3 rounded-3xl border border-white/10 bg-white/5 p-4 backdrop-blur-md"
-            >
-              {#each topOpponents as opponent}
-                <div
-                  class="min-w-40 rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-center shadow-lg shadow-black/20"
-                >
-                  <div
-                    class="text-[0.65rem] uppercase tracking-[0.3em] text-green-200/70"
-                  >
-                    Opponent {opponent.seat}
-                  </div>
-                  <div class="mt-2 text-lg font-bold">
-                    {displayRole(opponent.role)}
-                  </div>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <aside class="flex items-center justify-center lg:row-start-2">
-          {#if leftOpponent}
-            <div
-              class="w-full max-w-sm rounded-3xl border border-white/10 bg-black/25 p-5 text-center shadow-2xl shadow-black/25 backdrop-blur-md"
-            >
-              <div class="text-xs uppercase tracking-[0.3em] text-green-200/70">
-                Left Opponent
-              </div>
-              <div class="mt-2 text-2xl font-black">
-                Player {leftOpponent.seat}
-              </div>
-              <div class="mt-1 text-sm text-green-50/75">
-                {displayRole(leftOpponent.role)}
-              </div>
-            </div>
-          {/if}
-        </aside>
-
-        <div class="flex items-center justify-center lg:row-start-2">
-          <div
-            class="w-full max-w-xl rounded-4xl border border-emerald-300/20 bg-[radial-gradient(circle_at_top,rgba(34,197,94,0.24),rgba(7,23,12,0.92)_70%)] p-6 shadow-[0_40px_100px_rgba(0,0,0,0.45)] backdrop-blur-md"
-          >
-            <div
-              class="flex items-center justify-between text-sm text-emerald-100/75"
-            >
-              <span>Pile</span>
-              <span>{cardsInPile.length} cards total</span>
-            </div>
-            <div
-              class="mt-4 flex min-h-56 items-center justify-center rounded-3xl border border-emerald-300/15 bg-black/20 p-6"
-            >
-              {#if currentState?.last_move && currentState.last_move[0] !== 0}
-                {@const [cardValue, count, twosUsed] = currentState.last_move}
-                <div class="text-center">
-                  <div
-                    class="text-[0.65rem] uppercase tracking-[0.4em] text-emerald-200/70"
-                  >
-                    Current move to beat
-                  </div>
-                  <div class="mt-3 text-6xl font-black text-white">
-                    {count}x {displayCard(cardValue)}
-                    {#if twosUsed > 0}
-                      <span class="text-xs text-emerald-400 block mt-1"
-                        >(Includes {twosUsed}x 2)</span
-                      >
-                    {/if}
-                  </div>
-                </div>
-              {:else}
-                <div class="text-center text-emerald-50/70">
-                  <div class="text-[0.65rem] uppercase tracking-[0.4em]">
-                    Game Pile
-                  </div>
-                  <div class="mt-3 text-4xl font-black text-white/70">
-                    Empty
-                  </div>
-                  <div class="mt-2 text-sm">
-                    Play any valid combination to lead
-                  </div>
-                </div>
-              {/if}
-            </div>
-          </div>
-        </div>
-
-        <aside class="flex items-center justify-center lg:row-start-2">
-          {#if rightOpponent}
-            <div
-              class="w-full max-w-sm rounded-3xl border border-white/10 bg-black/25 p-5 text-center shadow-2xl shadow-black/25 backdrop-blur-md"
-            >
-              <div class="text-xs uppercase tracking-[0.3em] text-green-200/70">
-                Right Opponent
-              </div>
-              <div class="mt-2 text-2xl font-black">
-                Player {rightOpponent.seat}
-              </div>
-              <div class="mt-1 text-sm text-green-50/75">
-                {displayRole(rightOpponent.role)}
-              </div>
-            </div>
-          {/if}
-        </aside>
-      </div>
 
       <footer
         class="rounded-3xl border border-white/10 bg-black/25 p-4 backdrop-blur-md md:p-6"
@@ -661,85 +786,39 @@
             </div>
           {/if}
 
-          <div>
-            <div class="flex items-center justify-between gap-3">
-              <h2 class="text-lg font-semibold text-green-50">
-                {isExchangeVisible ? "Exchange Cards" : "Selected Cards"}
-              </h2>
-              <div class="text-sm text-green-100/70">{selectedMoveLabel}</div>
-            </div>
-            {#if isExchangeVisible}
+          <div
+            class="rounded-4xl border border-white/10 bg-black/20 px-4 pb-6 pt-5 overflow-visible"
+          >
+            {#if ownHand.length === 0}
               <div
-                class="mt-3 rounded-2xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-50/90"
+                class="mt-5 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-green-50/70"
               >
-                {#if exchangeRequiredCards === 0}
-                  Citizen's are exempt from exchanging
-                {:else if exchangeCanChoose}
-                  Choose {exchangeRequiredCards} card(s) to hand away.
-                {:else}
-                  The highest {exchangeRequiredCards} card(s) are pre-selected for
-                  this exchange.
-                {/if}
+                No hand data yet
+              </div>
+            {:else}
+              <div
+                class="mt-5 flex w-full justify-center overflow-visible pb-5 pt-1"
+              >
+                {#each ownHand as card, index}
+                  <div
+                    class="relative"
+                    style={getHorizontalOverlapStyle(index)}
+                  >
+                    <Card
+                      value={card}
+                      suit={visualHand[index]?.suit ?? "clubs"}
+                      isFaceUp={true}
+                      isSelected={selectedIndices.includes(index)}
+                      disabled={isExchangeVisible &&
+                        (!exchangeCanChoose || exchangeRequiredCards === 0)}
+                      className="shrink-0 scale-[0.98]"
+                      onClick={() => handleToggleCard(index)}
+                    />
+                  </div>
+                {/each}
               </div>
             {/if}
-            <div class="mt-3 flex flex-wrap gap-2">
-              {#if selectedHandCards.length === 0}
-                <span
-                  class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm text-green-50/70"
-                  >{isExchangeVisible
-                    ? "No exchange cards selected"
-                    : "No cards selected"}</span
-                >
-              {:else}
-                {#each selectedHandCards as card, index}
-                  <span
-                    class="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-3 py-1 text-sm text-emerald-100"
-                  >
-                    {displayCard(card)}
-                  </span>
-                {/each}
-              {/if}
-            </div>
           </div>
-
-          <div>
-            <div class="flex items-center justify-between gap-3">
-              <h2 class="text-lg font-semibold text-green-50">Your Hand</h2>
-              {#if selectedHandCards.length > 0}
-                <button
-                  type="button"
-                  on:click={handleManualClear}
-                  class="text-xs text-red-400 hover:text-red-300 font-medium underline"
-                >
-                  Clear Selection
-                </button>
-              {/if}
-            </div>
-            <div class="mt-3 flex flex-wrap gap-2">
-              {#if ownHand.length === 0}
-                <span
-                  class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm text-green-50/70"
-                  >No hand data yet</span
-                >
-              {:else}
-                {#each ownHand as card, index}
-                  <button
-                    class="min-w-14 rounded-2xl border px-4 py-3 text-lg font-black shadow-lg transition hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70
-                    {selectedIndices.includes(index)
-                      ? 'bg-emerald-400 text-emerald-950 border-emerald-300 scale-105 ring-2 ring-emerald-400/50'
-                      : 'border-white/10 bg-white text-slate-950 hover:bg-slate-100'}"
-                    type="button"
-                    disabled={isExchangeVisible &&
-                      (!exchangeCanChoose || exchangeRequiredCards === 0)}
-                    on:click={() => handleToggleCard(index)}
-                  >
-                    {displayCard(card)}
-                  </button>
-                {/each}
-              {/if}
-            </div>
-          </div>
-
           <div
             class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
           >
