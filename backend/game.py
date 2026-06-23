@@ -304,6 +304,7 @@ class Presidenten:
             "legal_moves": self.get_legal_moves(p_id),
             "my_role": self.roles[p_id],
             "last_move": self.last_move,
+            "curr_turn": self.curr_turn,
             "opp_hand_counts": {
                 p: len(self.hands[p]) for p in range(self.players) if p != p_id
             },

@@ -2,7 +2,6 @@
   import { onDestroy, onMount } from "svelte";
   import Card from "./lib/Card.svelte";
   import {
-    connectionStatus,
     gameStore,
     exchangePrompt,
     jumpInPrompt,
@@ -46,11 +45,11 @@
   $: jumpInPromptData = $jumpInPrompt;
   $: roundSummaryData = $roundSummary;
   $: ownHand = currentState?.hand ?? [];
-  $: cardsInPile = currentState?.cards_in_pile ?? [];
   $: selectedHandCards = $selectedCards;
   $: exchangeRequiredCards = exchangePromptData?.requiredCards ?? 0;
   $: exchangeCanChoose = exchangePromptData?.canChoose ?? false;
   $: isExchangeVisible = !!exchangePromptData;
+  $: isMyTurn = currentState?.curr_turn === 0;
   $: jumpInVisible = !!jumpInPromptData && !!currentState?.is_finish_prompt;
   $: jumpInAutoMove =
     jumpInVisible && currentState ? gameStore.getAutoFinishMove() : null;
@@ -101,13 +100,15 @@
       ? isExchangeVisible
         ? `Selected ${selectedHandCards.length}/${exchangeRequiredCards} cards`
         : "Invalid selection"
-      : isExchangeVisible
-        ? exchangeRequiredCards === 0
-          ? "Citizen's are exempt from exchanging"
-          : exchangeCanChoose
-            ? `Select ${exchangeRequiredCards} cards to give away`
-            : `Highest ${exchangeRequiredCards} cards pre-selected`
-        : "Click cards from your hand to queue them for play";
+      : !isExchangeVisible && !isMyTurn
+        ? "Waiting for your turn"
+        : isExchangeVisible
+          ? exchangeRequiredCards === 0
+            ? "Citizen's are exempt from exchanging"
+            : exchangeCanChoose
+              ? `Select ${exchangeRequiredCards} cards to give away`
+              : `Highest ${exchangeRequiredCards} cards pre-selected`
+          : "Click cards from your hand to queue them for play";
   $: roundSummaryEntries = roundSummaryData
     ? Object.entries(roundSummaryData.scores).sort(
         (left, right) => Number(left[0]) - Number(right[0]),
@@ -172,6 +173,10 @@
 
   function getOpponentLabel(role: string | null) {
     return displayBotType(role);
+  }
+
+  function getOpponentTypeLabel(seat: number) {
+    return currentState?.player_types?.[seat] ?? "Bot";
   }
 
   function getHorizontalOverlapStyle(index: number) {
@@ -300,6 +305,10 @@
 
   function handleToggleCard(index: number) {
     if (isExchangeVisible && !exchangeCanChoose && exchangeRequiredCards > 0) {
+      return;
+    }
+
+    if (!isExchangeVisible && !isMyTurn) {
       return;
     }
 
@@ -490,7 +499,8 @@
                       />
                       <div class="min-w-0">
                         <div class="truncate text-sm font-black text-white">
-                          {getOpponentLabel(opponent.role)} Bot
+                          {getOpponentLabel(opponent.role)}
+                          {getOpponentTypeLabel(opponent.seat)}
                         </div>
                       </div>
                     </div>
@@ -528,7 +538,8 @@
                   />
                   <div class="min-w-0">
                     <div class="truncate text-sm font-black text-white">
-                      {getOpponentLabel(leftOpponentView.role)} Bot
+                      {getOpponentLabel(leftOpponentView.role)}
+                      {getOpponentTypeLabel(leftOpponentView.seat)}
                     </div>
                   </div>
                 </div>
@@ -605,7 +616,8 @@
                   />
                   <div class="min-w-0">
                     <div class="truncate text-sm font-black text-white">
-                      {getOpponentLabel(rightOpponentView.role)} Bot
+                      {getOpponentLabel(rightOpponentView.role)}
+                      {getOpponentTypeLabel(rightOpponentView.seat)}
                     </div>
                   </div>
                 </div>
@@ -653,8 +665,9 @@
                       isFaceUp={true}
                       isSelected={selectedIndices.includes(index)}
                       isBlinking={jumpInVisible && jumpInTargetValue === card}
-                      disabled={isExchangeVisible &&
-                        (!exchangeCanChoose || exchangeRequiredCards === 0)}
+                      disabled={(!isExchangeVisible && !isMyTurn) ||
+                        (isExchangeVisible &&
+                          (!exchangeCanChoose || exchangeRequiredCards === 0))}
                       className="shrink-0 scale-[0.75] md:scale-[0.8]"
                       onClick={() => handleToggleCard(index)}
                     />
@@ -685,7 +698,7 @@
                 <button
                   class="rounded-lg border border-emerald-300/30 bg-emerald-400 px-4 py-1.5 font-semibold text-emerald-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40 text-xs"
                   type="button"
-                  disabled={!isSelectionLegal}
+                  disabled={!isMyTurn || !isSelectionLegal}
                   on:click={handlePlay}
                 >
                   Play
@@ -693,6 +706,7 @@
                 <button
                   class="rounded-lg border border-white/10 bg-white/10 px-4 py-1.5 font-semibold text-white transition hover:bg-white/15 text-xs"
                   type="button"
+                  disabled={!isMyTurn}
                   on:click={handlePass}
                 >
                   Pass

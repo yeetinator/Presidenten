@@ -54,6 +54,29 @@ def get_exchange_count(env: Presidenten, role: str) -> int:
     return 0
 
 
+def get_player_type_label(player_type: PlayerType) -> str:
+    if player_type == PlayerType.HUMAN:
+        return "Human"
+    if player_type == PlayerType.RANDOM:
+        return "Random"
+    if player_type == PlayerType.BASELINE:
+        return "Baseline"
+    if player_type == PlayerType.ISMCTS:
+        return "ISMCTS"
+    if player_type == PlayerType.DMC:
+        return "DMC"
+    return "Unknown"
+
+
+def enrich_state(state: dict, assign_p: dict[int, PlayerType]):
+    clean_state = make_json_serializable(state)
+    clean_state["player_types"] = {
+        p_id: get_player_type_label(player_type)
+        for p_id, player_type in assign_p.items()
+    }
+    return clean_state
+
+
 async def run_exchange_phase(
     env: Presidenten,
     assigned_players: dict[
@@ -66,6 +89,7 @@ async def run_exchange_phase(
     websocket: WebSocket,
     human_id: int,
     shared_executor,
+    assign_p: dict[int, PlayerType],
 ):
     cards_to_pass: dict[int | str, list[int]] = {}
     human_role = env.roles[human_id]
@@ -85,7 +109,7 @@ async def run_exchange_phase(
     await websocket.send_json(
         {
             "type": "EXCHANGE_PROMPT",
-            "state": make_json_serializable(env._get_state(human_id)),
+            "state": enrich_state(env._get_state(human_id), assign_p),
             "required_cards": required_cards,
             "can_choose": can_choose,
         }
@@ -138,7 +162,7 @@ async def run(
                 await websocket.send_json(
                     {
                         "type": "JUMP_IN_PROMPT",
-                        "state": make_json_serializable(state),
+                        "state": enrich_state(state, assign_p),
                         "timeout_seconds": JUMP_IN_WINDOW,
                         "message": "JUMP IN!",
                     }
@@ -188,7 +212,7 @@ async def run(
 
         if assign_p[curr_id] == PlayerType.HUMAN:
             await websocket.send_json(
-                {"type": "STATE_UPDATE", "state": make_json_serializable(state)}
+                {"type": "STATE_UPDATE", "state": enrich_state(state, assign_p)}
             )
             return
 
@@ -212,7 +236,7 @@ async def run(
         await websocket.send_json(
             {
                 "type": "STATE_UPDATE",
-                "state": make_json_serializable(human_perspective_state),
+                "state": enrich_state(human_perspective_state, assign_p),
             }
         )
         await asyncio.sleep(1)
@@ -303,6 +327,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         "message": f"({env.roles[human_id]}) You played: {Presidenten.visualize_move(chosen_move)}",
                     }
                 )
+                await websocket.send_json(
+                    {
+                        "type": "STATE_UPDATE",
+                        "state": enrich_state(env._get_state(human_id), assign_p),
+                    }
+                )
+                await asyncio.sleep(1)
                 await run(
                     env,
                     assigned_players,
@@ -326,6 +357,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         websocket,
                         human_id,
                         shared_executor,
+                        assign_p,
                     )
                     await run(
                         env,

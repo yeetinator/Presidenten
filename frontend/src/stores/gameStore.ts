@@ -5,8 +5,10 @@ export interface GameStateUpdate {
   cards_in_pile: number[];
   is_finish_prompt: boolean;
   my_role: string;
+  curr_turn: number | null;
   round: number;
   player_roles: Record<number, string | null>;
+  player_types: Record<number, string>;
   legal_moves: [number, number, number][];
   last_move: [number, number, number];
   role_pairs: [string, string, number][];
@@ -109,6 +111,9 @@ function isGameStateUpdate(value: unknown): value is GameStateUpdate {
     !!candidate.player_roles &&
     typeof candidate.player_roles === "object" &&
     !Array.isArray(candidate.player_roles) &&
+    !!candidate.player_types &&
+    typeof candidate.player_types === "object" &&
+    !Array.isArray(candidate.player_types) &&
     Array.isArray(candidate.legal_moves) &&
     Array.isArray(candidate.last_move)
   );
