@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import Card from "./lib/Card.svelte";
+  import Card from "./assets/Card.svelte";
   import {
     gameStore,
     exchangePrompt,
