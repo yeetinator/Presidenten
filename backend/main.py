@@ -37,6 +37,51 @@ app.add_middleware(
 )
 
 
+def _parse_helper(suits):
+    char_to_value = {"T": 10, "J": 11, "Q": 12, "K": 13, "A": 14, "2": 15}
+    selection = []
+
+    for suit in suits:
+        rank_char = suit[:-1]
+        val = char_to_value.get(rank_char, int(rank_char))
+        selection.append(val)
+
+    return selection
+
+
+def parse_suits_to_move(suits):
+    if not suits:
+        return (0, 0, 0)
+
+    vals = _parse_helper(suits)
+
+    count = len(vals)
+    twos_used = vals.count(15)
+    non_twos = [v for v in vals if v != 15]
+    card_val = non_twos[0] if non_twos else 15
+
+    return (card_val, count, twos_used)
+
+
+def parse_suits_to_selection(suits):
+    if not suits:
+        return []
+    return _parse_helper(suits)
+
+
+def parse_moves_to_suits(moves: list):
+    suits_moves = []
+    value_to_char = {10: "T", 11: "J", 12: "Q", 13: "K", 14: "A", 15: "2"}
+
+    for card_val, count, twos_used in moves:
+        if card_val == 0:
+            continue
+
+        suit = value_to_char.get(card_val, str(card_val))
+        suits_moves.append([suit] * (count - twos_used) + ["2"] * twos_used)
+    return suits_moves
+
+
 def make_json_serializable(state: dict):
     clean_state = state.copy()
     if "passed" in clean_state and isinstance(clean_state["passed"], set):
@@ -45,12 +90,6 @@ def make_json_serializable(state: dict):
         clean_state["active_players"], set
     ):
         clean_state["active_players"] = list(clean_state["active_players"])
-    if "suited_hand" in clean_state and isinstance(clean_state["suited_hand"], set):
-        clean_state["suited_hand"] = list(clean_state["suited_hand"])
-    if "suit_last_move" in clean_state and isinstance(
-        clean_state["suit_last_move"], set
-    ):
-        clean_state["suit_last_move"] = list(clean_state["suit_last_move"])
     return clean_state
 
 
@@ -81,6 +120,8 @@ def enrich_state(state: dict, assign_p: dict[int, PlayerType]):
         p_id: get_player_type_label(player_type)
         for p_id, player_type in assign_p.items()
     }
+    clean_state["can_pass"] = (0, 0, 0) in state["legal_moves"]
+    clean_state["legal_moves_suits"] = parse_moves_to_suits(state["legal_moves"])
     return clean_state
 
 
@@ -98,7 +139,6 @@ async def run_exchange_phase(
     assign_p: dict[int, PlayerType],
 ):
     cards_to_pass: dict[int | str, list[int]] = {}
-    suits_to_pass: dict[int | str, set[str]] = {}
     human_role = env.roles[human_id]
     required_cards = get_exchange_count(env, human_role)
     can_choose = human_role in {"President", "Vice-President", "Secretary"}
@@ -112,7 +152,6 @@ async def run_exchange_phase(
         chosen_cards = await asyncio.to_thread(bot.choose_cards_to_pass, state)
 
         cards_to_pass[p_id] = chosen_cards
-        suits_to_pass[p_id] = env.get_exchange_suits(state["suited_hand"], chosen_cards)
 
     await websocket.send_json(
         {
@@ -128,16 +167,16 @@ async def run_exchange_phase(
         if raw_data.get("type") != "EXCHANGE_CARDS":
             continue
 
-        cards = raw_data.get("cards", [])
-        suits = raw_data.get("suits", [])
+        suits = raw_data.get("suits", []) if can_choose else []
+        cards = parse_suits_to_selection(suits)
+
         if not isinstance(cards, list):
             continue
 
         cards_to_pass[human_id] = cards
-        suits_to_pass[human_id] = set(suits)
         break
 
-    env.exchange_cards(cards_to_pass, suits_to_pass)
+    env.exchange_cards(cards_to_pass)
     await websocket.send_json(
         {
             "type": "GAME_LOG",
@@ -182,9 +221,9 @@ async def run(
                         websocket.receive_json(), timeout=JUMP_IN_WINDOW
                     )
                     if raw_data.get("type") == "PLAY_MOVE":
-                        move_array = raw_data.get("move")
-                        suits_array = raw_data.get("suits")
-                        env.step(human_id, tuple(move_array), set(suits_array))
+                        suits_array = raw_data.get("suits", [])
+                        chosen_move = parse_suits_to_move(suits_array)
+                        env.step(human_id, chosen_move, suits_array)
                         await websocket.send_json(
                             {
                                 "type": "GAME_LOG",
@@ -320,6 +359,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "message": "Game lobby created. Dealing hands...",
                     }
                 )
+                await asyncio.sleep(1.5)
                 await run(
                     env,
                     assigned_players,
@@ -332,11 +372,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 if env is None or env.game_over:
                     continue
 
-                move_array = data.get("move")
-                suits_array = data.get("suits")
-                chosen_move = tuple(move_array)
+                suits_array = data.get("suits", [])
+                chosen_move = parse_suits_to_move(suits_array)
 
-                env.step(human_id, chosen_move, set(suits_array))
+                env.step(human_id, chosen_move, suits_array)
                 await websocket.send_json(
                     {
                         "type": "GAME_LOG",

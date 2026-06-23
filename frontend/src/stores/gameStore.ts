@@ -1,7 +1,7 @@
 import { writable } from "svelte/store";
 
 export interface GameStateUpdate {
-  hand: number[];
+  suited_hand: string[];
   cards_in_pile: number[];
   is_finish_prompt: boolean;
   my_role: string;
@@ -9,29 +9,17 @@ export interface GameStateUpdate {
   round: number;
   player_roles: Record<number, string | null>;
   player_types: Record<number, string>;
-  legal_moves: [number, number, number][];
-  last_move: [number, number, number];
+  legal_moves_suits: string[][];
+  suit_last_move: string[];
   role_pairs: [string, string, number][];
   opp_hand_counts: Record<number, number>;
   first_turn: boolean;
-  clubs_3_holder: number;
-}
-
-export interface VisualCard {
-  id: string;
-  value: number;
-  suit: "hearts" | "diamonds" | "clubs" | "spades";
+  can_pass: boolean;
 }
 
 export interface StateUpdateMessage {
   type: "STATE_UPDATE";
   state: GameStateUpdate;
-}
-
-export interface MoveTuple {
-  card_value: number;
-  count: number;
-  twos_used: number;
 }
 
 export interface RoundOverMessage {
@@ -70,7 +58,7 @@ export const logs = writable<string[]>([]);
 export const state = writable<GameStateUpdate | null>(null);
 export const connectionStatus = writable<ConnectionStatus>("disconnected");
 export const lastMessageType = writable<string | null>(null);
-export const selectedCards = writable<number[]>([]);
+export const selectedCards = writable<string[]>([]);
 export const roundSummary = writable<RoundSummary | null>(null);
 export const jumpInPrompt = writable<JumpInPrompt | null>(null);
 export const exchangePrompt = writable<ExchangePrompt | null>(null);
@@ -88,7 +76,7 @@ type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 let socket: WebSocket | null = null;
 let currentUrl: string | null = null;
-let latestSelectedCards: number[] = [];
+let latestSelectedCards: string[] = [];
 let latestState: GameStateUpdate | null = null;
 let jumpInPromptTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -105,17 +93,18 @@ function isGameStateUpdate(value: unknown): value is GameStateUpdate {
 
   const candidate = value as Partial<GameStateUpdate>;
   return (
-    Array.isArray(candidate.hand) &&
+    Array.isArray(candidate.suited_hand) &&
     Array.isArray(candidate.cards_in_pile) &&
     typeof candidate.is_finish_prompt === "boolean" &&
+    typeof candidate.can_pass === "boolean" &&
     !!candidate.player_roles &&
     typeof candidate.player_roles === "object" &&
     !Array.isArray(candidate.player_roles) &&
     !!candidate.player_types &&
     typeof candidate.player_types === "object" &&
     !Array.isArray(candidate.player_types) &&
-    Array.isArray(candidate.legal_moves) &&
-    Array.isArray(candidate.last_move)
+    Array.isArray(candidate.legal_moves_suits) &&
+    Array.isArray(candidate.suit_last_move)
   );
 }
 
@@ -129,30 +118,6 @@ function isRoundOverMessage(value: unknown): value is RoundOverMessage {
     !!candidate.roles &&
     Array.isArray(candidate.out_order)
   );
-}
-
-function normalizeSelectedCards(cards: number[]): MoveTuple | null {
-  if (cards.length === 0) return null;
-
-  const twosUsed = cards.filter((card) => card === 15).length;
-  const nonTwoCards = cards.filter((card) => card !== 15);
-
-  if (nonTwoCards.length > 0) {
-    const [firstCard] = nonTwoCards;
-    if (!nonTwoCards.every((card) => card === firstCard)) return null;
-
-    return {
-      card_value: firstCard,
-      count: cards.length,
-      twos_used: twosUsed,
-    };
-  }
-
-  return {
-    card_value: 15,
-    count: cards.length,
-    twos_used: 0,
-  };
 }
 
 function clearSelectedCards() {
@@ -179,17 +144,13 @@ function clearJumpInPrompt() {
   jumpInPrompt.set(null);
 }
 
-function selectCard(card: number) {
-  selectedCards.update((cards) => [...cards, card]);
-}
-
-function getSelectedMoveTuple() {
-  return normalizeSelectedCards(latestSelectedCards);
-}
-
 function getAutoFinishMove() {
-  if (!latestState?.legal_moves) return null;
-  return latestState.legal_moves.find((move) => move[0] !== 0) ?? null;
+  if (!latestState?.legal_moves_suits) return null;
+  return latestState.legal_moves_suits[0] ?? null;
+}
+
+function getHighestSuitCards(suitedHand: string[], count: number) {
+  return suitedHand.slice(-count);
 }
 
 function attachSocketListeners(activeSocket: WebSocket) {
@@ -251,12 +212,12 @@ function attachSocketListeners(activeSocket: WebSocket) {
       ) {
         state.set(payload.state);
         if (!payload.can_choose && payload.required_cards > 0) {
-          const hand = payload.state.hand;
-          const count = payload.required_cards;
-          const highCards = hand.slice(hand.length - count);
-          selectedCards.set(highCards);
-        } else {
-          selectedCards.set([]);
+          selectedCards.set(
+            getHighestSuitCards(
+              payload.state.suited_hand,
+              payload.required_cards,
+            ),
+          );
         }
         exchangePrompt.set({
           state: payload.state,
@@ -359,12 +320,9 @@ async function startGame(payload: {
 }
 
 async function playSelectedCards() {
-  const cards = getSelectedMoveTuple();
-  if (!cards) throw new Error("Invalid selection structure.");
-
   await send({
     type: "PLAY_MOVE",
-    move: [cards.card_value, cards.count, cards.twos_used],
+    suits: latestSelectedCards,
   });
   clearSelectedCards();
 }
@@ -375,11 +333,11 @@ async function playJumpInPrompt() {
 
   clearJumpInPrompt();
   clearSelectedCards();
-  await send({ type: "PLAY_MOVE", move });
+  await send({ type: "PLAY_MOVE", suits: move });
 }
 
 async function passTurn() {
-  await send({ type: "PLAY_MOVE", move: [0, 0, 0] });
+  await send({ type: "PLAY_MOVE", suits: [] });
   clearSelectedCards();
 }
 
@@ -396,8 +354,11 @@ function quitGame() {
   disconnect();
 }
 
-async function sendExchangeCards(cards: number[]) {
-  await send({ type: "EXCHANGE_CARDS", cards });
+async function sendExchangeCards(cards: string[]) {
+  await send({
+    type: "EXCHANGE_CARDS",
+    suits: cards,
+  });
 }
 
 export const gameStore = {
@@ -412,7 +373,6 @@ export const gameStore = {
   disconnect,
   send,
   startGame,
-  selectCard,
   clearSelectedCards,
   clearRoundSummary,
   clearExchangePrompt,

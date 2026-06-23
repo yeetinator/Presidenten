@@ -1,6 +1,5 @@
 <script lang="ts">
-  export let value: number;
-  export let suit: "hearts" | "diamonds" | "clubs" | "spades" = "clubs";
+  export let suitCard: string = "3C";
   export let isFaceUp: boolean = true;
   export let isSelected: boolean = false;
   export let isBlinking: boolean = false;
@@ -8,22 +7,14 @@
   export let className: string = "";
   export let onClick: ((event: MouseEvent) => void) | undefined = undefined;
 
-  function getCardImage(val: number, cardSuit: string): string {
+  function getCardImage(cardCode: string): string {
     if (!isFaceUp) return "/cards/1B.svg";
 
-    let rankStr = String(val);
-    if (val === 10) rankStr = "T";
-    else if (val === 11) rankStr = "J";
-    else if (val === 12) rankStr = "Q";
-    else if (val === 13) rankStr = "K";
-    else if (val === 14) rankStr = "A";
-    else if (val === 15) rankStr = "2";
-
-    const suitLetter = cardSuit.charAt(0).toUpperCase();
-    return `/cards/${rankStr}${suitLetter}.svg`;
+    const normalizedCode = cardCode.trim().toUpperCase();
+    return `/cards/${normalizedCode}.svg`;
   }
 
-  $: imgSrc = getCardImage(value, suit);
+  $: imgSrc = getCardImage(suitCard);
 </script>
 
 <button
