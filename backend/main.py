@@ -1,5 +1,6 @@
 import asyncio
 import torch
+import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from game import Presidenten, PlayerType
@@ -44,6 +45,12 @@ def make_json_serializable(state: dict):
         clean_state["active_players"], set
     ):
         clean_state["active_players"] = list(clean_state["active_players"])
+    if "suited_hand" in clean_state and isinstance(clean_state["suited_hand"], set):
+        clean_state["suited_hand"] = list(clean_state["suited_hand"])
+    if "suit_last_move" in clean_state and isinstance(
+        clean_state["suit_last_move"], set
+    ):
+        clean_state["suit_last_move"] = list(clean_state["suit_last_move"])
     return clean_state
 
 
@@ -88,10 +95,10 @@ async def run_exchange_phase(
     ],
     websocket: WebSocket,
     human_id: int,
-    shared_executor,
     assign_p: dict[int, PlayerType],
 ):
     cards_to_pass: dict[int | str, list[int]] = {}
+    suits_to_pass: dict[int | str, set[str]] = {}
     human_role = env.roles[human_id]
     required_cards = get_exchange_count(env, human_role)
     can_choose = human_role in {"President", "Vice-President", "Secretary"}
@@ -105,6 +112,7 @@ async def run_exchange_phase(
         chosen_cards = await asyncio.to_thread(bot.choose_cards_to_pass, state)
 
         cards_to_pass[p_id] = chosen_cards
+        suits_to_pass[p_id] = env.get_exchange_suits(state["suited_hand"], chosen_cards)
 
     await websocket.send_json(
         {
@@ -121,13 +129,15 @@ async def run_exchange_phase(
             continue
 
         cards = raw_data.get("cards", [])
+        suits = raw_data.get("suits", [])
         if not isinstance(cards, list):
             continue
 
         cards_to_pass[human_id] = cards
+        suits_to_pass[human_id] = set(suits)
         break
 
-    env.exchange_cards(cards_to_pass)
+    env.exchange_cards(cards_to_pass, suits_to_pass)
     await websocket.send_json(
         {
             "type": "GAME_LOG",
@@ -173,7 +183,8 @@ async def run(
                     )
                     if raw_data.get("type") == "PLAY_MOVE":
                         move_array = raw_data.get("move")
-                        env.step(human_id, tuple(move_array))
+                        suits_array = raw_data.get("suits")
+                        env.step(human_id, tuple(move_array), set(suits_array))
                         await websocket.send_json(
                             {
                                 "type": "GAME_LOG",
@@ -232,14 +243,13 @@ async def run(
             }
         )
 
-        human_perspective_state = env._get_state(human_id)
         await websocket.send_json(
             {
                 "type": "STATE_UPDATE",
-                "state": enrich_state(human_perspective_state, assign_p),
+                "state": enrich_state(env._get_state(human_id), assign_p),
             }
         )
-        await asyncio.sleep(1)
+        await asyncio.sleep(1.5)
 
     env.assign_roles()
     await websocket.send_json(
@@ -286,13 +296,18 @@ async def websocket_endpoint(websocket: WebSocket):
                         assigned_players[p_id] = PresidentenISMCTSBot(p_id, 1000)
                     elif p_type == PlayerType.DMC:
                         dmc_model = PresidentenValueNet().to(device)
-                        model_path = "backend/playerTypes/best_model.pt"
+                        base_dir = os.path.dirname(os.path.abspath(__file__))
+                        model_path = os.path.join(
+                            base_dir, "playerTypes", "best_model.pt"
+                        )
 
                         try:
                             load_path = torch.load(model_path, map_location=device)
                             dmc_model.load_state_dict(load_path["model_state_dict"])
-                        except Exception:
-                            print(f"Warning: Could not load weights from {model_path}.")
+                        except Exception as e:
+                            print(
+                                f"Warning: Could not load weights from {model_path}. Reason: {e}. Using untrained model instead."
+                            )
                         dmc_model.eval()
                         assigned_players[p_id] = PresidentenDMCBot(
                             p_id, dmc_model, device
@@ -318,9 +333,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 move_array = data.get("move")
+                suits_array = data.get("suits")
                 chosen_move = tuple(move_array)
 
-                env.step(human_id, chosen_move)
+                env.step(human_id, chosen_move, set(suits_array))
                 await websocket.send_json(
                     {
                         "type": "GAME_LOG",
@@ -333,7 +349,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "state": enrich_state(env._get_state(human_id), assign_p),
                     }
                 )
-                await asyncio.sleep(1)
+                await asyncio.sleep(1.5)
                 await run(
                     env,
                     assigned_players,
@@ -356,7 +372,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         assigned_players,
                         websocket,
                         human_id,
-                        shared_executor,
                         assign_p,
                     )
                     await run(
