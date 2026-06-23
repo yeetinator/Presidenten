@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { writable, get } from "svelte/store";
 
 export interface GameStateUpdate {
   suited_hand: string[];
@@ -76,17 +76,7 @@ type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 let socket: WebSocket | null = null;
 let currentUrl: string | null = null;
-let latestSelectedCards: string[] = [];
-let latestState: GameStateUpdate | null = null;
 let jumpInPromptTimeout: ReturnType<typeof setTimeout> | null = null;
-
-selectedCards.subscribe((value) => {
-  latestSelectedCards = value;
-});
-
-state.subscribe((value) => {
-  latestState = value;
-});
 
 function isGameStateUpdate(value: unknown): value is GameStateUpdate {
   if (!value || typeof value !== "object") return false;
@@ -145,8 +135,9 @@ function clearJumpInPrompt() {
 }
 
 function getAutoFinishMove() {
-  if (!latestState?.legal_moves_suits) return null;
-  return latestState.legal_moves_suits[0] ?? null;
+  const currState = get(state);
+  if (!currState?.legal_moves_suits) return null;
+  return currState.legal_moves_suits[0] ?? null;
 }
 
 function getHighestSuitCards(suitedHand: string[], count: number) {
@@ -173,6 +164,7 @@ function attachSocketListeners(activeSocket: WebSocket) {
       if (payload.type === "STATE_UPDATE" && isGameStateUpdate(payload.state)) {
         state.set(payload.state);
         clearExchangePrompt();
+        clearJumpInPrompt();
       }
 
       if (
@@ -322,7 +314,7 @@ async function startGame(payload: {
 async function playSelectedCards() {
   await send({
     type: "PLAY_MOVE",
-    suits: latestSelectedCards,
+    suits: get(selectedCards),
   });
   clearSelectedCards();
 }

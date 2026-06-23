@@ -19,90 +19,74 @@
   let gameStarted = false;
   let showFinalResults = false;
 
-  $: currentState = $gameState;
-  $: exchangePromptData = $exchangePrompt;
-  $: jumpInPromptData = $jumpInPrompt;
-  $: roundSummaryData = $roundSummary;
-  $: suitedHand = currentState?.suited_hand ?? [];
-  $: lastMoveSuits = currentState?.suit_last_move ?? [];
-  $: totalPlayers = Object.keys(currentState?.player_roles ?? {}).length || 4;
-  $: selectedHandCards = $selectedCards;
-  $: exchangeRequiredCards = exchangePromptData?.requiredCards ?? 0;
-  $: exchangeCanChoose = exchangePromptData?.canChoose ?? false;
-  $: isExchangeVisible = !!exchangePromptData;
-  $: isMyTurn = currentState?.curr_turn === 0;
-  $: jumpInVisible = !!jumpInPromptData && !!currentState?.is_finish_prompt;
-  $: jumpInAutoMove = jumpInVisible && currentState
-    ? gameStore.getAutoFinishMove()
-    : null;
-  $: jumpInTargetValue = jumpInAutoMove?.[0]
-    ? parseSuitValue(jumpInAutoMove[0])
-    : null;
-  $: selectedMoveValues = selectedHandCards.map(stripSuitCard);
+  $: suitedHand = $gameState?.suited_hand ?? [];
+  $: lastMoveSuits = $gameState?.suit_last_move ?? [];
+  $: totalPlayers = Object.keys($gameState?.player_roles ?? {}).length || 4;
+  $: exchangeRequiredCards = $exchangePrompt?.requiredCards ?? 0;
+  $: exchangeCanChoose = $exchangePrompt?.canChoose ?? false;
+  $: isMyTurn = $gameState?.curr_turn === 0;
+  $: jumpInVisible = !!$jumpInPrompt && !!$gameState?.is_finish_prompt;
+  $: jumpInAutoMove =
+    jumpInVisible && $gameState ? gameStore.getAutoFinishMove() : null;
+  $: jumpInTargetValue = jumpInAutoMove?.[0] ? jumpInAutoMove[0] : null;
+  $: selectedMoveValues = $selectedCards.map(stripSuitCard);
   $: isSelectionLegal = (() => {
-    if (!currentState?.legal_moves_suits || isExchangeVisible) return false;
-    return currentState.legal_moves_suits.some((legalMove) =>
+    if (!$gameState?.legal_moves_suits || !!$exchangePrompt) return false;
+    return $gameState.legal_moves_suits.some((legalMove) =>
       arraysEqual(legalMove, selectedMoveValues),
     );
   })();
-  $: opponentSeats = Object.entries(currentState?.player_roles ?? {})
+  $: opponentViews = Object.entries($gameState?.player_roles ?? {})
     .map(([seatStr, role]) => {
       const seat = Number(seatStr);
       const relativeOffset = (seat - 0 + totalPlayers) % totalPlayers;
       return { seat, role, relativeOffset };
     })
-    .filter((player) => player.seat !== 0)
-    .sort((a, b) => a.relativeOffset - b.relativeOffset);
-  $: opponentViews = opponentSeats.map((opponent, index) => ({
-    ...opponent,
-    handCount: currentState?.opp_hand_counts?.[opponent.seat] ?? 0,
-    label: `${displayBotType(opponent.role)} ${currentState?.player_types?.[opponent.seat] ?? "Bot"}`,
-    position:
-      index === 0
-        ? "left"
-        : index === opponentSeats.length - 1
-          ? "right"
-          : "top",
-  }));
-  $: leftOpponentView =
-    opponentViews.find((opponent) => opponent.position === "left") ?? null;
-  $: rightOpponentView =
-    opponentViews.find((opponent) => opponent.position === "right") ?? null;
-  $: topOpponentViews = opponentViews.filter(
-    (opponent) => opponent.position === "top",
-  );
-  $: selectedMoveLabel = selectedHandCards.length > 0
-    ? isExchangeVisible
-      ? `Selected ${selectedHandCards.length}/${exchangeRequiredCards} cards`
-      : isSelectionLegal
-        ? `Valid Move: ${selectedHandCards.length} cards`
-        : "Illegal Move"
-    : !isExchangeVisible && !isMyTurn
-      ? "Waiting for your turn"
-      : isExchangeVisible
-        ? exchangeRequiredCards === 0
-          ? "Citizen's are exempt from exchanging"
-          : exchangeCanChoose
-            ? `Select ${exchangeRequiredCards} cards to give away`
-            : `Highest ${exchangeRequiredCards} cards pre-selected`
-        : "Click cards from your hand to queue them for play";
-  let lastStateRef: typeof currentState = null;
-  $: if (currentState && !isExchangeVisible) {
-    if (currentState !== lastStateRef) {
-      lastStateRef = currentState;
+    .filter((opponent) => opponent.seat !== 0)
+    .sort((a, b) => a.relativeOffset - b.relativeOffset)
+    .map((opponent, index, arr) => ({
+      ...opponent,
+      handCount: $gameState?.opp_hand_counts?.[opponent.seat] ?? 0,
+      label: `${displayBotType(opponent.role)} ${$gameState?.player_types?.[opponent.seat] ?? "Bot"}`,
+      position:
+        index === 0 ? "left" : index === arr.length - 1 ? "right" : "top",
+    }));
+  $: topOpponents = opponentViews.filter((o) => o.position === "top");
+  $: leftOpponent = opponentViews.find((o) => o.position === "left");
+  $: rightOpponent = opponentViews.find((o) => o.position === "right");
+  $: selectedMoveLabel =
+    $selectedCards.length > 0
+      ? !!$exchangePrompt
+        ? `Selected ${$selectedCards.length}/${exchangeRequiredCards} cards`
+        : isSelectionLegal
+          ? `Valid Move: ${$selectedCards.length} cards`
+          : "Illegal Move"
+      : !!!$exchangePrompt && !isMyTurn
+        ? "Waiting for your turn"
+        : !!$exchangePrompt
+          ? exchangeRequiredCards === 0
+            ? "Citizen's are exempt from exchanging"
+            : exchangeCanChoose
+              ? `Select ${exchangeRequiredCards} cards to give away`
+              : `Highest ${exchangeRequiredCards} cards pre-selected`
+          : "Click cards from your hand to queue them for play";
+  let lastStateRef: typeof $gameState = null;
+  $: if ($gameState && !!!$exchangePrompt) {
+    if ($gameState !== lastStateRef) {
+      lastStateRef = $gameState;
       gameStore.clearSelectedCards();
     }
   }
 
   let lastExchangeActive = false;
-  $: if (isExchangeVisible !== lastExchangeActive) {
-    lastExchangeActive = isExchangeVisible;
-    if (isExchangeVisible) {
+  $: if (!!$exchangePrompt !== lastExchangeActive) {
+    lastExchangeActive = !!$exchangePrompt;
+    if (!!$exchangePrompt) {
       if (exchangeCanChoose) {
         gameStore.clearSelectedCards();
-      } else if (exchangeRequiredCards > 0 && currentState) {
+      } else if (exchangeRequiredCards > 0 && $gameState) {
         gameStore.selectedCards.set(
-          currentState.suited_hand.slice(-exchangeRequiredCards),
+          $gameState.suited_hand.slice(-exchangeRequiredCards),
         );
       }
     }
@@ -127,19 +111,6 @@
 
   function stripSuitCard(suitCard: string) {
     return suitCard.slice(0, -1).toUpperCase();
-  }
-
-  function parseSuitValue(suitCard: string) {
-    const rankText = stripSuitCard(suitCard);
-    if (rankText === "T") return 10;
-    if (rankText === "J") return 11;
-    if (rankText === "Q") return 12;
-    if (rankText === "K") return 13;
-    if (rankText === "A") return 14;
-    if (rankText === "2") return 15;
-
-    const parsed = Number.parseInt(rankText, 10);
-    return Number.isFinite(parsed) ? parsed : null;
   }
 
   function arraysEqual(left: string[], right: string[]) {
@@ -213,9 +184,9 @@
   }
 
   async function handleConfirmExchange() {
-    if (!currentState || !exchangePromptData) return;
+    if (!$gameState || !$exchangePrompt) return;
 
-    const suitCards = selectedHandCards;
+    const suitCards = $selectedCards;
     if (suitCards.length !== exchangeRequiredCards) return;
 
     try {
@@ -244,37 +215,37 @@
   }
 
   function handleToggleCard(suitCard: string) {
-    if (isExchangeVisible && !exchangeCanChoose && exchangeRequiredCards > 0) {
+    if (!!$exchangePrompt && !exchangeCanChoose && exchangeRequiredCards > 0) {
       return;
     }
 
-    if (!isExchangeVisible && !isMyTurn) {
+    if (!!!$exchangePrompt && !isMyTurn) {
       return;
     }
 
-    const clickedCardValue = parseSuitValue(suitCard);
+    const clickedCardValue = stripSuitCard(suitCard);
     const finishMove = gameStore.getAutoFinishMove();
 
     if (
       jumpInVisible &&
       finishMove &&
       clickedCardValue !== null &&
-      clickedCardValue === parseSuitValue(finishMove[0])
+      clickedCardValue === finishMove[0]
     ) {
       handleJumpIn();
       return;
     }
 
-    if (selectedHandCards.includes(suitCard)) {
+    if ($selectedCards.includes(suitCard)) {
       gameStore.selectedCards.set(
-        selectedHandCards.filter((selected) => selected !== suitCard),
+        $selectedCards.filter((selected) => selected !== suitCard),
       );
       return;
     }
 
-    const selectionLimit = isExchangeVisible ? exchangeRequiredCards : 4;
-    if (selectedHandCards.length >= selectionLimit) return;
-    gameStore.selectedCards.set([...selectedHandCards, suitCard]);
+    const selectionLimit = !!$exchangePrompt ? exchangeRequiredCards : 4;
+    if ($selectedCards.length >= selectionLimit) return;
+    gameStore.selectedCards.set([...$selectedCards, suitCard]);
   }
 </script>
 
@@ -301,9 +272,9 @@
           class="grid gap-3 xl:grid-cols-[16rem_1fr_16rem] xl:grid-rows-[auto_1fr] h-full items-center"
         >
           <div class="xl:col-span-3">
-            {#if topOpponentViews.length > 0}
+            {#if topOpponents.length > 0}
               <div class="flex flex-wrap justify-center gap-3 overflow-visible">
-                {#each topOpponentViews as opponent}
+                {#each topOpponents as opponent (opponent.seat)}
                   <OpponentSeat
                     {opponent}
                     className="w-60 shrink-0 px-3 py-1.5"
@@ -314,9 +285,9 @@
           </div>
 
           <aside class="flex items-center justify-center xl:row-start-2">
-            {#if leftOpponentView}
+            {#if leftOpponent}
               <OpponentSeat
-                opponent={leftOpponentView}
+                opponent={leftOpponent}
                 className="w-full max-w-56 p-3"
               />
             {/if}
@@ -331,7 +302,7 @@
                   <div
                     class="flex items-end justify-center overflow-visible h-20"
                   >
-                    {#each lastMoveSuits as suitCard, cardIndex}
+                    {#each lastMoveSuits as suitCard, cardIndex (suitCard)}
                       <div
                         class="relative"
                         style={`margin-left: ${cardIndex === 0 ? 0 : -4.3}rem; z-index: ${cardIndex};`}
@@ -363,9 +334,9 @@
           </div>
 
           <aside class="flex items-center justify-center xl:row-start-2">
-            {#if rightOpponentView}
+            {#if rightOpponent}
               <OpponentSeat
-                opponent={rightOpponentView}
+                opponent={rightOpponent}
                 className="w-full max-w-56 p-3"
               />
             {/if}
@@ -383,7 +354,7 @@
               <div
                 class="my-0.5 flex w-full justify-center overflow-visible py-1 h-20 items-center"
               >
-                {#each suitedHand as suitCard, index}
+                {#each suitedHand as suitCard, index (suitCard)}
                   <div
                     class="relative"
                     style={getHorizontalOverlapStyle(index)}
@@ -391,11 +362,11 @@
                     <Card
                       {suitCard}
                       isFaceUp={true}
-                      isSelected={selectedHandCards.includes(suitCard)}
+                      isSelected={$selectedCards.includes(suitCard)}
                       isBlinking={jumpInVisible &&
-                        jumpInTargetValue === parseSuitValue(suitCard)}
-                      disabled={(!isExchangeVisible && !isMyTurn) ||
-                        (isExchangeVisible &&
+                        jumpInTargetValue === stripSuitCard(suitCard)}
+                      disabled={(!!!$exchangePrompt && !isMyTurn) ||
+                        (!!$exchangePrompt &&
                           (!exchangeCanChoose || exchangeRequiredCards === 0))}
                       className="shrink-0 scale-[0.75] md:scale-[0.8]"
                       onClick={() => handleToggleCard(suitCard)}
@@ -410,15 +381,15 @@
           >
             <div class="text-xs text-green-50/75">{selectedMoveLabel}</div>
             <div class="flex gap-2">
-              {#if isExchangeVisible}
+              {#if !!$exchangePrompt}
                 <button
                   class={`rounded-lg px-4 py-1.5 font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 text-xs ${
-                    selectedHandCards.length === exchangeRequiredCards
+                    $selectedCards.length === exchangeRequiredCards
                       ? "border border-emerald-200/30 bg-emerald-300 text-emerald-950 hover:bg-emerald-200"
                       : "border border-emerald-300/20 bg-emerald-500/40 text-emerald-50 hover:bg-emerald-400/50"
                   }`}
                   type="button"
-                  disabled={selectedHandCards.length !== exchangeRequiredCards}
+                  disabled={$selectedCards.length !== exchangeRequiredCards}
                   on:click={handleConfirmExchange}
                 >
                   Confirm Exchange
@@ -435,7 +406,7 @@
                 <button
                   class="rounded-lg border border-white/10 bg-white/10 px-4 py-1.5 font-semibold text-white transition hover:bg-white/15 text-xs"
                   type="button"
-                  disabled={!isMyTurn || !currentState?.can_pass}
+                  disabled={!isMyTurn || !$gameState?.can_pass}
                   on:click={handlePass}
                 >
                   Pass
@@ -451,9 +422,7 @@
           eyebrow="Game ended"
           eyebrowClass="text-emerald-300/80"
           title="Final Results"
-          scores={roundSummaryData
-            ? Object.entries(roundSummaryData.scores)
-            : []}
+          scores={$roundSummary ? Object.entries($roundSummary.scores) : []}
         >
           <button
             slot="actions"
@@ -464,12 +433,12 @@
             Back to Lobby
           </button>
         </SummaryModal>
-      {:else if roundSummaryData}
+      {:else if $roundSummary}
         <SummaryModal
           eyebrow="Round complete"
           eyebrowClass="text-amber-200/75"
           title="Play the next round or quit"
-          scores={Object.entries(roundSummaryData.scores)}
+          scores={Object.entries($roundSummary.scores)}
         >
           <div slot="actions" class="flex gap-3">
             <button

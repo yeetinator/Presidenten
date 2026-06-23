@@ -103,6 +103,7 @@ class Presidenten:
         self.last_move = (0, 0, 0)  # (card_value, count, twos_used)
         self.suit_last_move = []
         self.pile = []  # Cards currently on the pile
+        self.was_pile_reset = False
 
         self.pile_leader = None  # P_id of the player who last played to the pile
         self.passed = set()  # Players who have passed in the current pile
@@ -263,7 +264,7 @@ class Presidenten:
 
     def gen_suited_hands(self):
         suited_hands = {p_id: [] for p_id in range(self.players)}
-        hands_copy = self.hands.copy()
+        hands_copy = {p_id: hand.copy() for p_id, hand in self.hands.items()}
         suits = ["C", "D", "H", "S"]
         card_map = {"10": "T", "11": "J", "12": "Q", "13": "K", "14": "A", "15": "2"}
 
@@ -272,8 +273,8 @@ class Presidenten:
             hands_copy[self.clubs_3_holder].remove(3)
 
         for p_id, hand in hands_copy.items():
-            random.shuffle(suits)
             for card in hand:
+                random.shuffle(suits)
                 for suit in suits:
                     card_str = card_map.get(str(card), str(card))
                     card_suited = f"{card_str}{suit}"
@@ -320,6 +321,7 @@ class Presidenten:
         self.last_move = (0, 0, 0)
         self.suit_last_move = []
         self.pile = []
+        self.was_pile_reset = False
         self.pile_leader = None
         self.passed = set()
         self.game_over = False
@@ -455,17 +457,19 @@ class Presidenten:
                 was_pile_reset = self.pending_finish["pile_reset"]
                 self.pending_finish = None
                 self.curr_turn = resume_turn
-
-                if was_pile_reset:
-                    self._pile_reset()
+                self.was_pile_reset = was_pile_reset
         else:
             if self.verbose:
                 print(
                     f"\nJUMP IN! Player {p_id} finishes the last move with [{self.visualize_move(move)}]"
                 )
 
+            if suits:
+                self.suit_last_move.extend(suits)
+
             self._remove_cards(p_id, card_val, count, suits)
             self.history.append((p_id, move))
+            self.last_move = move
 
             if not self.hands[p_id] and p_id not in self.out_order:
                 if self.verbose:
@@ -479,9 +483,10 @@ class Presidenten:
                     self.playing.remove(p_id)
 
             self.game_over = self._is_game_over()
-            self._pile_reset()
+            self.pile.extend([card_val] * count)
             self.curr_turn = p_id
             self.pending_finish = None
+            self.was_pile_reset = True
 
     def handle_finishing(
         self, card_val, rcount, p_id, twos, temp_next_turn, pile_reset
@@ -507,18 +512,13 @@ class Presidenten:
 
         return True
 
-    def _pile_reset(self):
-        if self.game_over:
-            return
-
-        self.last_move = (0, 0, 0)
+    def clear_pile(self):
         self.suit_last_move = []
+        self.last_move = (0, 0, 0)
         self.passed = set()
-        self.curr_turn = self._get_next_active_player(
-            self.pile_leader, ignore_passed=True, include_start=True
-        )
-        self.pile_leader = None
         self.pile = []
+        self.pile_leader = None
+        self.was_pile_reset = False
 
     def _is_game_over(self):
         active_players = [p_id for p_id in range(self.players) if self.hands[p_id]]
@@ -578,6 +578,8 @@ class Presidenten:
 
         if self.game_over:
             self.curr_turn = p_id
+            self.was_pile_reset = pile_reset
+
             return self._get_state(self.curr_turn), self.game_over
 
         if pile_reset:
@@ -592,12 +594,12 @@ class Presidenten:
                 card_val, rcount, p_id, twos, temp_next_turn, pile_reset
             )
             if finish:
+                self.was_pile_reset = False
                 return self._get_state(self.curr_turn), self.game_over
 
-        if pile_reset:
-            self._pile_reset()
-        else:
-            self.curr_turn = temp_next_turn
+        self.curr_turn = temp_next_turn
+        self.was_pile_reset = pile_reset
+
         return self._get_state(self.curr_turn), self.game_over
 
     @staticmethod
@@ -803,7 +805,10 @@ def play_presidenten_game(
                 )
                 if curr_p_type.__class__.__name__ != "HumanPlayer":
                     input("Press Enter to continue...\n")
+
             state, _ = env.step(curr_p_id, chosen_move)
+            if env.was_pile_reset:
+                env.clear_pile()
 
         env.assign_roles()
         if has_human:

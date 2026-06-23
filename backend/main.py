@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
 
     print("Intercepted server shutdown signal sequence.")
     print("Safely terminating ISMCTS background worker processes...")
+
     shared_executor.shutdown(wait=False)
 
 
@@ -39,14 +40,11 @@ app.add_middleware(
 
 def _parse_helper(suits):
     char_to_value = {"T": 10, "J": 11, "Q": 12, "K": 13, "A": 14, "2": 15}
-    selection = []
-
-    for suit in suits:
-        rank_char = suit[:-1]
-        val = char_to_value.get(rank_char, int(rank_char))
-        selection.append(val)
-
-    return selection
+    return [
+        char_to_value[rank_char] if rank_char in char_to_value else int(rank_char)
+        for suit in suits
+        for rank_char in [suit[:-1]]
+    ]
 
 
 def parse_suits_to_move(suits):
@@ -54,7 +52,6 @@ def parse_suits_to_move(suits):
         return (0, 0, 0)
 
     vals = _parse_helper(suits)
-
     count = len(vals)
     twos_used = vals.count(15)
     non_twos = [v for v in vals if v != 15]
@@ -82,14 +79,33 @@ def parse_moves_to_suits(moves: list):
     return suits_moves
 
 
+def get_finish_suits(suits, state):
+    if not suits:
+        return []
+    return [card for card in state["suited_hand"] if card.startswith(suits[0])]
+
+
 def make_json_serializable(state: dict):
     clean_state = state.copy()
     if "passed" in clean_state and isinstance(clean_state["passed"], set):
         clean_state["passed"] = list(clean_state["passed"])
+
     if "active_players" in clean_state and isinstance(
         clean_state["active_players"], set
     ):
         clean_state["active_players"] = list(clean_state["active_players"])
+    return clean_state
+
+
+def enrich_state(state: dict, assign_p: dict[int, PlayerType]):
+    clean_state = make_json_serializable(state)
+    clean_state["player_types"] = {
+        p_id: get_player_type_label(player_type)
+        for p_id, player_type in assign_p.items()
+    }
+    clean_state["can_pass"] = (0, 0, 0) in state["legal_moves"]
+    clean_state["legal_moves_suits"] = parse_moves_to_suits(state["legal_moves"])
+
     return clean_state
 
 
@@ -101,28 +117,14 @@ def get_exchange_count(env: Presidenten, role: str) -> int:
 
 
 def get_player_type_label(player_type: PlayerType) -> str:
-    if player_type == PlayerType.HUMAN:
-        return "Human"
-    if player_type == PlayerType.RANDOM:
-        return "Random"
-    if player_type == PlayerType.BASELINE:
-        return "Baseline"
-    if player_type == PlayerType.ISMCTS:
-        return "ISMCTS"
-    if player_type == PlayerType.DMC:
-        return "DMC"
-    return "Unknown"
-
-
-def enrich_state(state: dict, assign_p: dict[int, PlayerType]):
-    clean_state = make_json_serializable(state)
-    clean_state["player_types"] = {
-        p_id: get_player_type_label(player_type)
-        for p_id, player_type in assign_p.items()
+    labels = {
+        PlayerType.HUMAN: "Human",
+        PlayerType.RANDOM: "Random",
+        PlayerType.BASELINE: "Baseline",
+        PlayerType.ISMCTS: "ISMCTS",
+        PlayerType.DMC: "DMC",
     }
-    clean_state["can_pass"] = (0, 0, 0) in state["legal_moves"]
-    clean_state["legal_moves_suits"] = parse_moves_to_suits(state["legal_moves"])
-    return clean_state
+    return labels.get(player_type, "Unknown")
 
 
 async def run_exchange_phase(
@@ -150,9 +152,7 @@ async def run_exchange_phase(
         bot = assigned_players[p_id]
         state = env._get_state(p_id)
         chosen_cards = await asyncio.to_thread(bot.choose_cards_to_pass, state)
-
         cards_to_pass[p_id] = chosen_cards
-
     await websocket.send_json(
         {
             "type": "EXCHANGE_PROMPT",
@@ -216,20 +216,43 @@ async def run(
                         "message": "JUMP IN!",
                     }
                 )
+
                 try:
                     raw_data = await asyncio.wait_for(
                         websocket.receive_json(), timeout=JUMP_IN_WINDOW
                     )
                     if raw_data.get("type") == "PLAY_MOVE":
                         suits_array = raw_data.get("suits", [])
-                        chosen_move = parse_suits_to_move(suits_array)
-                        env.step(human_id, chosen_move, suits_array)
+                        parsed_array = get_finish_suits(suits_array, state)
+                        chosen_move = parse_suits_to_move(parsed_array)
+                        state, _ = env.step(human_id, chosen_move, parsed_array)
+
                         await websocket.send_json(
                             {
                                 "type": "GAME_LOG",
                                 "message": "Succesful jump in!",
                             }
                         )
+                        await websocket.send_json(
+                            {
+                                "type": "STATE_UPDATE",
+                                "state": enrich_state(state, assign_p),
+                            }
+                        )
+                        await asyncio.sleep(1.5)
+
+                        if env.was_pile_reset:
+                            env.clear_pile()
+
+                        await websocket.send_json(
+                            {
+                                "type": "STATE_UPDATE",
+                                "state": enrich_state(
+                                    env._get_state(human_id), assign_p
+                                ),
+                            }
+                        )
+                        return
                 except asyncio.TimeoutError:
                     await websocket.send_json(
                         {
@@ -237,12 +260,25 @@ async def run(
                             "message": "Too slow!",
                         }
                     )
+
                     env.step(human_id, (0, 0, 0))
+                    if env.was_pile_reset:
+                        await asyncio.sleep(1.5)
+
+                        env.clear_pile()
+                        await websocket.send_json(
+                            {
+                                "type": "STATE_UPDATE",
+                                "state": enrich_state(
+                                    env._get_state(human_id), assign_p
+                                ),
+                            }
+                        )
                 continue
             else:
                 await asyncio.sleep(0.5)
-                bot = assigned_players[curr_id]
 
+                bot = assigned_players[curr_id]
                 if isinstance(bot, PresidentenISMCTSBot):
                     chosen_move = await asyncio.to_thread(
                         bot.get_move, state, env, shared_executor, "s"
@@ -258,6 +294,32 @@ async def run(
                             "message": f"Bot {curr_id} jumped in!",
                         }
                     )
+                    await websocket.send_json(
+                        {
+                            "type": "STATE_UPDATE",
+                            "state": enrich_state(env._get_state(human_id), assign_p),
+                        }
+                    )
+                    await asyncio.sleep(1.5)
+
+                    if env.was_pile_reset:
+                        env.clear_pile()
+                    await websocket.send_json(
+                        {
+                            "type": "STATE_UPDATE",
+                            "state": enrich_state(env._get_state(human_id), assign_p),
+                        }
+                    )
+                await asyncio.sleep(1)
+                if env.was_pile_reset:
+                    env.clear_pile()
+                    await websocket.send_json(
+                        {
+                            "type": "STATE_UPDATE",
+                            "state": enrich_state(env._get_state(human_id), assign_p),
+                        }
+                    )
+                    await asyncio.sleep(1.5)
                 continue
 
         if assign_p[curr_id] == PlayerType.HUMAN:
@@ -273,22 +335,38 @@ async def run(
             )
         else:
             chosen_move = await asyncio.to_thread(bot.get_move, state, env)
-
         env.step(curr_id, chosen_move)
+
         await websocket.send_json(
             {
                 "type": "GAME_LOG",
                 "message": f"Player {curr_id} ({env.roles[curr_id]}): {Presidenten.visualize_move(chosen_move)}",
             }
         )
-
         await websocket.send_json(
             {
                 "type": "STATE_UPDATE",
                 "state": enrich_state(env._get_state(human_id), assign_p),
             }
         )
-        await asyncio.sleep(1.5)
+
+        if env.was_pile_reset and not env.pending_finish and not env.game_over:
+            await asyncio.sleep(1.5)
+
+            env.clear_pile()
+            await websocket.send_json(
+                {
+                    "type": "STATE_UPDATE",
+                    "state": enrich_state(env._get_state(human_id), assign_p),
+                }
+            )
+
+            if env.curr_turn == human_id:
+                return
+        elif not env.pending_finish and not env.game_over:
+            if env.curr_turn == human_id:
+                return
+            await asyncio.sleep(1.5)
 
     env.assign_roles()
     await websocket.send_json(
@@ -347,6 +425,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             print(
                                 f"Warning: Could not load weights from {model_path}. Reason: {e}. Using untrained model instead."
                             )
+
                         dmc_model.eval()
                         assigned_players[p_id] = PresidentenDMCBot(
                             p_id, dmc_model, device
@@ -357,6 +436,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     {
                         "type": "LOG_ALERT",
                         "message": "Game lobby created. Dealing hands...",
+                    }
+                )
+                await websocket.send_json(
+                    {
+                        "type": "STATE_UPDATE",
+                        "state": enrich_state(env._get_state(human_id), assign_p),
                     }
                 )
                 await asyncio.sleep(1.5)
@@ -374,8 +459,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 suits_array = data.get("suits", [])
                 chosen_move = parse_suits_to_move(suits_array)
-
                 env.step(human_id, chosen_move, suits_array)
+
                 await websocket.send_json(
                     {
                         "type": "GAME_LOG",
@@ -388,7 +473,19 @@ async def websocket_endpoint(websocket: WebSocket):
                         "state": enrich_state(env._get_state(human_id), assign_p),
                     }
                 )
-                await asyncio.sleep(1.5)
+
+                if env.was_pile_reset and not env.pending_finish and not env.game_over:
+                    await asyncio.sleep(1.5)
+
+                    env.clear_pile()
+                    await websocket.send_json(
+                        {
+                            "type": "STATE_UPDATE",
+                            "state": enrich_state(env._get_state(human_id), assign_p),
+                        }
+                    )
+                else:
+                    await asyncio.sleep(1.5)
                 await run(
                     env,
                     assigned_players,
@@ -413,6 +510,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         human_id,
                         assign_p,
                     )
+                    await websocket.send_json(
+                        {
+                            "type": "STATE_UPDATE",
+                            "state": enrich_state(env._get_state(human_id), assign_p),
+                        }
+                    )
+                    await asyncio.sleep(1.5)
                     await run(
                         env,
                         assigned_players,
