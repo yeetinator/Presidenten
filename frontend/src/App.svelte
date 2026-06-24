@@ -25,6 +25,7 @@
   $: exchangeRequiredCards = $exchangePrompt?.requiredCards ?? 0;
   $: exchangeCanChoose = $exchangePrompt?.canChoose ?? false;
   $: isMyTurn = $gameState?.curr_turn === 0;
+  $: haveIPassed = $gameState?.passed?.includes(0) ?? false;
   $: jumpInVisible = !!$jumpInPrompt && !!$gameState?.is_finish_prompt;
   $: jumpInAutoMove =
     jumpInVisible && $gameState ? gameStore.getAutoFinishMove() : null;
@@ -51,6 +52,10 @@
       label: `${displayBotType(opponent.role)} ${$gameState?.player_types?.[opponent.seat] ?? "Bot"}`,
       position:
         index === 0 ? "left" : index === arr.length - 1 ? "right" : "top",
+      is_turn:
+        $gameState?.curr_turn === opponent.seat &&
+        !$gameState?.is_finish_prompt,
+      has_passed: $gameState?.passed?.includes(opponent.seat) ?? false,
     }));
 
   $: topOpponents = opponentViews.filter((o) => o.position === "top");
@@ -369,7 +374,9 @@
               </div>
             {:else}
               <div
-                class="my-0.5 flex w-full justify-center overflow-visible py-1 h-20 items-center"
+                class="my-0.5 flex w-full justify-center overflow-visible py-1 h-20 items-center transition-all duration-300 {haveIPassed
+                  ? 'opacity-40 grayscale pointer-events-none'
+                  : ''}"
               >
                 {#each suitedHand as suitCard, index (suitCard)}
                   <div
@@ -382,7 +389,8 @@
                       isSelected={$selectedCards.includes(suitCard)}
                       isBlinking={jumpInVisible &&
                         jumpInTargetValue === stripSuitCard(suitCard)}
-                      disabled={(!$exchangePrompt && !isMyTurn) ||
+                      disabled={haveIPassed ||
+                        (!$exchangePrompt && !isMyTurn) ||
                         (!!$exchangePrompt &&
                           (!exchangeCanChoose || exchangeRequiredCards === 0))}
                       className="shrink-0 scale-[0.75] md:scale-[0.8]"

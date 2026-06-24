@@ -15,6 +15,7 @@ export interface GameStateUpdate {
   opp_hand_counts: Record<number, number>;
   first_turn: boolean;
   can_pass: boolean;
+  passed: number[];
 }
 
 export interface StateUpdateMessage {
