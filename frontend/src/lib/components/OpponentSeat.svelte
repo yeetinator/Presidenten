@@ -5,6 +5,7 @@
     seat: number;
     role: string | null;
     handCount: number;
+    suitedHand: string[];
     label: string;
     is_turn: boolean;
     has_passed: boolean;
@@ -12,6 +13,7 @@
 
   export let opponent: OpponentView;
   export let className = "";
+  export let revealBotCards = false;
 </script>
 
 <article
@@ -38,14 +40,14 @@
     </div>
   </div>
   <div class="mt-6 flex h-10 w-full items-end justify-center overflow-visible">
-    {#each Array.from({ length: opponent.handCount }) as _, cardIndex}
+    {#each opponent.suitedHand as suitCard, cardIndex (suitCard)}
       <div
         class="relative"
         style={`margin-left: ${cardIndex === 0 ? 0 : -5.4}rem; z-index: ${cardIndex};`}
       >
         <Card
-          suitCard="3C"
-          isFaceUp={false}
+          {suitCard}
+          isFaceUp={revealBotCards}
           disabled={true}
           className="shrink-0 scale-[0.4] origin-bottom"
         />

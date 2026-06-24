@@ -2,6 +2,7 @@ import { writable, get } from "svelte/store";
 
 export interface GameStateUpdate {
   suited_hand: string[];
+  opp_suited_hands: Record<number, string[]>;
   cards_in_pile: number[];
   is_finish_prompt: boolean;
   my_role: string;

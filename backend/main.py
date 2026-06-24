@@ -323,6 +323,7 @@ async def run(
                     "state": enrich_state(env._get_state(human_id), assign_p),
                 }
             )
+            await asyncio.sleep(1.5)
 
             if env.curr_turn == human_id:
                 return

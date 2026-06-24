@@ -281,6 +281,9 @@ class Presidenten:
         return {
             "hand": self.hands[p_id].copy(),
             "suited_hand": self.suited_hands[p_id].copy(),
+            "opp_suited_hands": {
+                p: self.suited_hands[p].copy() for p in range(self.players) if p != p_id
+            },
             "legal_moves": self.get_legal_moves(p_id, last_move=last_move),
             "my_role": self.roles[p_id],
             "last_move": last_move,

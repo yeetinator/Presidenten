@@ -49,6 +49,7 @@
     .map((opponent, index, arr) => ({
       ...opponent,
       handCount: $gameState?.opp_hand_counts?.[opponent.seat] ?? 0,
+      suitedHand: $gameState?.opp_suited_hands?.[opponent.seat] ?? [],
       label: `${displayBotType(opponent.role)} ${$gameState?.player_types?.[opponent.seat] ?? "Bot"}`,
       position:
         index === 0 ? "left" : index === arr.length - 1 ? "right" : "top",
