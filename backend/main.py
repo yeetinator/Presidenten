@@ -225,6 +225,8 @@ async def run(
                                 ),
                             }
                         )
+                        if env.game_over:
+                            break
                         return
                 except asyncio.TimeoutError:
                     await websocket.send_json(
