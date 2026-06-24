@@ -11,9 +11,9 @@
 
   const playerTypeOptions = [
     { value: 0, label: "Human" },
-    { value: 1, label: "Random Bot" },
-    { value: 2, label: "Baseline Bot" },
-    { value: 4, label: "DMC Bot" },
+    { value: 1, label: "Random" },
+    { value: 2, label: "Baseline" },
+    { value: 4, label: "DMC" },
   ] as const;
 
   const defaultNumRounds = 10;
@@ -40,6 +40,12 @@
     } catch (error) {
       console.error(error);
     }
+  }
+
+  function setPlayerType(slotIndex: number, value: number) {
+    playerTypes = playerTypes.map((currentValue, currentIndex) =>
+      currentIndex === slotIndex ? value : currentValue,
+    );
   }
 </script>
 
@@ -111,21 +117,18 @@
                 <span class="text-sm font-semibold text-green-100">
                   Player {index + 1}
                 </span>
-                <select
-                  class="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-white outline-none transition focus:border-green-300 focus:ring-2 focus:ring-green-300/30"
-                  bind:value={playerTypes[index]}
-                >
-                  {#each playerTypeOptions as option}
-                    {#if option.value !== 0}
-                      <option
-                        value={option.value}
-                        class="bg-[#0f3d20] text-white select-none"
-                      >
-                        {option.label}
-                      </option>
-                    {/if}
+                <div class="grid grid-cols-3 gap-2">
+                  {#each playerTypeOptions.filter((option) => option.value !== 0) as option}
+                    <button
+                      class={`rounded-lg border px-3 py-2 text-sm font-semibold transition active:scale-[0.99] ${playerTypes[index] === option.value ? "border-green-300 bg-green-400 text-green-950" : "border-white/10 bg-black/30 text-white hover:border-green-300/60 hover:bg-black/40"}`}
+                      type="button"
+                      aria-pressed={playerTypes[index] === option.value}
+                      on:click={() => setPlayerType(index, option.value)}
+                    >
+                      {option.label}
+                    </button>
                   {/each}
-                </select>
+                </div>
               </label>
             {/each}
           </div>

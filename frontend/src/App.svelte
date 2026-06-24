@@ -25,7 +25,7 @@
   $: exchangeRequiredCards = $exchangePrompt?.requiredCards ?? 0;
   $: exchangeCanChoose = $exchangePrompt?.canChoose ?? false;
   $: isMyTurn = $gameState?.curr_turn === 0;
-  $: haveIPassed = $gameState?.passed?.includes(0) ?? false;
+  $: haveIPassed = ($gameState?.passed?.includes(0) && !isMyTurn) ?? false;
   $: jumpInVisible = !!$jumpInPrompt && !!$gameState?.is_finish_prompt;
   $: jumpInAutoMove =
     jumpInVisible && $gameState ? gameStore.getAutoFinishMove() : null;
