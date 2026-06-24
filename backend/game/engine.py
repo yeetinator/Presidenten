@@ -207,8 +207,15 @@ class Presidenten:
             pool[3].remove("3C")
 
         for p_id, hand in self.hands.items():
+            skipped_first_3 = False
             for card in hand:
-                if self.first_turn and p_id == self.clubs_3_holder and card == 3:
+                if (
+                    self.first_turn
+                    and p_id == self.clubs_3_holder
+                    and card == 3
+                    and not skipped_first_3
+                ):
+                    skipped_first_3 = True
                     continue
                 if pool[card]:
                     suited_hands[p_id].append(pool[card].pop())

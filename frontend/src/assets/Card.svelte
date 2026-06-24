@@ -7,13 +7,9 @@
   export let className: string = "";
   export let onClick: ((event: MouseEvent) => void) | undefined = undefined;
 
-  function getCardImage(cardCode: string): string {
-    if (!isFaceUp) return "/cards/1B.svg";
-    const normalizedCode = cardCode.trim().toUpperCase();
-    return `/cards/${normalizedCode}.svg`;
-  }
-
-  $: imgSrc = getCardImage(suitCard);
+  $: imgSrc = isFaceUp
+    ? `/cards/${suitCard.trim().toUpperCase()}.svg`
+    : "/cards/1B.svg";
 </script>
 
 <button

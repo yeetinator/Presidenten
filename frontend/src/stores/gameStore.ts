@@ -3,18 +3,12 @@ import { writable, get } from "svelte/store";
 export interface GameStateUpdate {
   suited_hand: string[];
   opp_suited_hands: Record<number, string[]>;
-  cards_in_pile: number[];
   is_finish_prompt: boolean;
-  my_role: string;
   curr_turn: number | null;
-  round: number;
   player_roles: Record<number, string | null>;
   player_types: Record<number, string>;
   legal_moves_suits: string[][];
   suit_last_move: string[];
-  role_pairs: [string, string, number][];
-  opp_hand_counts: Record<number, number>;
-  first_turn: boolean;
   can_pass: boolean;
   passed: number[];
 }
@@ -86,7 +80,6 @@ function isGameStateUpdate(value: unknown): value is GameStateUpdate {
   const candidate = value as Partial<GameStateUpdate>;
   return (
     Array.isArray(candidate.suited_hand) &&
-    Array.isArray(candidate.cards_in_pile) &&
     typeof candidate.is_finish_prompt === "boolean" &&
     typeof candidate.can_pass === "boolean" &&
     !!candidate.player_roles &&
@@ -118,6 +111,7 @@ function clearSelectedCards() {
 
 function clearRoundSummary() {
   roundSummary.set(null);
+  revealedBotSeat.set(null);
 }
 
 function clearExchangePrompt() {
@@ -233,9 +227,10 @@ function attachSocketListeners(activeSocket: WebSocket) {
       if (
         (payload.type === "GAME_LOG" || payload.type === "LOG_ALERT") &&
         typeof payload.message === "string"
-      ) {
-        logs.update((currLogs) => [...currLogs, payload.message as string]);
-      }
+      ) logs.update((currLogs) => [...currLogs, payload.message as string]);
+
+
+      if (payload.type === "REVEAL_BOT" && typeof payload.seat === "number") revealedBotSeat.set(payload.seat);
     } catch {
       // Ignore malformed payloads; other valid messages keep flowing.
     }
@@ -243,8 +238,7 @@ function attachSocketListeners(activeSocket: WebSocket) {
 }
 
 function connect(url: string) {
-  if (socket && socket.readyState <= WebSocket.OPEN && currentUrl === url)
-    return;
+  if (socket && socket.readyState <= WebSocket.OPEN && currentUrl === url) return;
 
   if (socket) {
     socket.close();
@@ -342,12 +336,6 @@ async function nextRound() {
   await send({ type: "NEXT_ROUND" });
 }
 
-function quitGame() {
-  clearSelectedCards();
-  clearExchangePrompt();
-  disconnect();
-}
-
 async function sendExchangeCards(cards: string[]) {
   await send({
     type: "EXCHANGE_CARDS",
@@ -361,6 +349,7 @@ export const gameStore = {
   lastMessageType,
   selectedCards,
   roundSummary,
+  revealedBotSeat,
   jumpInPrompt,
   exchangePrompt,
   connect,
@@ -377,6 +366,5 @@ export const gameStore = {
   passTurn,
   nextRound,
   sendExchangeCards,
-  quitGame,
   getAutoFinishMove,
 };

@@ -9,6 +9,7 @@
     exchangePrompt,
     jumpInPrompt,
     roundSummary,
+    revealedBotSeat,
     selectedCards,
     state as gameState,
   } from "./stores/gameStore";
@@ -48,7 +49,6 @@
     .sort((a, b) => a.relativeOffset - b.relativeOffset)
     .map((opponent, index, arr) => ({
       ...opponent,
-      handCount: $gameState?.opp_hand_counts?.[opponent.seat] ?? 0,
       suitedHand: $gameState?.opp_suited_hands?.[opponent.seat] ?? [],
       label: `${displayBotType(opponent.role)} ${$gameState?.player_types?.[opponent.seat] ?? "Bot"}`,
       position:
@@ -83,13 +83,11 @@
   $: if (!!$exchangePrompt !== lastExchangeActive) {
     lastExchangeActive = !!$exchangePrompt;
     if (!!$exchangePrompt) {
-      if (exchangeCanChoose) {
-        gameStore.clearSelectedCards();
-      } else if (exchangeRequiredCards > 0 && $gameState) {
+      if (exchangeCanChoose) gameStore.clearSelectedCards();
+      else if (exchangeRequiredCards > 0 && $gameState)
         gameStore.selectedCards.set(
           $gameState.suited_hand.slice(-exchangeRequiredCards),
         );
-      }
     }
   }
 
@@ -137,10 +135,7 @@
   }
 
   function arraysEqual(left: string[], right: string[]) {
-    if (left.length !== right.length) {
-      return false;
-    }
-
+    if (left.length !== right.length) return false;
     return left.every((value, index) => value === right[index]);
   }
 
@@ -223,28 +218,22 @@
 
   function handleQuit() {
     showFinalResults = true;
-    gameStore.quitGame();
+    gameStore.clearSelectedCards();
+    gameStore.clearExchangePrompt();
+    gameStore.disconnect();
   }
 
   function handleBackToLobby() {
     showFinalResults = false;
     gameStarted = false;
-    gameStore.clearSelectedCards();
-    gameStore.clearExchangePrompt();
-    gameStore.clearRoundSummary();
-    gameStore.clearLogs();
-    gameStore.clearJumpInPrompt();
+    gameStore.clearAll();
     gameStore.connect(websocketUrl);
   }
 
   function handleToggleCard(suitCard: string) {
-    if (!!$exchangePrompt && !exchangeCanChoose && exchangeRequiredCards > 0) {
+    if (!!$exchangePrompt && !exchangeCanChoose && exchangeRequiredCards > 0)
       return;
-    }
-
-    if (!$exchangePrompt && !isMyTurn) {
-      return;
-    }
+    if (!$exchangePrompt && !isMyTurn) return;
 
     const clickedCardValue = stripSuitCard(suitCard);
     const finishMove = gameStore.getAutoFinishMove();
@@ -281,7 +270,7 @@
     <button
       class="fixed right-4 top-4 z-30 rounded-md border border-red-300/30 bg-red-500 px-3 py-1 text-[0.65rem] font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-red-400 active:scale-[0.98]"
       type="button"
-      on:click={handleQuit}
+      on:click={handleBackToLobby}
     >
       QUIT
     </button>
@@ -300,6 +289,7 @@
                 {#each topOpponents as opponent (opponent.seat)}
                   <OpponentSeat
                     {opponent}
+                    revealBotCards={$revealedBotSeat === opponent.seat}
                     className="w-60 shrink-0 px-3 py-1.5"
                   />
                 {/each}
@@ -311,6 +301,7 @@
             {#if leftOpponent}
               <OpponentSeat
                 opponent={leftOpponent}
+                revealBotCards={$revealedBotSeat === leftOpponent.seat}
                 className="w-full max-w-56 p-3"
               />
             {/if}

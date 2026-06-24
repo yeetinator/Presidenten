@@ -4,7 +4,6 @@
   type OpponentView = {
     seat: number;
     role: string | null;
-    handCount: number;
     suitedHand: string[];
     label: string;
     is_turn: boolean;

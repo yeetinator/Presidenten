@@ -334,6 +334,21 @@ async def run(
                 return
             await asyncio.sleep(1.5)
 
+    last_active_player = list(env.playing)[0] if env.playing else None
+    if last_active_player is None:
+        for p_id in range(env.players):
+            if env.hands[p_id]:
+                last_active_player = p_id
+                break
+
+    if last_active_player is not None:
+        await asyncio.sleep(1.5)
+        if last_active_player != human_id:
+            await websocket.send_json(
+                {"type": "REVEAL_BOT", "seat": last_active_player}
+            )
+            await asyncio.sleep(2.5)
+
     env.assign_roles()
     await websocket.send_json(
         {
