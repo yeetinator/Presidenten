@@ -36,10 +36,11 @@
       arraysEqual(legalMove, selectedMoveValues),
     );
   })();
+
   $: opponentViews = Object.entries($gameState?.player_roles ?? {})
     .map(([seatStr, role]) => {
       const seat = Number(seatStr);
-      const relativeOffset = (seat - 0 + totalPlayers) % totalPlayers;
+      const relativeOffset = (seat + totalPlayers) % totalPlayers;
       return { seat, role, relativeOffset };
     })
     .filter((opponent) => opponent.seat !== 0)
@@ -51,27 +52,21 @@
       position:
         index === 0 ? "left" : index === arr.length - 1 ? "right" : "top",
     }));
+
   $: topOpponents = opponentViews.filter((o) => o.position === "top");
   $: leftOpponent = opponentViews.find((o) => o.position === "left");
   $: rightOpponent = opponentViews.find((o) => o.position === "right");
-  $: selectedMoveLabel =
-    $selectedCards.length > 0
-      ? !!$exchangePrompt
-        ? `Selected ${$selectedCards.length}/${exchangeRequiredCards} cards`
-        : isSelectionLegal
-          ? `Valid Move: ${$selectedCards.length} cards`
-          : "Illegal Move"
-      : !!!$exchangePrompt && !isMyTurn
-        ? "Waiting for your turn"
-        : !!$exchangePrompt
-          ? exchangeRequiredCards === 0
-            ? "Citizen's are exempt from exchanging"
-            : exchangeCanChoose
-              ? `Select ${exchangeRequiredCards} cards to give away`
-              : `Highest ${exchangeRequiredCards} cards pre-selected`
-          : "Click cards from your hand to queue them for play";
+  $: selectedMoveLabel = getMoveLabel(
+    $selectedCards,
+    !!$exchangePrompt,
+    isMyTurn,
+    isSelectionLegal,
+    exchangeRequiredCards,
+    exchangeCanChoose,
+  );
+
   let lastStateRef: typeof $gameState = null;
-  $: if ($gameState && !!!$exchangePrompt) {
+  $: if ($gameState && !$exchangePrompt) {
     if ($gameState !== lastStateRef) {
       lastStateRef = $gameState;
       gameStore.clearSelectedCards();
@@ -99,6 +94,28 @@
   onDestroy(() => {
     gameStore.disconnect();
   });
+
+  function getMoveLabel(
+    cards: string[],
+    exchange: boolean,
+    myTurn: boolean,
+    legal: boolean,
+    reqCards: number,
+    canChoose: boolean,
+  ) {
+    if (cards.length > 0) {
+      if (exchange) return `Selected ${cards.length}/${reqCards} cards`;
+      return legal ? `Valid Move: ${cards.length} cards` : "Illegal Move";
+    }
+    if (!exchange && !myTurn) return "Waiting for your turn";
+    if (exchange) {
+      if (reqCards === 0) return "Citizen's are exempt from exchanging";
+      return canChoose
+        ? `Select ${reqCards} cards to give away`
+        : `Highest ${reqCards} cards pre-selected`;
+    }
+    return "Click cards from your hand to queue them for play";
+  }
 
   function displayBotType(role: string | null) {
     if (!role) return "Waiting";
@@ -219,7 +236,7 @@
       return;
     }
 
-    if (!!!$exchangePrompt && !isMyTurn) {
+    if (!$exchangePrompt && !isMyTurn) {
       return;
     }
 
@@ -365,7 +382,7 @@
                       isSelected={$selectedCards.includes(suitCard)}
                       isBlinking={jumpInVisible &&
                         jumpInTargetValue === stripSuitCard(suitCard)}
-                      disabled={(!!!$exchangePrompt && !isMyTurn) ||
+                      disabled={(!$exchangePrompt && !isMyTurn) ||
                         (!!$exchangePrompt &&
                           (!exchangeCanChoose || exchangeRequiredCards === 0))}
                       className="shrink-0 scale-[0.75] md:scale-[0.8]"
@@ -461,35 +478,3 @@
     </section>
   </main>
 {/if}
-
-<style>
-  @keyframes jump-in-shake {
-    0% {
-      transform: translateX(0) rotate(0deg);
-    }
-    20% {
-      transform: translateX(calc(var(--jump-in-shake) * -1px))
-        rotate(calc(var(--jump-in-tilt) * -1deg));
-    }
-    40% {
-      transform: translateX(calc(var(--jump-in-shake) * 0.8px))
-        rotate(calc(var(--jump-in-tilt) * 0.7deg));
-    }
-    60% {
-      transform: translateX(calc(var(--jump-in-shake) * -0.6px))
-        rotate(calc(var(--jump-in-tilt) * -0.45deg));
-    }
-    80% {
-      transform: translateX(calc(var(--jump-in-shake) * 0.4px))
-        rotate(calc(var(--jump-in-tilt) * 0.3deg));
-    }
-    100% {
-      transform: translateX(0) rotate(0deg);
-    }
-  }
-
-  .jump-in-button {
-    animation: jump-in-shake 140ms linear infinite;
-    will-change: transform;
-  }
-</style>
