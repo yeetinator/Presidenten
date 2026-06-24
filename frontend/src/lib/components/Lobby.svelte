@@ -13,7 +13,6 @@
     { value: 0, label: "Human" },
     { value: 1, label: "Random Bot" },
     { value: 2, label: "Baseline Bot" },
-    { value: 3, label: "ISMCTS Bot" },
     { value: 4, label: "DMC Bot" },
   ] as const;
 

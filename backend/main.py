@@ -6,29 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from game import Presidenten, PlayerType
 from playerTypes.random_bot import PresidentenRandomBot
 from playerTypes.baseline_bot import PresidentenBaselineBot
-from playerTypes.ismcts_bot import PresidentenISMCTSBot
 from playerTypes.dmc_bot import PresidentenDMCBot, PresidentenValueNet
-from concurrent.futures import ProcessPoolExecutor
-from contextlib import asynccontextmanager
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print(f"Initializing system lifespan context...")
-    print("Spawning ISMCTS persistent process pool with 10 workers.")
-
-    shared_executor = ProcessPoolExecutor(max_workers=10)
-    app.state.shared_executor = shared_executor
-
-    yield
-
-    print("Intercepted server shutdown signal sequence.")
-    print("Safely terminating ISMCTS background worker processes...")
-
-    shared_executor.shutdown(wait=False)
-
-
-app = FastAPI(title="Presidenten Game Server", lifespan=lifespan)
+app = FastAPI(title="Presidenten Game Server")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,9 +22,8 @@ app.add_middleware(
 def _parse_helper(suits):
     char_to_value = {"T": 10, "J": 11, "Q": 12, "K": 13, "A": 14, "2": 15}
     return [
-        char_to_value[rank_char] if rank_char in char_to_value else int(rank_char)
+        char_to_value[r] if (r := suit[:-1]) in char_to_value else int(r)
         for suit in suits
-        for rank_char in [suit[:-1]]
     ]
 
 
@@ -121,7 +101,6 @@ def get_player_type_label(player_type: PlayerType) -> str:
         PlayerType.HUMAN: "Human",
         PlayerType.RANDOM: "Random",
         PlayerType.BASELINE: "Baseline",
-        PlayerType.ISMCTS: "ISMCTS",
         PlayerType.DMC: "DMC",
     }
     return labels.get(player_type, "Unknown")
@@ -133,7 +112,6 @@ async def run_exchange_phase(
         int,
         PresidentenRandomBot
         | PresidentenBaselineBot
-        | PresidentenISMCTSBot
         | PresidentenDMCBot,
     ],
     websocket: WebSocket,
@@ -191,13 +169,11 @@ async def run(
         int,
         PresidentenRandomBot
         | PresidentenBaselineBot
-        | PresidentenISMCTSBot
         | PresidentenDMCBot,
     ],
     assign_p: dict,
     websocket: WebSocket,
     human_id,
-    shared_executor,
 ):
     while not env.game_over:
         curr_id = env.curr_turn
@@ -279,12 +255,7 @@ async def run(
                 await asyncio.sleep(0.5)
 
                 bot = assigned_players[curr_id]
-                if isinstance(bot, PresidentenISMCTSBot):
-                    chosen_move = await asyncio.to_thread(
-                        bot.get_move, state, env, shared_executor, "s"
-                    )
-                else:
-                    chosen_move = await asyncio.to_thread(bot.get_move, state, env)
+                chosen_move = await asyncio.to_thread(bot.get_move, state, env)
 
                 env.step(curr_id, chosen_move)
                 if chosen_move != (0, 0, 0):
@@ -329,12 +300,7 @@ async def run(
             return
 
         bot = assigned_players[curr_id]
-        if isinstance(bot, PresidentenISMCTSBot):
-            chosen_move = await asyncio.to_thread(
-                bot.get_move, state, env, shared_executor, "s"
-            )
-        else:
-            chosen_move = await asyncio.to_thread(bot.get_move, state, env)
+        chosen_move = await asyncio.to_thread(bot.get_move, state, env)
         env.step(curr_id, chosen_move)
 
         await websocket.send_json(
@@ -386,7 +352,6 @@ async def websocket_endpoint(websocket: WebSocket):
     assigned_players = {}
     assign_p = {}
     human_id = 0
-    shared_executor = websocket.app.state.shared_executor
 
     try:
         while True:
@@ -409,8 +374,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         assigned_players[p_id] = PresidentenRandomBot(p_id)
                     elif p_type == PlayerType.BASELINE:
                         assigned_players[p_id] = PresidentenBaselineBot(p_id)
-                    elif p_type == PlayerType.ISMCTS:
-                        assigned_players[p_id] = PresidentenISMCTSBot(p_id, 1000)
                     elif p_type == PlayerType.DMC:
                         dmc_model = PresidentenValueNet().to(device)
                         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -451,7 +414,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     assign_p,
                     websocket,
                     human_id,
-                    shared_executor,
                 )
             elif msg_type == "PLAY_MOVE":
                 if env is None or env.game_over:
@@ -492,7 +454,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     assign_p,
                     websocket,
                     human_id,
-                    shared_executor,
                 )
             elif msg_type == "NEXT_ROUND":
                 if env and env.game_over:
@@ -523,7 +484,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         assign_p,
                         websocket,
                         human_id,
-                        shared_executor,
                     )
     except WebSocketDisconnect:
         print("Client disconnected")
