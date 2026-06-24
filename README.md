@@ -2,7 +2,7 @@
 
 Presidenten is a card game project with two parts:
 
-- A Python backend for the game engine, CLI tools, training, and the FastAPI websocket server.
+- A Python backend for the game engine, CLI tools, Deep Monte Carlo training, and the FastAPI websocket server.
 - A Svelte frontend for the browser UI.
 
 ## Prerequisites
@@ -20,7 +20,7 @@ Presidenten is a card game project with two parts:
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+.venv\Scripts\Activate.ps1 | source .venv/bin/activate
 pip install -r requirements.txt
 cd frontend
 npm install
@@ -55,5 +55,5 @@ npm run dev
 
 ## Notes
 
-- Model snapshots and trained weights are stored in `snapshots/` and `backend/playerTypes/`.
+- Model snapshots and trained weights will be stored in `snapshots/`. I put my personal best model in `backend/playerTypes`.
 - If PyTorch installation fails on your machine, install the wheel recommended by the official PyTorch installer for your platform, then rerun `pip install -r requirements.txt`.
