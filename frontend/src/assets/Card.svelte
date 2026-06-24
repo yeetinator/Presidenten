@@ -9,7 +9,6 @@
 
   function getCardImage(cardCode: string): string {
     if (!isFaceUp) return "/cards/1B.svg";
-
     const normalizedCode = cardCode.trim().toUpperCase();
     return `/cards/${normalizedCode}.svg`;
   }
@@ -19,7 +18,7 @@
 
 <button
   type="button"
-  class={`relative h-28 w-20 select-none overflow-hidden rounded-xl bg-white shadow-md outline-none transition-all duration-200 ease-out md:h-36 md:w-24 ${className} ${
+  class={`relative h-28 w-20 select-none rounded-xl bg-white shadow-md outline-none transition-all duration-200 ease-out md:h-36 md:w-24 ${className} ${
     isSelected
       ? "-translate-y-6 scale-105 shadow-xl ring-4 ring-emerald-400"
       : "hover:-translate-y-2 hover:shadow-lg"
@@ -27,14 +26,21 @@
   {disabled}
   on:click={onClick}
 >
-  <img
-    src={imgSrc}
-    alt="Playing Card"
-    class="pointer-events-none h-full w-full object-contain"
-  />
+  <div class="w-full h-full overflow-hidden rounded-xl pointer-events-none">
+    <img src={imgSrc} alt="Playing Card" class="h-full w-full object-contain" />
+  </div>
 </button>
 
 <style>
+  button::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -6px;
+    right: -6px;
+    border-radius: inherit;
+  }
   @keyframes red-flash {
     0%,
     100% {

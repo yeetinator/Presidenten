@@ -8,7 +8,6 @@ from playerTypes.random_bot import PresidentenRandomBot
 from playerTypes.baseline_bot import PresidentenBaselineBot
 from playerTypes.dmc_bot import PresidentenDMCBot, PresidentenValueNet
 
-
 app = FastAPI(title="Presidenten Game Server")
 app.add_middleware(
     CORSMiddleware,
@@ -110,9 +109,7 @@ async def run_exchange_phase(
     env: Presidenten,
     assigned_players: dict[
         int,
-        PresidentenRandomBot
-        | PresidentenBaselineBot
-        | PresidentenDMCBot,
+        PresidentenRandomBot | PresidentenBaselineBot | PresidentenDMCBot,
     ],
     websocket: WebSocket,
     human_id: int,
@@ -167,9 +164,7 @@ async def run(
     env: Presidenten,
     assigned_players: dict[
         int,
-        PresidentenRandomBot
-        | PresidentenBaselineBot
-        | PresidentenDMCBot,
+        PresidentenRandomBot | PresidentenBaselineBot | PresidentenDMCBot,
     ],
     assign_p: dict,
     websocket: WebSocket,
@@ -201,7 +196,7 @@ async def run(
                         suits_array = raw_data.get("suits", [])
                         parsed_array = get_finish_suits(suits_array, state)
                         chosen_move = parse_suits_to_move(parsed_array)
-                        state, _ = env.step(human_id, chosen_move, parsed_array)
+                        env.step(human_id, chosen_move, parsed_array)
 
                         await websocket.send_json(
                             {
@@ -212,7 +207,9 @@ async def run(
                         await websocket.send_json(
                             {
                                 "type": "STATE_UPDATE",
-                                "state": enrich_state(state, assign_p),
+                                "state": enrich_state(
+                                    env._get_state(human_id), assign_p
+                                ),
                             }
                         )
                         await asyncio.sleep(1.5)

@@ -380,7 +380,7 @@
               >
                 {#each suitedHand as suitCard, index (suitCard)}
                   <div
-                    class="relative"
+                    class="relative pointer-events-none"
                     style={getHorizontalOverlapStyle(index)}
                   >
                     <Card
@@ -393,7 +393,7 @@
                         (!$exchangePrompt && !isMyTurn) ||
                         (!!$exchangePrompt &&
                           (!exchangeCanChoose || exchangeRequiredCards === 0))}
-                      className="shrink-0 scale-[0.75] md:scale-[0.8]"
+                      className="shrink-0 scale-[0.75] md:scale-[0.8] pointer-events-auto"
                       onClick={() => handleToggleCard(suitCard)}
                     />
                   </div>
