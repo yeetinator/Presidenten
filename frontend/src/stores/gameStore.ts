@@ -1,4 +1,5 @@
 import { writable, get } from "svelte/store";
+import { tick } from "svelte";
 
 export interface GameStateUpdate {
   suited_hand: string[];
@@ -50,6 +51,13 @@ export interface ExchangePrompt {
   canChoose: boolean;
 }
 
+export interface ExchangePromptMessage {
+  type: "EXCHANGE_PROMPT";
+  state: GameStateUpdate;
+  required_cards: number;
+  can_choose: boolean;
+}
+
 export const logs = writable<string[]>([]);
 export const state = writable<GameStateUpdate | null>(null);
 export const connectionStatus = writable<ConnectionStatus>("disconnected");
@@ -58,21 +66,36 @@ export const selectedCards = writable<string[]>([]);
 export const roundSummary = writable<RoundSummary | null>(null);
 export const jumpInPrompt = writable<JumpInPrompt | null>(null);
 export const exchangePrompt = writable<ExchangePrompt | null>(null);
+export const isAnimating = writable<boolean>(false);
+export const revealedBotSeat = writable<number | null>(null);
 
 type IncomingWebSocketMessage =
   | StateUpdateMessage
   | JumpInPromptMessage
+  | ExchangePromptMessage
   | RoundOverMessage
   | {
-      type: string;
-      [key: string]: unknown;
-    };
+    type: string;
+    [key: string]: unknown;
+  };
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 let socket: WebSocket | null = null;
 let currentUrl: string | null = null;
 let jumpInPromptTimeout: ReturnType<typeof setTimeout> | null = null;
+let stateUpdateQueue: (() => void)[] = [];
+let activeAnimationsCount = 0;
+
+export function startAnimation() {
+  activeAnimationsCount++;
+  isAnimating.set(true);
+}
+
+export function endAnimation() {
+  activeAnimationsCount = Math.max(0, activeAnimationsCount - 1);
+  if (activeAnimationsCount === 0) isAnimating.set(false);
+}
 
 function isGameStateUpdate(value: unknown): value is GameStateUpdate {
   if (!value || typeof value !== "object") return false;
@@ -109,6 +132,20 @@ function clearSelectedCards() {
   selectedCards.set([]);
 }
 
+function clearState() {
+  state.set(null);
+}
+
+function clearAnimations() {
+  activeAnimationsCount = 0;
+  isAnimating.set(false);
+  stateUpdateQueue = [];
+}
+
+function clearLastMessageType() {
+  lastMessageType.set(null);
+}
+
 function clearRoundSummary() {
   roundSummary.set(null);
   revealedBotSeat.set(null);
@@ -128,6 +165,17 @@ function clearJumpInPrompt() {
     jumpInPromptTimeout = null;
   }
   jumpInPrompt.set(null);
+}
+
+function clearAll() {
+  clearSelectedCards();
+  clearState();
+  clearAnimations();
+  clearLastMessageType();
+  clearRoundSummary();
+  clearExchangePrompt();
+  clearLogs();
+  clearJumpInPrompt();
 }
 
 function getAutoFinishMove() {
@@ -157,61 +205,65 @@ function attachSocketListeners(activeSocket: WebSocket) {
       const payload = JSON.parse(event.data) as IncomingWebSocketMessage;
       lastMessageType.set(payload.type);
 
-      if (payload.type === "STATE_UPDATE" && isGameStateUpdate(payload.state)) {
-        state.set(payload.state);
-        clearExchangePrompt();
-        clearJumpInPrompt();
-      }
-
-      if (
-        payload.type === "JUMP_IN_PROMPT" &&
-        payload.state &&
-        isGameStateUpdate(payload.state)
-      ) {
-        state.set(payload.state);
-        clearJumpInPrompt();
-        jumpInPrompt.set({
-          message:
-            typeof payload.message === "string" ? payload.message : "JUMP IN!",
-          timeoutSeconds:
-            typeof payload.timeout_seconds === "number"
-              ? payload.timeout_seconds
-              : 1.5,
-          state: payload.state,
-        });
-
-        const promptTimeout =
-          typeof payload.timeout_seconds === "number"
-            ? payload.timeout_seconds
-            : 1.5;
-
-        jumpInPromptTimeout = setTimeout(() => {
-          jumpInPrompt.set(null);
-          jumpInPromptTimeout = null;
-        }, promptTimeout * 1000);
-      }
-
-      if (
-        payload.type === "EXCHANGE_PROMPT" &&
-        payload.state &&
-        isGameStateUpdate(payload.state) &&
-        typeof payload.required_cards === "number" &&
-        typeof payload.can_choose === "boolean"
-      ) {
-        state.set(payload.state);
-        if (!payload.can_choose && payload.required_cards > 0) {
-          selectedCards.set(
-            getHighestSuitCards(
-              payload.state.suited_hand,
-              payload.required_cards,
-            ),
-          );
+      if (payload.type === "STATE_UPDATE") {
+        const msg = payload as StateUpdateMessage;
+        if (isGameStateUpdate(msg.state)) {
+          const action = () => {
+            state.set(msg.state);
+            clearExchangePrompt();
+            clearJumpInPrompt();
+          }
+          if (get(isAnimating)) stateUpdateQueue.push(action); else action();
         }
-        exchangePrompt.set({
-          state: payload.state,
-          requiredCards: payload.required_cards,
-          canChoose: payload.can_choose,
-        });
+      }
+
+      if (
+        payload.type === "JUMP_IN_PROMPT"
+      ) {
+        const msg = payload as JumpInPromptMessage;
+        if (isGameStateUpdate(msg.state)) {
+          const action = () => {
+            state.set(msg.state);
+            clearJumpInPrompt();
+            jumpInPrompt.set({
+              message: typeof msg.message === "string" ? msg.message : "JUMP IN!",
+              timeoutSeconds: typeof msg.timeout_seconds === "number" ? msg.timeout_seconds : 1.5,
+              state: msg.state,
+            });
+
+            const promptTimeout =
+              typeof msg.timeout_seconds === "number"
+                ? msg.timeout_seconds
+                : 1.5;
+            jumpInPromptTimeout = setTimeout(() => {
+              jumpInPrompt.set(null);
+              jumpInPromptTimeout = null;
+            }, promptTimeout * 1000);
+          }
+          if (get(isAnimating)) stateUpdateQueue.push(action); else action();
+        }
+      }
+
+      if (
+        payload.type === "EXCHANGE_PROMPT"
+      ) {
+        const msg = payload as ExchangePromptMessage;
+        if (isGameStateUpdate(msg.state) && typeof msg.required_cards === "number" && typeof msg.can_choose === "boolean") {
+          const action = () => {
+            state.set(msg.state);
+            if (!msg.can_choose && msg.required_cards > 0) {
+              selectedCards.set(
+                getHighestSuitCards(
+                  msg.state.suited_hand, msg.required_cards))
+            }
+            exchangePrompt.set({
+              state: msg.state,
+              requiredCards: msg.required_cards,
+              canChoose: msg.can_choose,
+            });
+          }
+          if (get(isAnimating)) stateUpdateQueue.push(action); else action();
+        }
       }
 
       if (isRoundOverMessage(payload)) {
@@ -343,6 +395,21 @@ async function sendExchangeCards(cards: string[]) {
   });
 }
 
+async function processQueue() {
+  if (get(isAnimating)) return;
+  while (stateUpdateQueue.length > 0) {
+    const nextAction = stateUpdateQueue.shift();
+    if (nextAction) {
+      nextAction();
+      await tick();
+
+      if (get(isAnimating)) break;
+    }
+  }
+}
+
+isAnimating.subscribe((animating) => { if (!animating) processQueue() });
+
 export const gameStore = {
   state,
   connectionStatus,
@@ -361,10 +428,13 @@ export const gameStore = {
   clearExchangePrompt,
   clearLogs,
   clearJumpInPrompt,
+  clearAll,
   playSelectedCards,
   playJumpInPrompt,
   passTurn,
   nextRound,
   sendExchangeCards,
   getAutoFinishMove,
+  startAnimation,
+  endAnimation,
 };

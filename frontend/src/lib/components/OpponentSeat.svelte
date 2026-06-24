@@ -1,5 +1,7 @@
 <script lang="ts">
   import Card from "../../assets/Card.svelte";
+  import { send, receive } from "../../lib/transitions";
+  import { startAnimation, endAnimation } from "../../stores/gameStore";
 
   type OpponentView = {
     seat: number;
@@ -41,7 +43,13 @@
   <div class="mt-6 flex h-10 w-full items-end justify-center overflow-visible">
     {#each opponent.suitedHand as suitCard, cardIndex (suitCard)}
       <div
-        class="relative"
+        in:receive={{ key: suitCard }}
+        out:send={{ key: suitCard }}
+        on:introstart={startAnimation}
+        on:introend={endAnimation}
+        on:outrostart={startAnimation}
+        on:outroend={endAnimation}
+        class="relative transition-all duration-300"
         style={`margin-left: ${cardIndex === 0 ? 0 : -5.4}rem; z-index: ${cardIndex};`}
       >
         <Card

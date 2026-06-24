@@ -13,6 +13,8 @@
     selectedCards,
     state as gameState,
   } from "./stores/gameStore";
+  import { send, receive } from "./lib/transitions";
+  import { fly } from "svelte/transition";
 
   const websocketUrl =
     import.meta.env.VITE_WS_URL ?? "ws://localhost:8000/ws/game";
@@ -309,30 +311,34 @@
 
           <div class="flex items-center justify-center xl:row-start-2">
             <div
-              class="w-full max-w-md flex items-center justify-center p-3 min-h-28"
+              class="w-full max-w-md flex items-center justify-center p-3 min-h-28 relative"
             >
-              {#if lastMoveSuits.length > 0}
-                <div class="flex flex-col items-center gap-1">
+              <div class="flex items-end justify-center overflow-visible h-20">
+                {#each lastMoveSuits as suitCard, cardIndex (suitCard)}
                   <div
-                    class="flex items-end justify-center overflow-visible h-20"
+                    in:receive={{ key: suitCard }}
+                    out:send={{ key: suitCard }}
+                    on:introstart={gameStore.startAnimation}
+                    on:introend={gameStore.endAnimation}
+                    on:outrostart={gameStore.startAnimation}
+                    on:outroend={gameStore.endAnimation}
+                    class="relative transition-all duration-300"
+                    style={`margin-left: ${cardIndex === 0 ? 0 : -4.3}rem; z-index: ${cardIndex};`}
                   >
-                    {#each lastMoveSuits as suitCard, cardIndex (suitCard)}
-                      <div
-                        class="relative"
-                        style={`margin-left: ${cardIndex === 0 ? 0 : -4.3}rem; z-index: ${cardIndex};`}
-                      >
-                        <Card
-                          {suitCard}
-                          isFaceUp={true}
-                          disabled={true}
-                          className="shrink-0 scale-[0.7] origin-bottom"
-                        />
-                      </div>
-                    {/each}
+                    <Card
+                      {suitCard}
+                      isFaceUp={true}
+                      disabled={true}
+                      className="shrink-0 scale-[0.7] origin-bottom"
+                    />
                   </div>
-                </div>
-              {:else}
-                <div class="text-center text-emerald-50/70 py-1">
+                {/each}
+              </div>
+              {#if lastMoveSuits.length === 0}
+                <div
+                  transition:fly={{ y: 10, duration: 200 }}
+                  class="absolute text-center text-emerald-50/70 py-1 pointer-events-none"
+                >
                   <div class="text-[0.6rem] uppercase tracking-[0.3em]">
                     Game Pile
                   </div>
@@ -351,6 +357,7 @@
             {#if rightOpponent}
               <OpponentSeat
                 opponent={rightOpponent}
+                revealBotCards={$revealedBotSeat === rightOpponent.seat}
                 className="w-full max-w-56 p-3"
               />
             {/if}
@@ -372,7 +379,13 @@
               >
                 {#each suitedHand as suitCard, index (suitCard)}
                   <div
-                    class="relative pointer-events-none"
+                    in:receive={{ key: suitCard }}
+                    out:send={{ key: suitCard }}
+                    on:introstart={gameStore.startAnimation}
+                    on:introend={gameStore.endAnimation}
+                    on:outrostart={gameStore.startAnimation}
+                    on:outroend={gameStore.endAnimation}
+                    class="relative pointer-events-none transition-all duration-300"
                     style={getHorizontalOverlapStyle(index)}
                   >
                     <Card
