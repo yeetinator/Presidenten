@@ -36,8 +36,9 @@
   $: selectedMoveValues = $selectedCards.map(stripSuitCard);
   $: isSelectionLegal = (() => {
     if (!$gameState?.legal_moves_suits || !!$exchangePrompt) return false;
+    const sortedSelection = [...selectedMoveValues].sort();
     return $gameState.legal_moves_suits.some((legalMove) =>
-      arraysEqual(legalMove, selectedMoveValues),
+      arraysEqual([...legalMove].sort(), sortedSelection),
     );
   })();
 
