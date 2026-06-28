@@ -57,8 +57,8 @@
       position:
         index === 0 ? "left" : index === arr.length - 1 ? "right" : "top",
       is_turn:
-        $gameState?.curr_turn === opponent.seat &&
-        !$gameState?.is_finish_prompt,
+        $gameState?.resume_turn === opponent.seat ||
+        ($gameState?.curr_turn === opponent.seat && !$gameState?.resume_turn),
       has_passed: $gameState?.passed?.includes(opponent.seat) ?? false,
     }));
 

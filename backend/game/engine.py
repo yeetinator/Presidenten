@@ -309,6 +309,9 @@ class Presidenten:
             "is_finish_prompt": bool(
                 self.pending_finish and self.pending_finish["queue"][0][2] == p_id
             ),
+            "resume_turn": (
+                self.pending_finish["resume_turn"] if self.pending_finish else None
+            ),
             "round": self.round,
             "scores": self.scores.copy(),
             "role_pairs": self.role_pairs.copy(),

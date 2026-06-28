@@ -5,6 +5,7 @@ export interface GameStateUpdate {
   suited_hand: string[];
   opp_suited_hands: Record<number, string[]>;
   is_finish_prompt: boolean;
+  resume_turn: number | null;
   curr_turn: number | null;
   player_roles: Record<number, string | null>;
   player_types: Record<number, string>;
