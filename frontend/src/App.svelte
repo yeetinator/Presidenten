@@ -318,7 +318,7 @@
                 {#each lastMoveSuits as suitCard, cardIndex (suitCard)}
                   <div
                     in:receive={{ key: suitCard }}
-                    out:send={{ key: suitCard }}
+                    out:send={{ key: suitCard, isPile: true }}
                     on:introstart={gameStore.startAnimation}
                     on:introend={gameStore.endAnimation}
                     on:outrostart={gameStore.startAnimation}

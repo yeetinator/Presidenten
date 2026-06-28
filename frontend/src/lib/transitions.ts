@@ -18,10 +18,27 @@ export const send = (node: HTMLElement, params: any) => {
     const result = svelteSend(node, params) as any;
     if (typeof result === "function") return () => {
         const obj = result();
-        return {
+        if (!obj) return obj;
+
+        const sampleCss = obj.css ? obj.css(0.5, 0.5) : "";
+        const isFlight = sampleCss.includes("translate");
+
+        if (isFlight) return {
             ...obj,
             css: () => `opacity: 0; pointer-events: none;`,
         };
+        else {
+            if (params && params.isPile) {
+                const currState = get(state);
+                const pileIsReset = !currState || !currState.suit_last_move || currState.suit_last_move.length === 0;
+
+                if (!pileIsReset) return {
+                    ...obj,
+                    css: () => `opacity: 1;`,
+                }
+            }
+            return obj;
+        }
     }
     return result;
 }
@@ -30,14 +47,22 @@ export const receive = (node: HTMLElement, params: any) => {
     const result = svelteReceive(node, params) as any;
     if (typeof result === "function") return () => {
         const obj = result();
-        const originalCss = obj.css;
-        return {
-            ...obj,
-            css: (t: number, u: number) => {
-                const res = originalCss ? originalCss(t, u) : "";
-                return res.replace(/opacity:\s*[^;]+(;|$)/g, "") + "; opacity: 1;";
-            },
-        };
+        if (!obj) return obj;
+
+        const sampleCss = obj.css ? obj.css(0.5, 0.5) : "";
+        const isFlight = sampleCss.includes("translate");
+
+        if (isFlight) {
+            const originalCss = obj.css;
+            return {
+                ...obj,
+                css: (t: number, u: number) => {
+                    const res = originalCss ? originalCss(t, u) : "";
+                    return res.replace(/opacity:\s*[^;]+(;|$)/g, "") + "; opacity: 1;";
+                }
+            }
+        }
+        return obj;
     }
     return result;
 }
