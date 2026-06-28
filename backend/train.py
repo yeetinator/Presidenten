@@ -2,9 +2,9 @@ import torch
 import glob
 import random
 import os
-import concurrent.futures
 import numpy as np
 import multiprocessing
+import torch.multiprocessing as mp
 from playerTypes.baseline_bot import PresidentenBaselineBot
 from playerTypes.dmc_bot import PresidentenDMCBot, PresidentenValueNet
 from game import Presidenten
@@ -17,23 +17,20 @@ INPUT_DIM = 131
 GRADIENT_CLIP = 1.0
 NUM_WORKERS = 10
 
-_GLOBAL_LIVE_MODEL = None
 _SNAPSHOT_CACHE = {}
+_SHARED_MODEL = None
 
 
-def init_worker():
+def init_worker(shared_model):
     torch.set_num_threads(1)
-    global _GLOBAL_LIVE_MODEL
-    _GLOBAL_LIVE_MODEL = PresidentenValueNet(INPUT_DIM).to("cpu")
-    _GLOBAL_LIVE_MODEL.eval()
+    global _SHARED_MODEL
+    _SHARED_MODEL = shared_model
 
 
-def parallel_worker(model_state, epsilon, youngest_paths=None, oldest_paths=None):
-    global _GLOBAL_LIVE_MODEL, _SNAPSHOT_CACHE
-    if _GLOBAL_LIVE_MODEL is not None:
-        _GLOBAL_LIVE_MODEL.load_state_dict(model_state)
+def parallel_worker(epsilon, elite_snapshots=None):
+    global _SHARED_MODEL, _SNAPSHOT_CACHE
 
-    paths = (youngest_paths or []) + (oldest_paths or [])
+    paths = elite_snapshots or []
     if paths:
         for path in paths:
             if path not in _SNAPSHOT_CACHE:
@@ -47,45 +44,20 @@ def parallel_worker(model_state, epsilon, youngest_paths=None, oldest_paths=None
         _SNAPSHOT_CACHE = {
             k: v for k, v in _SNAPSHOT_CACHE.items() if k in active_paths
         }
-    return run_single_game(
-        _GLOBAL_LIVE_MODEL,
-        torch.device("cpu"),
-        epsilon,
-        youngest_paths,
-        oldest_paths,
-    )
+    return run_single_game(_SHARED_MODEL, torch.device("cpu"), epsilon, elite_snapshots)
 
 
-def run_single_game(
-    live_model, device, epsilon, youngest_paths=None, oldest_paths=None
-):
+def run_single_game(live_model, device, epsilon, elite_snapshots=None):
     global _SNAPSHOT_CACHE
     num_players = random.randint(4, 7)
     bot_instances: dict[int, PresidentenDMCBot | PresidentenBaselineBot] = {}
-    has_snapshots = bool(youngest_paths or oldest_paths)
-    use_snapshot = has_snapshots and random.random() < 0.5
-    snapshot_seats = (
-        random.sample(range(num_players), k=num_players // 2) if use_snapshot else []
+    bot_instances[0] = PresidentenDMCBot(
+        0, live_model, device, training=True, epsilon=epsilon
     )
 
-    for seat in range(num_players):
-        if seat in snapshot_seats:
-            roll = random.random()
-            if roll < 0.8 and youngest_paths:
-                snap_path = random.choice(youngest_paths)
-                snap_model = _SNAPSHOT_CACHE[snap_path]
-                bot_instances[seat] = PresidentenDMCBot(
-                    player_id=seat, model=snap_model, device=device, training=False
-                )
-            elif roll < 0.95 and oldest_paths:
-                snap_path = random.choice(oldest_paths)
-                snap_model = _SNAPSHOT_CACHE[snap_path]
-                bot_instances[seat] = PresidentenDMCBot(
-                    player_id=seat, model=snap_model, device=device, training=False
-                )
-            else:
-                bot_instances[seat] = PresidentenBaselineBot(player_id=seat)
-        else:
+    for seat in range(1, num_players):
+        roll = random.random()
+        if roll < 0.65:
             bot_instances[seat] = PresidentenDMCBot(
                 player_id=seat,
                 model=live_model,
@@ -93,6 +65,24 @@ def run_single_game(
                 training=True,
                 epsilon=epsilon,
             )
+        elif roll < 0.80 and elite_snapshots:
+            snap_path = random.choice(elite_snapshots)
+            snap_model = _SNAPSHOT_CACHE[snap_path]
+            bot_instances[seat] = PresidentenDMCBot(
+                player_id=seat, model=snap_model, device=device, training=False
+            )
+        elif roll < 0.90 and elite_snapshots:
+            snap_path = random.choice(elite_snapshots)
+            snap_model = _SNAPSHOT_CACHE[snap_path]
+            bot_instances[seat] = PresidentenDMCBot(
+                player_id=seat,
+                model=snap_model,
+                device=device,
+                training=True,
+                epsilon=0.35,
+            )
+        else:
+            bot_instances[seat] = PresidentenBaselineBot(player_id=seat)
 
     env = Presidenten(num_players)
     game_x, game_y = [], []
@@ -130,31 +120,40 @@ def run_single_game(
         env.assign_roles()
 
         max_possible_score = env.players - 1
+        gamma = 0.95
+
         for rank, p_id in enumerate(env.out_order):
             bot = bot_instances[p_id]
             if isinstance(bot, PresidentenDMCBot):
-                if bot.training and len(bot.trajectory) > 0:
+                if bot.training and len(bot.trajectory) > 0 and bot.model == live_model:
                     round_score = env.players - 1 - rank
                     normalized_score = (round_score / max_possible_score) * 2 - 1
 
-                    for features in bot.trajectory:
+                    for i, features in enumerate(reversed(bot.trajectory)):
+                        discounted_score = normalized_score * (gamma**i)
                         game_x.append(features)
-                        game_y.append([normalized_score])
-                    bot.trajectory.clear()
+                        game_y.append([discounted_score])
+                bot.trajectory.clear()
     return np.array(game_x, dtype=np.float32), np.array(game_y, dtype=np.float32)
 
 
 def main():
     os.makedirs("snapshots", exist_ok=True)
 
+    ctx = mp.get_context("spawn")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     print(f"Using device: {device}")
 
     resume_path = "snapshots/latest_model.pt"
     live_model = PresidentenValueNet(INPUT_DIM).to(device)
+    shared_model = PresidentenValueNet(INPUT_DIM).to("cpu")
+    shared_model.share_memory()
+    shared_model.load_state_dict(live_model.state_dict())
+
     optimizer = torch.optim.Adam(live_model.parameters(), lr=LEARNING_RATE)
     loss_fn = torch.nn.MSELoss()
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20000)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99995)
 
     if os.path.exists(resume_path):
         print(f"Resuming checkpoint from {resume_path}...")
@@ -167,48 +166,41 @@ def main():
     else:
         batch_idx = 0
         epsilon = 0.2
-    print("Starting training loop. Press Ctrl+C to stop and save the model.")
 
-    with concurrent.futures.ProcessPoolExecutor(
-        max_workers=NUM_WORKERS, initializer=init_worker
-    ) as executor:
+    print("Starting training loop. Press Ctrl+C to stop and save the model.")
+    max_batches = 0 if batch_idx == 0 else batch_idx % 2000
+    running_losses = []
+    log_interval = 20
+
+    with ctx.Pool(
+        processes=NUM_WORKERS, initializer=init_worker, initargs=(shared_model,)
+    ) as pool:
         try:
-            while True:
+            while max_batches < 2000:
                 batch_idx += 1
+                max_batches += 1
                 epsilon = max(0.05, epsilon * 0.9997)
                 all_x, all_y = [], []
-                current_weights = live_model.state_dict()
-                snapshot_files = glob.glob("snapshots/model_gen_*.pt")
-                youngest_files, oldest_files = None, None
-
-                if snapshot_files:
-                    snapshot_files.sort(
-                        key=lambda x: int(
-                            os.path.basename(x).split("_")[2].split(".")[0]
-                        )
-                    )
-                    youngest_files = snapshot_files[-10:]
-                    oldest_files = snapshot_files[:10]
-
-                futures = [
-                    executor.submit(
-                        parallel_worker,
-                        current_weights,
+                elite_paths = glob.glob("snapshots/elites/model_gen_*.pt")
+                graduated_paths = glob.glob("snapshots/graduated/model_gen_*.pt")
+                elite_snapshots = elite_paths + graduated_paths
+                tasks = [
+                    (
                         epsilon,
-                        youngest_files,
-                        oldest_files,
+                        elite_snapshots,
                     )
                     for _ in range(BATCH_GAMES)
                 ]
+
                 try:
-                    for f in concurrent.futures.as_completed(futures, timeout=90.0):
-                        game_x, game_y = f.result()
+                    results = pool.starmap_async(parallel_worker, tasks)
+                    game_data = results.get(timeout=600)
+
+                    for game_x, game_y in game_data:
                         all_x.append(game_x)
                         all_y.append(game_y)
-                except concurrent.futures.TimeoutError:
+                except mp.TimeoutError:
                     print(f"\nBatch {batch_idx} timed out.")
-                    for f in futures:
-                        f.cancel()
                     continue
 
                 if all_x:
@@ -242,11 +234,20 @@ def main():
                             epoch_losses.append(loss.item())
 
                     avg_loss = np.mean(epoch_losses)
+                    shared_model.load_state_dict(live_model.state_dict())
                     scheduler.step()
-                    print(
-                        f"Batch {batch_idx}: Avg Loss = {avg_loss:.6f} | LR = {scheduler.get_last_lr()[0]:.6f} | "
-                        f"Epsilon = {epsilon:.4f} | Total Move Rows = {dataset_size}"
-                    )
+
+                    running_losses.append(avg_loss)
+
+                    if batch_idx % log_interval == 0:
+                        rolling_loss = np.mean(running_losses)
+                        print(
+                            f"=========================================================================\n"
+                            f"BATCH {batch_idx:<5} | Rolling Loss: {rolling_loss:.6f} | "
+                            f"LR: {scheduler.get_last_lr()[0]:.6f} | Epsilon: {epsilon:.4f}\n"
+                            f"========================================================================="
+                        )
+                        running_losses.clear()
                 else:
                     print(f"Batch {batch_idx}: No training data collected.")
 
@@ -266,13 +267,13 @@ def main():
                     )
         except KeyboardInterrupt:
             print("Training interrupted.")
-            executor.shutdown(wait=False, cancel_futures=True)
+            pool.terminate()
             active_workers = multiprocessing.active_children()
             for worker in active_workers:
                 worker.kill()
             for worker in active_workers:
                 worker.join(timeout=0.1)
-            os._exit(0)
+            os._exit(1)
 
 
 if __name__ == "__main__":

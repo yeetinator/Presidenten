@@ -26,7 +26,7 @@ class HumanPlayer:
 
         return chosen_move
 
-    def choose_cards_to_pass(self, state):
+    def choose_cards_to_pass(self, state: dict):
         my_role: str = state["my_role"]
         hr, _, count = next(
             (

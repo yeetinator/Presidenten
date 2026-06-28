@@ -2,6 +2,7 @@ import glob
 import concurrent.futures
 import torch
 import os
+import json
 from playerTypes.dmc_bot import PresidentenValueNet, PresidentenDMCBot
 from playerTypes.baseline_bot import PresidentenBaselineBot
 from game import Presidenten
@@ -10,18 +11,6 @@ TOTAL_GAMES = 1000
 NUM_ROUNDS = 10
 NUM_WORKERS = 10  # Adjust based on your system's CPU cores and memory
 INPUT_DIM = 131
-ELITE_BATCHES = {""" 11250,
-    11000,
-    11750,
-    8250,
-    11500,
-    10750,
-    8750,
-    10500,
-    9750,
-    9000,
-    9500,
-    5750, """}
 
 
 def evaluate_snapshot(snapshot_file):
@@ -93,19 +82,13 @@ def evaluate_snapshot(snapshot_file):
 
 
 def main():
-    snapshot_pattern = "snapshots/model_gen_*.pt"
-    snapshot_files = glob.glob(snapshot_pattern)
+    snapshot_files = glob.glob("snapshots/model_gen_*.pt") + glob.glob(
+        "snapshots/elites/model_gen_*.pt"
+    )
 
     if not snapshot_files:
         print("No snapshot files found.")
         return
-
-    if len(ELITE_BATCHES) > 1:
-        snapshot_files = [
-            f
-            for f in snapshot_files
-            if any(str(batch) in os.path.basename(f) for batch in ELITE_BATCHES)
-        ]
 
     print(f"Found {len(snapshot_files)} snapshot files.")
     results = []
@@ -136,6 +119,10 @@ def main():
             f"{res['wins']:<10} | {res['avg_norm_score']:.4f}"
         )
     print("=" * 65)
+
+    json_path = "snapshots/evaluation_results.json"
+    with open(json_path, "w") as f:
+        json.dump(results, f, indent=4)
 
 
 if __name__ == "__main__":

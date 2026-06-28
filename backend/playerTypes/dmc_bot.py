@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 import random
 import itertools
-
+from collections import Counter
 from game import Presidenten
 
 
@@ -36,7 +36,7 @@ class PresidentenDMCBot:
         self.training = training
         self.epsilon = epsilon
 
-    def get_move(self, state, env: Presidenten, *args, **kwargs):
+    def get_move(self, state: dict, env: Presidenten, *args, **kwargs):
         legal_moves = state["legal_moves"]
         if not legal_moves:
             return (0, 0, 0)
@@ -85,15 +85,27 @@ class PresidentenDMCBot:
 
             for c in pass_combo:
                 hypo_hand.remove(c)
+
             hypothetical_state["hand"] = hypo_hand
+            hand_counts = Counter(hypo_hand)
 
-            features = vectorize_state_action(
-                hypothetical_state, (0, 0, 0), num_players
-            )
-            features_tensor = torch.FloatTensor(np.array([features])).to(self.device)
+            if not hand_counts:
+                continue
 
+            hypo_features = []
+            for card, count_held in hand_counts.items():
+                for play_count in range(1, count_held + 1):
+                    move = (card, play_count, 0)
+                    features = vectorize_state_action(
+                        hypothetical_state, move, num_players
+                    )
+                    hypo_features.append(features)
+
+            features_tensor = torch.FloatTensor(np.array(hypo_features)).to(self.device)
             with torch.no_grad():
-                value = self.model(features_tensor).item()
+                q_values = self.model(features_tensor).squeeze(-1).cpu().numpy()
+
+            value = np.mean(q_values)
             if value > best_value:
                 best_value = value
                 best_pass = pass_combo
@@ -162,9 +174,7 @@ def vectorize_state_action(state, move, num_players=4):
     status_vector = np.array(pile_status, dtype=np.float32)
 
     action_window = np.zeros(16, dtype=np.float32)
-    recent_history = state["history"][-4:]
-
-    for idx, (act_p_id, act_move) in enumerate(recent_history):
+    for idx, (act_p_id, act_move) in enumerate(reversed(state["history"][-4:])):
         rel_pos = float((act_p_id - my_id) % num_players) / float(num_players)
         m_card, m_count, m_twos = act_move
         norm_card = float(m_card - 3) / 12.0 if m_card != 0 else 0.0

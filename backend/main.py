@@ -151,6 +151,7 @@ async def run_exchange_phase(
         cards_to_pass[human_id] = cards
         break
 
+    print(f"Cards to pass: {cards_to_pass}")
     env.exchange_cards(cards_to_pass)
     await websocket.send_json(
         {
@@ -255,7 +256,7 @@ async def run(
 
                 bot = assigned_players[curr_id]
                 chosen_move = await asyncio.to_thread(bot.get_move, state, env)
-
+                print(f"Bot {curr_id} chose move: {chosen_move}")
                 env.step(curr_id, chosen_move)
                 if chosen_move != (0, 0, 0):
                     await websocket.send_json(
@@ -300,6 +301,7 @@ async def run(
 
         bot = assigned_players[curr_id]
         chosen_move = await asyncio.to_thread(bot.get_move, state, env)
+        print(f"Bot {curr_id} chose move: {chosen_move}")
         env.step(curr_id, chosen_move)
 
         await websocket.send_json(
@@ -393,7 +395,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         dmc_model = PresidentenValueNet().to(device)
                         base_dir = os.path.dirname(os.path.abspath(__file__))
                         model_path = os.path.join(
-                            base_dir, "playerTypes", "best_model.pt"
+                            base_dir, "playerTypes", "best_model_27500.pt"
                         )
 
                         try:

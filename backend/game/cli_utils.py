@@ -89,7 +89,7 @@ def get_settings():
 
         if use_best_model == "y":
             dmc_paths = {
-                p_id: os.path.join(BACKEND_DIR, "playerTypes", "best_model.pt")
+                p_id: os.path.join(BACKEND_DIR, "playerTypes", "best_model_27500.pt")
                 for p_id in dmc_p_ids
             }
         else:

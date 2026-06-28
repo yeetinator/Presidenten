@@ -503,7 +503,7 @@ class PresidentenISMCTSBot:
             sim_env.hands[p] = hand
         return sim_env
 
-    def choose_cards_to_pass(self, state):
+    def choose_cards_to_pass(self, state: dict):
         if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
             return []
 

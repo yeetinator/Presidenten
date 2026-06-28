@@ -116,7 +116,7 @@ class PresidentenBaselineBot:
             return (0, 0, 0)
         return best_move
 
-    def choose_cards_to_pass(self, state):
+    def choose_cards_to_pass(self, state: dict):
         if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
             return []
 
