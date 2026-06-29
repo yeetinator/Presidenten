@@ -432,11 +432,8 @@
             {#if suitedHand.length === 0}
               <div
                 transition:fly={{ y: 5, duration: 200 }}
-                class="absolute inset-x-3 inset-y-1 flex items-center justify-center rounded-xl border border-white/10
-                  bg-white/5 text-xs text-green-50/70 text-center z-10"
-              >
-                No hand data yet
-              </div>
+                class="absolute inset-x-3 inset-y-1 flex items-center justify-center z-10"
+              ></div>
             {/if}
             <div
               class="my-0.5 flex w-full justify-center overflow-visible py-1 h-20 items-center transition-all duration-300 {haveIPassed
