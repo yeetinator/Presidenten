@@ -13,6 +13,7 @@ export interface GameStateUpdate {
   suit_last_move: string[];
   can_pass: boolean;
   passed: number[];
+  pile_leader: number | null;
 }
 
 export interface StateUpdateMessage {
@@ -76,9 +77,9 @@ type IncomingWebSocketMessage =
   | ExchangePromptMessage
   | RoundOverMessage
   | {
-    type: string;
-    [key: string]: unknown;
-  };
+      type: string;
+      [key: string]: unknown;
+    };
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -213,22 +214,25 @@ function attachSocketListeners(activeSocket: WebSocket) {
             state.set(msg.state);
             clearExchangePrompt();
             clearJumpInPrompt();
-          }
-          if (get(isAnimating)) stateUpdateQueue.push(action); else action();
+          };
+          if (get(isAnimating)) stateUpdateQueue.push(action);
+          else action();
         }
       }
 
-      if (
-        payload.type === "JUMP_IN_PROMPT"
-      ) {
+      if (payload.type === "JUMP_IN_PROMPT") {
         const msg = payload as JumpInPromptMessage;
         if (isGameStateUpdate(msg.state)) {
           const action = () => {
             state.set(msg.state);
             clearJumpInPrompt();
             jumpInPrompt.set({
-              message: typeof msg.message === "string" ? msg.message : "JUMP IN!",
-              timeoutSeconds: typeof msg.timeout_seconds === "number" ? msg.timeout_seconds : 1.5,
+              message:
+                typeof msg.message === "string" ? msg.message : "JUMP IN!",
+              timeoutSeconds:
+                typeof msg.timeout_seconds === "number"
+                  ? msg.timeout_seconds
+                  : 1.5,
               state: msg.state,
             });
 
@@ -240,30 +244,34 @@ function attachSocketListeners(activeSocket: WebSocket) {
               jumpInPrompt.set(null);
               jumpInPromptTimeout = null;
             }, promptTimeout * 1000);
-          }
-          if (get(isAnimating)) stateUpdateQueue.push(action); else action();
+          };
+          if (get(isAnimating)) stateUpdateQueue.push(action);
+          else action();
         }
       }
 
-      if (
-        payload.type === "EXCHANGE_PROMPT"
-      ) {
+      if (payload.type === "EXCHANGE_PROMPT") {
         const msg = payload as ExchangePromptMessage;
-        if (isGameStateUpdate(msg.state) && typeof msg.required_cards === "number" && typeof msg.can_choose === "boolean") {
+        if (
+          isGameStateUpdate(msg.state) &&
+          typeof msg.required_cards === "number" &&
+          typeof msg.can_choose === "boolean"
+        ) {
           const action = () => {
             state.set(msg.state);
             if (!msg.can_choose && msg.required_cards > 0) {
               selectedCards.set(
-                getHighestSuitCards(
-                  msg.state.suited_hand, msg.required_cards))
+                getHighestSuitCards(msg.state.suited_hand, msg.required_cards),
+              );
             }
             exchangePrompt.set({
               state: msg.state,
               requiredCards: msg.required_cards,
               canChoose: msg.can_choose,
             });
-          }
-          if (get(isAnimating)) stateUpdateQueue.push(action); else action();
+          };
+          if (get(isAnimating)) stateUpdateQueue.push(action);
+          else action();
         }
       }
 
@@ -280,10 +288,11 @@ function attachSocketListeners(activeSocket: WebSocket) {
       if (
         (payload.type === "GAME_LOG" || payload.type === "LOG_ALERT") &&
         typeof payload.message === "string"
-      ) logs.update((currLogs) => [...currLogs, payload.message as string]);
+      )
+        logs.update((currLogs) => [...currLogs, payload.message as string]);
 
-
-      if (payload.type === "REVEAL_BOT" && typeof payload.seat === "number") revealedBotSeat.set(payload.seat);
+      if (payload.type === "REVEAL_BOT" && typeof payload.seat === "number")
+        revealedBotSeat.set(payload.seat);
     } catch {
       // Ignore malformed payloads; other valid messages keep flowing.
     }
@@ -291,7 +300,8 @@ function attachSocketListeners(activeSocket: WebSocket) {
 }
 
 function connect(url: string) {
-  if (socket && socket.readyState <= WebSocket.OPEN && currentUrl === url) return;
+  if (socket && socket.readyState <= WebSocket.OPEN && currentUrl === url)
+    return;
 
   if (socket) {
     socket.close();
@@ -409,7 +419,9 @@ async function processQueue() {
   }
 }
 
-isAnimating.subscribe((animating) => { if (!animating) processQueue() });
+isAnimating.subscribe((animating) => {
+  if (!animating) processQueue();
+});
 
 export const gameStore = {
   state,

@@ -74,10 +74,13 @@
   );
 
   let visualPile: string[][] = [];
+  let cardRotations: Record<string, number> = {};
   $: {
     const currSuits = $gameState?.suit_last_move ?? [];
-    if (currSuits.length === 0) visualPile = [];
-    else {
+    if (currSuits.length === 0) {
+      visualPile = [];
+      cardRotations = {};
+    } else {
       const lastPlay = visualPile[visualPile.length - 1];
       const isAlreadyAdded =
         lastPlay &&
@@ -93,6 +96,27 @@
           visualPile[visualPile.length - 1] = currSuits;
           visualPile = [...visualPile];
         } else visualPile = [...visualPile, currSuits];
+
+        const leaderSeat = $gameState?.pile_leader ?? 0;
+        let baseAngle = 0;
+
+        if (leaderSeat !== 0 && opponentViews) {
+          const throwingOpponent = opponentViews.find(
+            (o) => o.seat === leaderSeat,
+          );
+          if (throwingOpponent) {
+            if (throwingOpponent.position === "left") baseAngle = 90;
+            else if (throwingOpponent.position === "top") baseAngle = 180;
+            else if (throwingOpponent.position === "right") baseAngle = 270;
+          }
+        }
+        const groupPlayJitter = Math.random() * 70 - 35;
+        currSuits.forEach((suitCard) => {
+          if (cardRotations[suitCard] === undefined) {
+            const microJitter = Math.random() * 10 - 5;
+            cardRotations[suitCard] = baseAngle + groupPlayJitter + microJitter;
+          }
+        });
       }
     }
   }
@@ -294,10 +318,12 @@
   <Lobby onStartGame={handleStartGame} />
 {:else}
   <main
-    class="h-screen max-h-screen overflow-hidden bg-[radial-gradient(circle_at_center,#154d2a_0%,#0b2414_48%,#050b07_100%)] p-2 text-white md:p-3"
+    class="h-screen max-h-screen overflow-hidden bg-[radial-gradient(circle_at_center,#154d2a_0%,#0b2414_48%,#050b07_100%)]
+      p-2 text-white md:p-3"
   >
     <button
-      class="fixed right-4 top-4 z-30 rounded-md border border-red-300/30 bg-red-500 px-3 py-1 text-[0.65rem] font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-red-400 active:scale-[0.98]"
+      class="fixed right-4 top-4 z-30 rounded-md border border-red-300/30 bg-red-500 px-3 py-1 text-[0.65rem]
+        font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-red-400 active:scale-[0.98]"
       type="button"
       on:click={handleBackToLobby}
     >
@@ -307,7 +333,8 @@
       class="mx-auto grid h-full max-h-full grid-rows-[1fr_auto] gap-2 max-w-screen-2xl"
     >
       <section
-        class="rounded-2xl border border-emerald-300/15 bg-[radial-gradient(circle_at_top,rgba(52,211,153,0.18),rgba(6,20,12,0.96)_68%)] p-3 shadow-lg backdrop-blur-md flex flex-col justify-between overflow-hidden"
+        class="rounded-2xl border border-emerald-300/15 bg-[radial-gradient(circle_at_top,rgba(52,211,153,0.18),rgba(6,20,12,0.96)_68%)]
+          p-3 shadow-lg backdrop-blur-md flex flex-col justify-between overflow-hidden"
       >
         <div
           class="grid gap-3 xl:grid-cols-[16rem_1fr_16rem] xl:grid-rows-[auto_1fr] h-full items-center"
@@ -352,15 +379,22 @@
                     on:outrostart={gameStore.startAnimation}
                     on:outroend={gameStore.endAnimation}
                     class="absolute bottom-0 transition-all duration-300 flex justify-center origin-bottom"
-                    style={`z-index: ${card.cardIndex * 10 + card.cardIndex}; transform: translateX(${(card.cardIndex - (visualPile[card.playIndex].length - 1) / 2) * 1.4}rem);`}
+                    style={`z-index: ${card.playIndex * 10 + card.cardIndex}; 
+                      transform: translateX(${(card.cardIndex - (visualPile[card.playIndex].length - 1) / 2) * 1.4}rem);`}
                   >
-                    <Card
-                      suitCard={card.suitCard}
-                      isFaceUp={true}
-                      disabled={true}
-                      className="shrink-0 scale-[0.7] origin-bottom"
-                    />
-                  </div>{/each}
+                    <div
+                      style={`transform: rotate(${cardRotations[card.suitCard] ?? 0}deg);`}
+                      class="origin-center flex justify-center items-center"
+                    >
+                      <Card
+                        suitCard={card.suitCard}
+                        isFaceUp={true}
+                        disabled={true}
+                        className="shrink-0 scale-[0.7] origin-center"
+                      />
+                    </div>
+                  </div>
+                {/each}
               </div>
               {#if visualPile.length === 0}
                 <div
@@ -454,7 +488,8 @@
                 </button>
               {:else}
                 <button
-                  class="rounded-lg border border-emerald-300/30 bg-emerald-400 px-4 py-1.5 font-semibold text-emerald-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40 text-xs"
+                  class="rounded-lg border border-emerald-300/30 bg-emerald-400 px-4 py-1.5 font-semibold
+                    text-emerald-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40 text-xs"
                   type="button"
                   disabled={!isMyTurn || !isSelectionLegal}
                   on:click={handlePlay}
@@ -462,7 +497,8 @@
                   Play
                 </button>
                 <button
-                  class="rounded-lg border border-white/10 bg-white/10 px-4 py-1.5 font-semibold text-white transition hover:bg-white/15 text-xs"
+                  class="rounded-lg border border-white/10 bg-white/10 px-4 py-1.5 font-semibold
+                    text-white transition hover:bg-white/15 text-xs"
                   type="button"
                   disabled={!isMyTurn || !$gameState?.can_pass}
                   on:click={handlePass}
