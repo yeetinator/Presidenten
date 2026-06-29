@@ -426,47 +426,50 @@
           </aside>
         </div>
         <div class="grid gap-2">
-          <div class="px-3 py-1 overflow-visible">
+          <div
+            class="px-3 py-1 overflow-visible relative min-h-22 flex items-center justify-center"
+          >
             {#if suitedHand.length === 0}
               <div
-                class="my-1 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-green-50/70 text-center"
+                transition:fly={{ y: 5, duration: 200 }}
+                class="absolute inset-x-3 inset-y-1 flex items-center justify-center rounded-xl border border-white/10
+                  bg-white/5 text-xs text-green-50/70 text-center z-10"
               >
                 No hand data yet
               </div>
-            {:else}
-              <div
-                class="my-0.5 flex w-full justify-center overflow-visible py-1 h-20 items-center transition-all duration-300 {haveIPassed
-                  ? 'opacity-40 grayscale pointer-events-none'
-                  : ''}"
-              >
-                {#each suitedHand as suitCard, index (suitCard)}
-                  <div
-                    in:receive={{ key: suitCard }}
-                    out:send={{ key: suitCard }}
-                    on:introstart={gameStore.startAnimation}
-                    on:introend={gameStore.endAnimation}
-                    on:outrostart={gameStore.startAnimation}
-                    on:outroend={gameStore.endAnimation}
-                    class="relative pointer-events-none transition-all duration-300"
-                    style={getHorizontalOverlapStyle(index)}
-                  >
-                    <Card
-                      {suitCard}
-                      isFaceUp={true}
-                      isSelected={$selectedCards.includes(suitCard)}
-                      isBlinking={jumpInVisible &&
-                        jumpInTargetValue === stripSuitCard(suitCard)}
-                      disabled={haveIPassed ||
-                        (!$exchangePrompt && !isMyTurn) ||
-                        (!!$exchangePrompt &&
-                          (!exchangeCanChoose || exchangeRequiredCards === 0))}
-                      className="shrink-0 scale-[0.75] md:scale-[0.8] pointer-events-auto"
-                      onClick={() => handleToggleCard(suitCard)}
-                    />
-                  </div>
-                {/each}
-              </div>
             {/if}
+            <div
+              class="my-0.5 flex w-full justify-center overflow-visible py-1 h-20 items-center transition-all duration-300 {haveIPassed
+                ? 'opacity-40 grayscale pointer-events-none'
+                : ''}"
+            >
+              {#each suitedHand as suitCard, index (suitCard)}
+                <div
+                  in:receive={{ key: suitCard }}
+                  out:send={{ key: suitCard }}
+                  on:introstart={gameStore.startAnimation}
+                  on:introend={gameStore.endAnimation}
+                  on:outrostart={gameStore.startAnimation}
+                  on:outroend={gameStore.endAnimation}
+                  class="relative pointer-events-none transition-all duration-300"
+                  style={getHorizontalOverlapStyle(index)}
+                >
+                  <Card
+                    {suitCard}
+                    isFaceUp={true}
+                    isSelected={$selectedCards.includes(suitCard)}
+                    isBlinking={jumpInVisible &&
+                      jumpInTargetValue === stripSuitCard(suitCard)}
+                    disabled={haveIPassed ||
+                      (!$exchangePrompt && !isMyTurn) ||
+                      (!!$exchangePrompt &&
+                        (!exchangeCanChoose || exchangeRequiredCards === 0))}
+                    className="shrink-0 scale-[0.75] md:scale-[0.8] pointer-events-auto"
+                    onClick={() => handleToggleCard(suitCard)}
+                  />
+                </div>
+              {/each}
+            </div>
           </div>
           <div
             class="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 p-2 text-xs md:text-sm"
