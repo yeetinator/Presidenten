@@ -23,7 +23,6 @@
   let showFinalResults = false;
 
   $: suitedHand = $gameState?.suited_hand ?? [];
-  $: lastMoveSuits = $gameState?.suit_last_move ?? [];
   $: totalPlayers = Object.keys($gameState?.player_roles ?? {}).length || 4;
   $: exchangeRequiredCards = $exchangePrompt?.requiredCards ?? 0;
   $: exchangeCanChoose = $exchangePrompt?.canChoose ?? false;
@@ -72,6 +71,33 @@
     isSelectionLegal,
     exchangeRequiredCards,
     exchangeCanChoose,
+  );
+
+  let visualPile: string[][] = [];
+  $: {
+    const currSuits = $gameState?.suit_last_move ?? [];
+    if (currSuits.length === 0) visualPile = [];
+    else {
+      const lastPlay = visualPile[visualPile.length - 1];
+      const isAlreadyAdded =
+        lastPlay &&
+        lastPlay.length === currSuits.length &&
+        currSuits.every((card, idx) => card === lastPlay[idx]);
+      const isExtension =
+        lastPlay &&
+        currSuits.length > lastPlay.length &&
+        lastPlay.every((card, idx) => card === currSuits[idx]);
+
+      if (!isAlreadyAdded) {
+        if (isExtension) {
+          visualPile[visualPile.length - 1] = currSuits;
+          visualPile = [...visualPile];
+        } else visualPile = [...visualPile, currSuits];
+      }
+    }
+  }
+  $: flatVisualPile = visualPile.flatMap((play, playIndex) =>
+    play.map((suitCard, cardIndex) => ({ suitCard, playIndex, cardIndex })),
   );
 
   let lastStateRef: typeof $gameState = null;
@@ -314,28 +340,29 @@
             <div
               class="w-full max-w-md flex items-center justify-center p-3 min-h-28 relative"
             >
-              <div class="flex items-end justify-center overflow-visible h-20">
-                {#each lastMoveSuits as suitCard, cardIndex (suitCard)}
+              <div
+                class="relative flex items-end justify-center overflow-visible h-20 w-full"
+              >
+                {#each flatVisualPile as card (card.suitCard)}
                   <div
-                    in:receive={{ key: suitCard }}
-                    out:send={{ key: suitCard, isPile: true }}
+                    in:receive={{ key: card.suitCard }}
+                    out:send={{ key: card.suitCard, isPile: true }}
                     on:introstart={gameStore.startAnimation}
                     on:introend={gameStore.endAnimation}
                     on:outrostart={gameStore.startAnimation}
                     on:outroend={gameStore.endAnimation}
-                    class="relative transition-all duration-300"
-                    style={`margin-left: ${cardIndex === 0 ? 0 : -4.3}rem; z-index: ${cardIndex};`}
+                    class="absolute bottom-0 transition-all duration-300 flex justify-center origin-bottom"
+                    style={`z-index: ${card.cardIndex * 10 + card.cardIndex}; transform: translateX(${(card.cardIndex - (visualPile[card.playIndex].length - 1) / 2) * 1.4}rem);`}
                   >
                     <Card
-                      {suitCard}
+                      suitCard={card.suitCard}
                       isFaceUp={true}
                       disabled={true}
                       className="shrink-0 scale-[0.7] origin-bottom"
                     />
-                  </div>
-                {/each}
+                  </div>{/each}
               </div>
-              {#if lastMoveSuits.length === 0}
+              {#if visualPile.length === 0}
                 <div
                   transition:fly={{ y: 10, duration: 200 }}
                   class="absolute text-center text-emerald-50/70 py-1 pointer-events-none"
