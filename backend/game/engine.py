@@ -101,19 +101,27 @@ class Presidenten:
         mapping = {10: "T", 11: "J", 12: "Q", 13: "K", 14: "A", 15: "2"}
         return mapping.get(card_val, str(card_val))
 
+    def _get_card_value(self, suit_str):
+        mapping = {"T": 10, "J": 11, "Q": 12, "K": 13, "A": 14, "2": 15}
+        r = suit_str[:-1]
+        return mapping[r] if r in mapping else int(r)
+
     def exchange_cards(
         self,
+        pair: tuple[str, str, int],
         cards_to_pass: dict[int | str, list[int]] | None = None,
     ):
         role_to_player = {role: p_id for p_id, role in self.roles.items()}
 
         # Makes sure no cards are exchanged back and forth in the same round
         staged_outgoing = {p_id: [] for p_id in range(self.players)}
-        self.exchange_log = {}
+        staged_suits = {p_id: [] for p_id in range(self.players)}
+
+        if not hasattr(self, "exchange_log") or self.exchange_log is None:
+            self.exchange_log = {}
 
         def pick_cards(p_id, count, highest=False, allow_custom=True):
             hand = self.hands[p_id]
-
             if allow_custom and cards_to_pass is not None:
                 if p_id in cards_to_pass:
                     chosen = list(cards_to_pass[p_id])
@@ -124,36 +132,35 @@ class Presidenten:
                     raise ValueError(
                         f"Player {p_id} must exchange {count} card(s), got {len(chosen)}."
                     )
-
-                chosen_counts = Counter(chosen)
-                hand_counts = Counter(hand)
-
-                for card, selected_count in chosen_counts.items():
-                    if hand_counts[card] < selected_count:
-                        raise ValueError(
-                            f"Player {p_id} cannot exchange {selected_count} copy/copies of {card}."
-                        )
                 return chosen
 
             sorted_hand = sorted(hand, reverse=highest)
-            chosen = sorted_hand[:count]
+            return sorted_hand[:count]
 
-            return chosen
+        def suit_exchange(player, cards):
+            for card_val in cards:
+                prefix = self._get_suit_prefix(card_val)
+                suit_card = next(
+                    (sc for sc in self.suited_hands[player] if sc.startswith(prefix)),
+                    None,
+                )
+                if suit_card:
+                    self.suited_hands[player].remove(suit_card)
+                    staged_suits[player].append(suit_card)
 
-        for high_role, low_role, count in self.role_pairs:
-            high_player = role_to_player.get(high_role)
-            low_player = role_to_player.get(low_role)
+        high_role, low_role, count = pair
+        high_player = role_to_player.get(high_role)
+        low_player = role_to_player.get(low_role)
 
-            if high_player is None or low_player is None:
-                continue
-
-            high_cards = pick_cards(
-                high_player, count, highest=False, allow_custom=True
-            )
-            low_cards = pick_cards(low_player, count, highest=True, allow_custom=False)
+        if high_player is not None and low_player is not None:
+            high_cards = pick_cards(high_player, count, False, True)
+            low_cards = pick_cards(low_player, count, True, False)
 
             staged_outgoing[high_player].extend(high_cards)
             staged_outgoing[low_player].extend(low_cards)
+
+            suit_exchange(high_player, high_cards)
+            suit_exchange(low_player, low_cards)
 
             self.exchange_log[high_player] = {
                 "pair": low_player,
@@ -168,28 +175,25 @@ class Presidenten:
                 "received": list(high_cards),
             }
 
-        for p_id, cards in staged_outgoing.items():
-            for card in cards:
-                self.hands[p_id].remove(card)
-
-        for high_role, low_role, _ in self.role_pairs:
-            high_player = role_to_player.get(high_role)
-            low_player = role_to_player.get(low_role)
-
-            if high_player is None or low_player is None:
-                continue
+            for card in staged_outgoing[high_player]:
+                self.hands[high_player].remove(card)
+            for card in staged_outgoing[low_player]:
+                self.hands[low_player].remove(card)
 
             self.hands[high_player].extend(staged_outgoing[low_player])
             self.hands[low_player].extend(staged_outgoing[high_player])
+
+            self.suited_hands[high_player].extend(staged_suits[low_player])
+            self.suited_hands[low_player].extend(staged_suits[high_player])
 
             if self.verbose:
                 print(
                     f"\nExchanging cards between {high_player} ({high_role}) and {low_player} ({low_role})"
                 )
 
-        for p_id in self.hands:
+        for p_id in range(self.players):
             self.hands[p_id].sort()
-        self.suited_hands = self.gen_suited_hands()
+            self.suited_hands[p_id].sort(key=self._get_card_value)
 
     def gen_suited_hands(self):
         suited_hands = {p_id: [] for p_id in range(self.players)}

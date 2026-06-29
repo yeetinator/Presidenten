@@ -152,13 +152,24 @@ async def run_exchange_phase(
         break
 
     print(f"Cards to pass: {cards_to_pass}")
-    env.exchange_cards(cards_to_pass)
-    await websocket.send_json(
-        {
-            "type": "GAME_LOG",
-            "message": f"Cards exchanged for round {env.round}.",
-        }
-    )
+    env.exchange_log = {}
+    for pair in env.role_pairs:
+        high_role, low_role, count = pair
+        env.exchange_cards(pair, cards_to_pass)
+
+        await websocket.send_json(
+            {
+                "type": "GAME_LOG",
+                "message": f"{high_role} and {low_role} have exchanged {count} card(s).",
+            }
+        )
+        await websocket.send_json(
+            {
+                "type": "STATE_UPDATE",
+                "state": enrich_state(env._get_state(human_id), assign_p),
+            }
+        )
+        await asyncio.sleep(1.2)
 
 
 async def run(

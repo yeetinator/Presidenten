@@ -97,7 +97,8 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
                         env._get_state(p_id)
                     )
 
-            env.exchange_cards(cards_to_pass)
+            for pair in env.role_pairs:
+                env.exchange_cards(pair, cards_to_pass)
             state = env._get_state(env.curr_turn)
 
         move_count = 0

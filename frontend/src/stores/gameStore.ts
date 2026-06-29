@@ -396,6 +396,7 @@ async function nextRound() {
   clearSelectedCards();
   clearExchangePrompt();
   clearRoundSummary();
+  clearState();
   await send({ type: "NEXT_ROUND" });
 }
 

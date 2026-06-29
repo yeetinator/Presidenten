@@ -54,7 +54,7 @@
       >
         <Card
           {suitCard}
-          isFaceUp={true}
+          isFaceUp={revealBotCards}
           disabled={true}
           className="shrink-0 scale-[0.4] origin-bottom"
         />
