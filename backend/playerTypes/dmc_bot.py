@@ -8,7 +8,7 @@ from game import Presidenten
 
 
 class PresidentenValueNet(nn.Module):
-    def __init__(self, input_dim=131):
+    def __init__(self, input_dim=115):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 512),
@@ -173,17 +173,6 @@ def vectorize_state_action(state, move, num_players=4):
     role_vector = np.array(player_roles, dtype=np.float32)
     status_vector = np.array(pile_status, dtype=np.float32)
 
-    action_window = np.zeros(16, dtype=np.float32)
-    for idx, (act_p_id, act_move) in enumerate(reversed(state["history"][-4:])):
-        rel_pos = float((act_p_id - my_id) % num_players) / float(num_players)
-        m_card, m_count, m_twos = act_move
-        norm_card = float(m_card - 3) / 12.0 if m_card != 0 else 0.0
-        offset = idx * 4
-        action_window[offset] = rel_pos
-        action_window[offset + 1] = norm_card
-        action_window[offset + 2] = float(m_count) / 4.0
-        action_window[offset + 3] = float(m_twos) / 4.0
-
     pile_vector = np.zeros(15, dtype=np.float32)
     if state["pile_leader"] is not None:
         rel_leader_pos = float((state["pile_leader"] - my_id) % num_players) / float(
@@ -215,7 +204,6 @@ def vectorize_state_action(state, move, num_players=4):
             opp_vector,  # 7
             role_vector,  # 7
             status_vector,  # 14
-            action_window,  # 16
             pile_vector,  # 15
             misc_vector,  # 2
         ]

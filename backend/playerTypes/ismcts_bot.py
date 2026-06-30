@@ -236,6 +236,9 @@ class PresidentenISMCTSBot:
                     curr_node.children.append(new_node)
                     curr_node = new_node
                     sim_env.step(curr_player, chosen_move)
+
+                    if sim_env.was_pile_reset:
+                        sim_env.clear_pile()
                     break
                 else:
                     next_node = curr_node.select_child(
@@ -246,6 +249,9 @@ class PresidentenISMCTSBot:
 
                     curr_node = next_node
                     sim_env.step(curr_player, curr_node.move)
+
+                    if sim_env.was_pile_reset:
+                        sim_env.clear_pile()
 
             while not sim_env.game_over:
                 curr_player = sim_env.curr_turn
@@ -259,6 +265,9 @@ class PresidentenISMCTSBot:
                 sim_state = sim_env._get_state(curr_player)
                 chosen_move = rollout_bots[curr_player].get_move(sim_state)
                 sim_env.step(curr_player, chosen_move)
+
+                if sim_env.was_pile_reset:
+                    sim_env.clear_pile()
 
             remaining_players = [
                 p for p in range(sim_env.players) if p not in sim_env.out_order

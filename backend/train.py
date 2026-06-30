@@ -13,7 +13,7 @@ BATCH_GAMES = 50
 ROUNDS_PER_GAME = 10
 SAVE_SNAPSHOT_EVERY = 250
 LEARNING_RATE = 1e-4
-INPUT_DIM = 131
+INPUT_DIM = 115
 GRADIENT_CLIP = 1.0
 NUM_WORKERS = 10
 
@@ -118,6 +118,9 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
 
             chosen_move = bot_instances[curr_player].get_move(state, env)
             state, _ = env.step(curr_player, chosen_move)
+
+            if env.was_pile_reset:
+                env.clear_pile()
         env.assign_roles()
 
         max_possible_score = env.players - 1

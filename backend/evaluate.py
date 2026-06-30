@@ -10,7 +10,7 @@ from game import Presidenten
 TOTAL_GAMES = 1000
 NUM_ROUNDS = 10
 NUM_WORKERS = 10  # Adjust based on your system's CPU cores and memory
-INPUT_DIM = 131
+INPUT_DIM = 115
 
 
 def evaluate_snapshot(snapshot_file):
@@ -66,6 +66,9 @@ def evaluate_snapshot(snapshot_file):
 
                 chosen_move = bot_instances[curr_player].get_move(state, env)
                 state, _ = env.step(curr_player, chosen_move)
+
+                if env.was_pile_reset:
+                    env.clear_pile()
             env.assign_roles()
 
         max_pos_score = (num_players - 1) * NUM_ROUNDS

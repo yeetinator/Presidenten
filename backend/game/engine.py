@@ -307,7 +307,6 @@ class Presidenten:
             "active_players": self.playing.copy(),
             "first_turn": self.first_turn,
             "clubs_3_holder": self.clubs_3_holder,
-            "history": self.history.copy(),
             "player_roles": self.roles.copy(),
             "history_vector": [history_counts[rank] for rank in range(3, 16)],
             "is_finish_prompt": bool(
