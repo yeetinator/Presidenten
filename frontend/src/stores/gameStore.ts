@@ -19,6 +19,7 @@ export interface GameStateUpdate {
 export interface StateUpdateMessage {
   type: "STATE_UPDATE";
   state: GameStateUpdate;
+  clearJump?: boolean;
 }
 
 export interface RoundOverMessage {
@@ -37,13 +38,11 @@ export interface RoundSummary {
 export interface JumpInPromptMessage {
   type: "JUMP_IN_PROMPT";
   state: GameStateUpdate;
-  timeout_seconds: number;
   message: string;
 }
 
 export interface JumpInPrompt {
   message: string;
-  timeoutSeconds: number;
   state: GameStateUpdate;
 }
 
@@ -85,7 +84,6 @@ type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 let socket: WebSocket | null = null;
 let currentUrl: string | null = null;
-let jumpInPromptTimeout: ReturnType<typeof setTimeout> | null = null;
 let stateUpdateQueue: (() => void)[] = [];
 let activeAnimationsCount = 0;
 
@@ -162,10 +160,6 @@ function clearLogs() {
 }
 
 function clearJumpInPrompt() {
-  if (jumpInPromptTimeout) {
-    clearTimeout(jumpInPromptTimeout);
-    jumpInPromptTimeout = null;
-  }
   jumpInPrompt.set(null);
 }
 
@@ -213,7 +207,8 @@ function attachSocketListeners(activeSocket: WebSocket) {
           const action = () => {
             state.set(msg.state);
             clearExchangePrompt();
-            clearJumpInPrompt();
+
+            if (msg.clearJump !== false) clearJumpInPrompt();
           };
           if (get(isAnimating)) stateUpdateQueue.push(action);
           else action();
@@ -229,21 +224,8 @@ function attachSocketListeners(activeSocket: WebSocket) {
             jumpInPrompt.set({
               message:
                 typeof msg.message === "string" ? msg.message : "JUMP IN!",
-              timeoutSeconds:
-                typeof msg.timeout_seconds === "number"
-                  ? msg.timeout_seconds
-                  : 1.5,
               state: msg.state,
             });
-
-            const promptTimeout =
-              typeof msg.timeout_seconds === "number"
-                ? msg.timeout_seconds
-                : 1.5;
-            jumpInPromptTimeout = setTimeout(() => {
-              jumpInPrompt.set(null);
-              jumpInPromptTimeout = null;
-            }, promptTimeout * 1000);
           };
           if (get(isAnimating)) stateUpdateQueue.push(action);
           else action();

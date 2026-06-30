@@ -403,11 +403,9 @@ class Presidenten:
             if queue:
                 self.curr_turn = queue[0][2]
             else:
-                resume_turn = self.pending_finish["resume_turn"]
-                was_pile_reset = self.pending_finish["pile_reset"]
+                self.curr_turn = self.pending_finish["resume_turn"]
+                self.was_pile_reset = self.pending_finish["pile_reset"]
                 self.pending_finish = None
-                self.curr_turn = resume_turn
-                self.was_pile_reset = was_pile_reset
         else:
             if self.verbose:
                 print(
@@ -464,6 +462,7 @@ class Presidenten:
         self.passed = set()
         self.pile = []
         self.pile_leader = None
+        self.pending_finish = None
         self.was_pile_reset = False
 
     def _is_game_over(self):
@@ -479,10 +478,11 @@ class Presidenten:
         return p_id
 
     def step(self, p_id, move, suits=None):
+        self.curr_turn = p_id
         card_val, count, twos = move
         pile_reset = False
 
-        if self.pending_finish:
+        if self.pending_finish and self.pending_finish["queue"][0][2] == p_id:
             self.handle_pending_finish(move, p_id, suits)
             return (
                 self._get_state(self.curr_turn, reset_view=self.was_pile_reset),

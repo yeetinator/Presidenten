@@ -188,14 +188,15 @@ async def run(
             break
 
         state = env._get_state(curr_id)
-        if state["is_finish_prompt"]:
-            if curr_id == human_id:
+        if state["is_finish_prompt"] or env.pending_finish:
+            if curr_id == human_id or (
+                env.pending_finish and env.pending_finish["queue"][0][2] == human_id
+            ):
                 JUMP_IN_WINDOW = 1.5
                 await websocket.send_json(
                     {
                         "type": "JUMP_IN_PROMPT",
                         "state": enrich_state(state, assign_p),
-                        "timeout_seconds": JUMP_IN_WINDOW,
                         "message": "JUMP IN!",
                     }
                 )
@@ -228,15 +229,14 @@ async def run(
 
                         if env.was_pile_reset:
                             env.clear_pile()
-
-                        await websocket.send_json(
-                            {
-                                "type": "STATE_UPDATE",
-                                "state": enrich_state(
-                                    env._get_state(human_id), assign_p
-                                ),
-                            }
-                        )
+                            await websocket.send_json(
+                                {
+                                    "type": "STATE_UPDATE",
+                                    "state": enrich_state(
+                                        env._get_state(human_id), assign_p
+                                    ),
+                                }
+                            )
                         if env.game_over:
                             break
                         return
@@ -247,21 +247,24 @@ async def run(
                             "message": "Too slow!",
                         }
                     )
+                    if env.pending_finish:
+                        if curr_id == (env.pending_finish["resume_turn"] + 1) % len(
+                            assigned_players
+                        ):
+                            env.pending_finish["resume_turn"] = curr_id
+                        curr_id = env.pending_finish["resume_turn"]
+                        if env.pending_finish["pile_reset"]:
+                            await asyncio.sleep(1.5)
 
-                    env.step(human_id, (0, 0, 0))
-                    if env.was_pile_reset:
-                        await asyncio.sleep(1.5)
-
-                        env.clear_pile()
-                        await websocket.send_json(
-                            {
-                                "type": "STATE_UPDATE",
-                                "state": enrich_state(
-                                    env._get_state(human_id), assign_p
-                                ),
-                            }
-                        )
-                continue
+                            env.clear_pile()
+                            await websocket.send_json(
+                                {
+                                    "type": "STATE_UPDATE",
+                                    "state": enrich_state(
+                                        env._get_state(human_id), assign_p
+                                    ),
+                                }
+                            )
             else:
                 await asyncio.sleep(0.5)
 
@@ -286,12 +289,14 @@ async def run(
 
                     if env.was_pile_reset:
                         env.clear_pile()
-                    await websocket.send_json(
-                        {
-                            "type": "STATE_UPDATE",
-                            "state": enrich_state(env._get_state(human_id), assign_p),
-                        }
-                    )
+                        await websocket.send_json(
+                            {
+                                "type": "STATE_UPDATE",
+                                "state": enrich_state(
+                                    env._get_state(human_id), assign_p
+                                ),
+                            }
+                        )
                 await asyncio.sleep(1)
                 if env.was_pile_reset:
                     env.clear_pile()
@@ -306,7 +311,11 @@ async def run(
 
         if assign_p[curr_id] == PlayerType.HUMAN:
             await websocket.send_json(
-                {"type": "STATE_UPDATE", "state": enrich_state(state, assign_p)}
+                {
+                    "type": "STATE_UPDATE",
+                    "state": enrich_state(state, assign_p),
+                    "clearJump": False if env.pending_finish else True,
+                }
             )
             return
 
