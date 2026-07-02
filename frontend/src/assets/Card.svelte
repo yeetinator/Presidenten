@@ -40,16 +40,21 @@
   @keyframes red-flash {
     0%,
     100% {
-      border-color: rgba(239, 68, 68, 0.4);
-      box-shadow: 0 0 0px rgba(239, 68, 68, 0);
+      opacity: 0.2;
     }
     50% {
-      border-color: rgba(220, 38, 38, 1);
-      box-shadow: 0 0 15px rgba(220, 38, 38, 0.8);
+      opacity: 1;
     }
   }
-  :global(.animate-jump-ready) {
-    animation: red-flash 0.6s infinite ease-in-out !important;
-    border-width: 3px !important;
+  :global(.animate-jump-ready)::before {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border: 3px solid rgba(220, 38, 38, 1);
+    box-shadow: 0 0 15px rgba(220, 38, 38, 0.8);
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 10;
+    animation: red-flash 0.6s infinite ease-in-out;
   }
 </style>
