@@ -1,6 +1,7 @@
 import asyncio
+from pathlib import Path
+
 import torch
-import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from game import Presidenten, PlayerType
@@ -16,6 +17,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+BotPlayer = PresidentenRandomBot | PresidentenBaselineBot | PresidentenDMCBot
+
+MESSAGE_DELAY = 1.5
+EXCHANGE_DELAY = 1.2
+BOT_THINK_DELAY = 0.5
+JUMP_IN_WINDOW = 1.5
+REVEAL_DELAY = 2.5
+PASS_DELAY = 1.0
+
+PLAYER_TYPE_LABELS = {
+    PlayerType.HUMAN: "Human",
+    PlayerType.RANDOM: "Random",
+    PlayerType.BASELINE: "Baseline",
+    PlayerType.DMC: "DMC",
+}
 
 
 def _parse_helper(suits):
@@ -100,21 +117,78 @@ def get_exchange_count(env: Presidenten, role: str) -> int:
 
 
 def get_player_type_label(player_type: PlayerType) -> str:
-    labels = {
-        PlayerType.HUMAN: "Human",
-        PlayerType.RANDOM: "Random",
-        PlayerType.BASELINE: "Baseline",
-        PlayerType.DMC: "DMC",
+    return PLAYER_TYPE_LABELS.get(player_type, "Unknown")
+
+
+async def send_game_log(websocket: WebSocket, message: str):
+    await websocket.send_json({"type": "GAME_LOG", "message": message})
+
+
+async def send_state_update(
+    websocket: WebSocket,
+    env: Presidenten,
+    human_id: int,
+    assign_p: dict[int, PlayerType],
+    *,
+    clear_jump: bool | None = None,
+):
+    payload = {
+        "type": "STATE_UPDATE",
+        "state": enrich_state(env._get_state(human_id), assign_p),
     }
-    return labels.get(player_type, "Unknown")
+    if clear_jump is not None:
+        payload["clearJump"] = clear_jump
+    await websocket.send_json(payload)
+
+
+def build_assigned_players(
+    assign_p: dict[int, PlayerType], device: torch.device
+) -> tuple[dict[int, BotPlayer], int]:
+    assigned_players: dict[int, BotPlayer] = {}
+    human_id = 0
+
+    model_path = Path(__file__).resolve().parent / "playerTypes" / "best_model_27500.pt"
+
+    for p_id, p_type in assign_p.items():
+        if p_type == PlayerType.HUMAN:
+            human_id = p_id
+        elif p_type == PlayerType.RANDOM:
+            assigned_players[p_id] = PresidentenRandomBot(p_id)
+        elif p_type == PlayerType.BASELINE:
+            assigned_players[p_id] = PresidentenBaselineBot(p_id)
+        elif p_type == PlayerType.DMC:
+            dmc_model = PresidentenValueNet().to(device)
+
+            try:
+                load_path = torch.load(model_path, map_location=device)
+                dmc_model.load_state_dict(load_path["model_state_dict"])
+            except Exception as e:
+                print(
+                    f"Warning: Could not load weights from {model_path}. Reason: {e}. Using untrained model instead."
+                )
+
+            dmc_model.eval()
+            assigned_players[p_id] = PresidentenDMCBot(p_id, dmc_model, device)
+
+    return assigned_players, human_id
+
+
+async def wait_for_exchange_cards(websocket: WebSocket, can_choose: bool):
+    while True:
+        raw_data = await websocket.receive_json()
+        if raw_data.get("type") != "EXCHANGE_CARDS":
+            continue
+
+        suits = raw_data.get("suits", []) if can_choose else []
+        cards = parse_suits_to_selection(suits)
+
+        if isinstance(cards, list):
+            return cards
 
 
 async def run_exchange_phase(
     env: Presidenten,
-    assigned_players: dict[
-        int,
-        PresidentenRandomBot | PresidentenBaselineBot | PresidentenDMCBot,
-    ],
+    assigned_players: dict[int, BotPlayer],
     websocket: WebSocket,
     human_id: int,
     assign_p: dict[int, PlayerType],
@@ -141,19 +215,7 @@ async def run_exchange_phase(
         }
     )
 
-    while True:
-        raw_data = await websocket.receive_json()
-        if raw_data.get("type") != "EXCHANGE_CARDS":
-            continue
-
-        suits = raw_data.get("suits", []) if can_choose else []
-        cards = parse_suits_to_selection(suits)
-
-        if not isinstance(cards, list):
-            continue
-
-        cards_to_pass[human_id] = cards
-        break
+    cards_to_pass[human_id] = await wait_for_exchange_cards(websocket, can_choose)
 
     print(f"Cards to pass: {cards_to_pass}")
     env.exchange_log = {}
@@ -161,27 +223,17 @@ async def run_exchange_phase(
         high_role, low_role, count = pair
         env.exchange_cards(pair, cards_to_pass)
 
-        await websocket.send_json(
-            {
-                "type": "GAME_LOG",
-                "message": f"{high_role} and {low_role} have exchanged {count} card(s).",
-            }
+        await send_game_log(
+            websocket,
+            f"{high_role} and {low_role} have exchanged {count} card(s).",
         )
-        await websocket.send_json(
-            {
-                "type": "STATE_UPDATE",
-                "state": enrich_state(env._get_state(human_id), assign_p),
-            }
-        )
-        await asyncio.sleep(1.2)
+        await send_state_update(websocket, env, human_id, assign_p)
+        await asyncio.sleep(EXCHANGE_DELAY)
 
 
 async def run(
     env: Presidenten,
-    assigned_players: dict[
-        int,
-        PresidentenRandomBot | PresidentenBaselineBot | PresidentenDMCBot,
-    ],
+    assigned_players: dict[int, BotPlayer],
     assign_p: dict,
     websocket: WebSocket,
     human_id,
@@ -218,42 +270,18 @@ async def run(
                         chosen_move = parse_suits_to_move(parsed_array)
                         env.step(human_id, chosen_move, parsed_array)
 
-                        await websocket.send_json(
-                            {
-                                "type": "GAME_LOG",
-                                "message": "Succesful jump in!",
-                            }
-                        )
-                        await websocket.send_json(
-                            {
-                                "type": "STATE_UPDATE",
-                                "state": enrich_state(
-                                    env._get_state(human_id), assign_p
-                                ),
-                            }
-                        )
-                        await asyncio.sleep(1.5)
+                        await send_game_log(websocket, "Succesful jump in!")
+                        await send_state_update(websocket, env, human_id, assign_p)
+                        await asyncio.sleep(MESSAGE_DELAY)
 
                         if env.was_pile_reset:
                             env.clear_pile()
-                            await websocket.send_json(
-                                {
-                                    "type": "STATE_UPDATE",
-                                    "state": enrich_state(
-                                        env._get_state(human_id), assign_p
-                                    ),
-                                }
-                            )
+                            await send_state_update(websocket, env, human_id, assign_p)
                         if env.game_over:
                             break
                         return
                 except asyncio.TimeoutError:
-                    await websocket.send_json(
-                        {
-                            "type": "GAME_LOG",
-                            "message": "Too slow!",
-                        }
-                    )
+                    await send_game_log(websocket, "Too slow!")
                     if env.pending_finish:
                         if (
                             curr_id
@@ -267,49 +295,30 @@ async def run(
                         curr_id = env.pending_finish["resume_turn"]
                         env.pending_finish["resume_played"] = True
             else:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(BOT_THINK_DELAY)
 
                 bot = assigned_players[curr_id]
                 chosen_move = await asyncio.to_thread(bot.get_move, state, env)
                 env.step(curr_id, chosen_move)
                 if chosen_move != (0, 0, 0):
-                    await websocket.send_json(
-                        {
-                            "type": "GAME_LOG",
-                            "message": f"Player {curr_id} ({env.roles[curr_id]}): jumped in with {Presidenten.visualize_move(chosen_move)}!",
-                        }
+                    await send_game_log(
+                        websocket,
+                        f"Player {curr_id} ({env.roles[curr_id]}): jumped in with {Presidenten.visualize_move(chosen_move)}!",
                     )
-                    await websocket.send_json(
-                        {
-                            "type": "STATE_UPDATE",
-                            "state": enrich_state(env._get_state(human_id), assign_p),
-                        }
-                    )
-                    await asyncio.sleep(1.5)
+                    await send_state_update(websocket, env, human_id, assign_p)
+                    await asyncio.sleep(MESSAGE_DELAY)
 
                     if env.was_pile_reset:
                         env.clear_pile()
-                        await websocket.send_json(
-                            {
-                                "type": "STATE_UPDATE",
-                                "state": enrich_state(
-                                    env._get_state(human_id), assign_p
-                                ),
-                            }
-                        )
+                        await send_state_update(websocket, env, human_id, assign_p)
                 elif human_waiting:
                     return True
                 elif not env.pending_finish:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(PASS_DELAY)
                 if env.was_pile_reset:
                     env.clear_pile()
-                    await websocket.send_json(
-                        {
-                            "type": "STATE_UPDATE",
-                            "state": enrich_state(env._get_state(human_id), assign_p),
-                        }
-                    )
-                    await asyncio.sleep(1.5)
+                    await send_state_update(websocket, env, human_id, assign_p)
+                    await asyncio.sleep(MESSAGE_DELAY)
                 continue
 
         if assign_p[curr_id] == PlayerType.HUMAN:
@@ -335,11 +344,9 @@ async def run(
             and env.pending_finish
             and env.pending_finish["queue"][0][2] == human_id
         ):
-            await websocket.send_json(
-                {
-                    "type": "GAME_LOG",
-                    "message": f"Player {curr_id} ({env.roles[curr_id]}) played before you could jump in!",
-                }
+            await send_game_log(
+                websocket,
+                f"Player {curr_id} ({env.roles[curr_id]}) played before you could jump in!",
             )
             env.step(human_id, (0, 0, 0))
 
@@ -350,37 +357,25 @@ async def run(
                     continue
         env.step(curr_id, chosen_move)
 
-        await websocket.send_json(
-            {
-                "type": "GAME_LOG",
-                "message": f"Player {curr_id} ({env.roles[curr_id]}): {Presidenten.visualize_move(chosen_move)}",
-            }
+        await send_game_log(
+            websocket,
+            f"Player {curr_id} ({env.roles[curr_id]}): {Presidenten.visualize_move(chosen_move)}",
         )
-        await websocket.send_json(
-            {
-                "type": "STATE_UPDATE",
-                "state": enrich_state(env._get_state(human_id), assign_p),
-            }
-        )
+        await send_state_update(websocket, env, human_id, assign_p)
 
         if env.was_pile_reset and not env.game_over:
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(MESSAGE_DELAY)
 
             env.clear_pile()
-            await websocket.send_json(
-                {
-                    "type": "STATE_UPDATE",
-                    "state": enrich_state(env._get_state(human_id), assign_p),
-                }
-            )
-            await asyncio.sleep(1.5)
+            await send_state_update(websocket, env, human_id, assign_p)
+            await asyncio.sleep(MESSAGE_DELAY)
 
             if env.curr_turn == human_id:
                 return
         elif not env.pending_finish and not env.game_over:
             if env.curr_turn == human_id:
                 return
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(MESSAGE_DELAY)
 
     last_active_player = list(env.playing)[0] if env.playing else None
     if last_active_player is None:
@@ -390,12 +385,12 @@ async def run(
                 break
 
     if last_active_player is not None:
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(MESSAGE_DELAY)
         if last_active_player != human_id:
             await websocket.send_json(
                 {"type": "REVEAL_BOT", "seat": last_active_player}
             )
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(REVEAL_DELAY)
 
     env.assign_roles()
     await websocket.send_json(
@@ -429,33 +424,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 assign_p = {p_id: PlayerType(t) for p_id, t in enumerate(player_config)}
                 env = Presidenten(num_players)
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-                for p_id, p_type in assign_p.items():
-                    if p_type == PlayerType.HUMAN:
-                        human_id = p_id
-                    elif p_type == PlayerType.RANDOM:
-                        assigned_players[p_id] = PresidentenRandomBot(p_id)
-                    elif p_type == PlayerType.BASELINE:
-                        assigned_players[p_id] = PresidentenBaselineBot(p_id)
-                    elif p_type == PlayerType.DMC:
-                        dmc_model = PresidentenValueNet().to(device)
-                        base_dir = os.path.dirname(os.path.abspath(__file__))
-                        model_path = os.path.join(
-                            base_dir, "playerTypes", "best_model_27500.pt"
-                        )
-
-                        try:
-                            load_path = torch.load(model_path, map_location=device)
-                            dmc_model.load_state_dict(load_path["model_state_dict"])
-                        except Exception as e:
-                            print(
-                                f"Warning: Could not load weights from {model_path}. Reason: {e}. Using untrained model instead."
-                            )
-
-                        dmc_model.eval()
-                        assigned_players[p_id] = PresidentenDMCBot(
-                            p_id, dmc_model, device
-                        )
+                assigned_players, human_id = build_assigned_players(assign_p, device)
 
                 env.full_reset(next_round=False)
                 await websocket.send_json(
@@ -464,13 +433,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         "message": "Game lobby created. Dealing hands...",
                     }
                 )
-                await websocket.send_json(
-                    {
-                        "type": "STATE_UPDATE",
-                        "state": enrich_state(env._get_state(human_id), assign_p),
-                    }
-                )
-                await asyncio.sleep(1.5)
+                await send_state_update(websocket, env, human_id, assign_p)
+                await asyncio.sleep(MESSAGE_DELAY)
                 await run(
                     env,
                     assigned_players,
@@ -519,31 +483,19 @@ async def websocket_endpoint(websocket: WebSocket):
                 chosen_move = parse_suits_to_move(suits_array)
                 env.step(human_id, chosen_move, suits_array)
 
-                await websocket.send_json(
-                    {
-                        "type": "GAME_LOG",
-                        "message": f"({env.roles[human_id]}) You played: {Presidenten.visualize_move(chosen_move)}",
-                    }
+                await send_game_log(
+                    websocket,
+                    f"({env.roles[human_id]}) You played: {Presidenten.visualize_move(chosen_move)}",
                 )
-                await websocket.send_json(
-                    {
-                        "type": "STATE_UPDATE",
-                        "state": enrich_state(env._get_state(human_id), assign_p),
-                    }
-                )
+                await send_state_update(websocket, env, human_id, assign_p)
 
                 if env.was_pile_reset and not env.pending_finish and not env.game_over:
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(MESSAGE_DELAY)
 
                     env.clear_pile()
-                    await websocket.send_json(
-                        {
-                            "type": "STATE_UPDATE",
-                            "state": enrich_state(env._get_state(human_id), assign_p),
-                        }
-                    )
+                    await send_state_update(websocket, env, human_id, assign_p)
                 else:
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(MESSAGE_DELAY)
                 await run(
                     env,
                     assigned_players,
@@ -567,13 +519,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         human_id,
                         assign_p,
                     )
-                    await websocket.send_json(
-                        {
-                            "type": "STATE_UPDATE",
-                            "state": enrich_state(env._get_state(human_id), assign_p),
-                        }
-                    )
-                    await asyncio.sleep(1.5)
+                    await send_state_update(websocket, env, human_id, assign_p)
+                    await asyncio.sleep(MESSAGE_DELAY)
                     await run(
                         env,
                         assigned_players,
