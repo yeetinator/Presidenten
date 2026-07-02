@@ -31,10 +31,9 @@
   $: jumpInVisible = !!$jumpInPrompt && !!$gameState?.is_finish_prompt;
   $: jumpInAutoMove =
     jumpInVisible && $gameState ? gameStore.getAutoFinishMove() : null;
-  $: jumpInTargetValue = jumpInAutoMove?.[0] ? jumpInAutoMove[0] : null;
   $: selectedMoveValues = $selectedCards.map(stripSuitCard);
   $: isSelectionLegal = (() => {
-    if (!$gameState?.legal_moves_suits || !!$exchangePrompt) return false;
+    if (!$gameState?.legal_moves_suits || $exchangePrompt) return false;
     const sortedSelection = [...selectedMoveValues].sort();
     return $gameState.legal_moves_suits.some((legalMove) =>
       arraysEqual([...legalMove].sort(), sortedSelection),
@@ -135,7 +134,7 @@
   let lastExchangeActive = false;
   $: if (!!$exchangePrompt !== lastExchangeActive) {
     lastExchangeActive = !!$exchangePrompt;
-    if (!!$exchangePrompt) {
+    if ($exchangePrompt) {
       if (exchangeCanChoose) gameStore.clearSelectedCards();
       else if (exchangeRequiredCards > 0 && $gameState)
         gameStore.selectedCards.set(
@@ -238,9 +237,9 @@
     }
   }
 
-  async function handleJumpIn() {
+  async function handleJumpIn(finishMove: string[]) {
     try {
-      await gameStore.playJumpInPrompt();
+      await gameStore.playJumpInPrompt(finishMove);
     } catch (error) {
       console.error(error);
     }
@@ -284,20 +283,15 @@
   }
 
   function handleToggleCard(suitCard: string) {
-    if (!!$exchangePrompt && !exchangeCanChoose && exchangeRequiredCards > 0)
+    if ($exchangePrompt && !exchangeCanChoose && exchangeRequiredCards > 0)
       return;
     if (!$exchangePrompt && !isMyTurn) return;
 
     const clickedCardValue = stripSuitCard(suitCard);
-    const finishMove = gameStore.getAutoFinishMove();
+    const finishMove = gameStore.getAutoFinishMove(clickedCardValue);
 
-    if (
-      jumpInVisible &&
-      finishMove &&
-      clickedCardValue !== null &&
-      clickedCardValue === finishMove[0]
-    ) {
-      handleJumpIn();
+    if (jumpInVisible && finishMove && clickedCardValue !== null) {
+      handleJumpIn(finishMove);
       return;
     }
 
@@ -455,8 +449,12 @@
                     {suitCard}
                     isFaceUp={true}
                     isSelected={$selectedCards.includes(suitCard)}
-                    isBlinking={jumpInVisible &&
-                      jumpInTargetValue === stripSuitCard(suitCard)}
+                    isBlinking={!!(
+                      jumpInVisible &&
+                      jumpInAutoMove?.some((arr) =>
+                        arr.includes(stripSuitCard(suitCard)),
+                      )
+                    )}
                     disabled={haveIPassed ||
                       (!$exchangePrompt && !isMyTurn) ||
                       (!!$exchangePrompt &&
@@ -473,7 +471,7 @@
           >
             <div class="text-xs text-green-50/75">{selectedMoveLabel}</div>
             <div class="flex gap-2">
-              {#if !!$exchangePrompt}
+              {#if $exchangePrompt}
                 <button
                   class={`rounded-lg px-4 py-1.5 font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 text-xs ${
                     $selectedCards.length === exchangeRequiredCards

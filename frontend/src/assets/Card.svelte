@@ -18,7 +18,7 @@
     isSelected
       ? "-translate-y-6 scale-105 shadow-xl ring-4 ring-emerald-400"
       : "hover:-translate-y-2 hover:shadow-lg"
-  } border border-slate-200 ${isBlinking ? "animate-jump-ready" : ""}`}
+  } border border-slate-200 ${isBlinking && !disabled ? "animate-jump-ready" : ""}`}
   {disabled}
   on:click={onClick}
 >

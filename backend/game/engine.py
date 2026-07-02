@@ -274,7 +274,7 @@ class Presidenten:
 
         return self._get_state(self.curr_turn)
 
-    def _get_state(self, p_id, *, reset_view=False):
+    def _get_state(self, p_id, *, reset_view=False, only_finish=True):
         last_move = (0, 0, 0) if reset_view else self.last_move
         suit_last_move = [] if reset_view else self.suit_last_move
         cards_in_pile = [] if reset_view else self.pile
@@ -295,7 +295,7 @@ class Presidenten:
             "opp_suited_hands": {
                 p: self.suited_hands[p].copy() for p in range(self.players) if p != p_id
             },
-            "legal_moves": self.get_legal_moves(p_id, last_move=last_move),
+            "legal_moves": self.get_legal_moves(p_id, last_move, only_finish),
             "my_role": self.roles[p_id],
             "last_move": last_move,
             "suit_last_move": suit_last_move.copy(),
@@ -322,18 +322,22 @@ class Presidenten:
             "pile_leader": pile_leader,
         }
 
-    def get_legal_moves(self, p_id, last_move=None):
-        if self.pending_finish:
-            finish_card, finish_count, finish_player = self.pending_finish["queue"][0]
-            if p_id == finish_player:
-                return [(0, 0, 0), (finish_card, finish_count, 0)]
-            return []
+    def get_legal_moves(self, p_id, last_move=None, only_finish=True):
+        finish_moves = [(0, 0, 0)]
+        if self.pending_finish and self.pending_finish["queue"][0][2] == p_id:
+            for finish_card, finish_count, finish_player in self.pending_finish[
+                "queue"
+            ]:
+                if p_id == finish_player:
+                    finish_moves.append((finish_card, finish_count, 0))
+            if only_finish:
+                return finish_moves
 
         hand = self.hands[p_id]
         current_last_move = self.last_move if last_move is None else last_move
 
         # Can't pass on an empty pile
-        legal_moves = [(0, 0, 0)] if current_last_move[0] != 0 else []
+        legal_moves = finish_moves if current_last_move[0] != 0 else []
         counts = Counter(hand)
         num_twos = counts[15]
         pile_card, pile_count, _ = current_last_move
@@ -451,6 +455,7 @@ class Presidenten:
             "queue": options,
             "resume_turn": temp_next_turn,
             "pile_reset": pile_reset,
+            "resume_played": False,
         }
         self.curr_turn = options[0][2]
 

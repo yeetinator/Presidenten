@@ -21,7 +21,11 @@ app.add_middleware(
 def _parse_helper(suits):
     char_to_value = {"T": 10, "J": 11, "Q": 12, "K": 13, "A": 14, "2": 15}
     return [
-        char_to_value[r] if (r := suit[:-1]) in char_to_value else int(r)
+        (
+            char_to_value[r]
+            if (r := suit if len(suit) == 1 else suit[:-1]) in char_to_value
+            else int(r)
+        )
         for suit in suits
     ]
 
@@ -181,6 +185,7 @@ async def run(
     assign_p: dict,
     websocket: WebSocket,
     human_id,
+    human_waiting=False,
 ):
     while not env.game_over:
         curr_id = env.curr_turn
@@ -196,7 +201,7 @@ async def run(
                 await websocket.send_json(
                     {
                         "type": "JUMP_IN_PROMPT",
-                        "state": enrich_state(state, assign_p),
+                        "state": enrich_state(env._get_state(human_id), assign_p),
                         "message": "JUMP IN!",
                     }
                 )
@@ -205,7 +210,9 @@ async def run(
                     raw_data = await asyncio.wait_for(
                         websocket.receive_json(), timeout=JUMP_IN_WINDOW
                     )
-                    if raw_data.get("type") == "PLAY_MOVE":
+                    if raw_data.get("type") == "PLAY_MOVE" and raw_data.get(
+                        "jump", True
+                    ):
                         suits_array = raw_data.get("suits", [])
                         parsed_array = get_finish_suits(suits_array, state)
                         chosen_move = parse_suits_to_move(parsed_array)
@@ -248,35 +255,28 @@ async def run(
                         }
                     )
                     if env.pending_finish:
-                        if curr_id == (env.pending_finish["resume_turn"] + 1) % len(
-                            assigned_players
+                        if (
+                            curr_id
+                            == env._get_next_active_player(
+                                env.pending_finish["resume_turn"]
+                            )
+                            and env.pending_finish["resume_played"]
                         ):
                             env.pending_finish["resume_turn"] = curr_id
-                        curr_id = env.pending_finish["resume_turn"]
-                        if env.pending_finish["pile_reset"]:
-                            await asyncio.sleep(1.5)
 
-                            env.clear_pile()
-                            await websocket.send_json(
-                                {
-                                    "type": "STATE_UPDATE",
-                                    "state": enrich_state(
-                                        env._get_state(human_id), assign_p
-                                    ),
-                                }
-                            )
+                        curr_id = env.pending_finish["resume_turn"]
+                        env.pending_finish["resume_played"] = True
             else:
                 await asyncio.sleep(0.5)
 
                 bot = assigned_players[curr_id]
                 chosen_move = await asyncio.to_thread(bot.get_move, state, env)
-                print(f"Bot {curr_id} chose move: {chosen_move}")
                 env.step(curr_id, chosen_move)
                 if chosen_move != (0, 0, 0):
                     await websocket.send_json(
                         {
                             "type": "GAME_LOG",
-                            "message": f"Bot {curr_id} jumped in!",
+                            "message": f"Player {curr_id} ({env.roles[curr_id]}): jumped in with {Presidenten.visualize_move(chosen_move)}!",
                         }
                     )
                     await websocket.send_json(
@@ -297,7 +297,10 @@ async def run(
                                 ),
                             }
                         )
-                await asyncio.sleep(1)
+                elif human_waiting:
+                    return True
+                elif not env.pending_finish:
+                    await asyncio.sleep(1)
                 if env.was_pile_reset:
                     env.clear_pile()
                     await websocket.send_json(
@@ -310,18 +313,41 @@ async def run(
                 continue
 
         if assign_p[curr_id] == PlayerType.HUMAN:
+            pending_bool = False if env.pending_finish else True
             await websocket.send_json(
                 {
                     "type": "STATE_UPDATE",
-                    "state": enrich_state(state, assign_p),
-                    "clearJump": False if env.pending_finish else True,
+                    "state": enrich_state(
+                        env._get_state(human_id, only_finish=pending_bool), assign_p
+                    ),
+                    "clearJump": pending_bool,
                 }
             )
             return
 
         bot = assigned_players[curr_id]
-        chosen_move = await asyncio.to_thread(bot.get_move, state, env)
-        print(f"Bot {curr_id} chose move: {chosen_move}")
+        chosen_move = await asyncio.to_thread(
+            bot.get_move, env._get_state(curr_id), env
+        )
+
+        if (
+            chosen_move != (0, 0, 0)
+            and env.pending_finish
+            and env.pending_finish["queue"][0][2] == human_id
+        ):
+            await websocket.send_json(
+                {
+                    "type": "GAME_LOG",
+                    "message": f"Player {curr_id} ({env.roles[curr_id]}) played before you could jump in!",
+                }
+            )
+            env.step(human_id, (0, 0, 0))
+
+            if env.pending_finish:
+                if env.pending_finish["queue"][0][2] == human_id:
+                    env.step(human_id, (0, 0, 0))
+                else:
+                    continue
         env.step(curr_id, chosen_move)
 
         await websocket.send_json(
@@ -337,7 +363,7 @@ async def run(
             }
         )
 
-        if env.was_pile_reset and not env.pending_finish and not env.game_over:
+        if env.was_pile_reset and not env.game_over:
             await asyncio.sleep(1.5)
 
             env.clear_pile()
@@ -456,7 +482,40 @@ async def websocket_endpoint(websocket: WebSocket):
                 if env is None or env.game_over:
                     continue
 
+                is_turn = env.curr_turn == human_id or (
+                    env.pending_finish and env.pending_finish["queue"][0][2] == human_id
+                )
+                if not is_turn:
+                    continue
+
+                if (
+                    "jump" not in data
+                    and env.pending_finish
+                    and env.pending_finish["queue"][0][2] == human_id
+                ):
+                    env.step(human_id, (0, 0, 0))
+
+                    if env.pending_finish:
+                        if env.pending_finish["queue"][0][2] == human_id:
+                            env.step(human_id, (0, 0, 0))
+                        else:
+                            bot_passed = await run(
+                                env,
+                                assigned_players,
+                                assign_p,
+                                websocket,
+                                human_id,
+                                True,
+                            )
+                            if not bot_passed:
+                                continue
+
                 suits_array = data.get("suits", [])
+                if data.get("jump"):
+                    suits_array = get_finish_suits(
+                        suits_array, env._get_state(human_id)
+                    )
+
                 chosen_move = parse_suits_to_move(suits_array)
                 env.step(human_id, chosen_move, suits_array)
 

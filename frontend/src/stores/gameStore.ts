@@ -76,9 +76,9 @@ type IncomingWebSocketMessage =
   | ExchangePromptMessage
   | RoundOverMessage
   | {
-      type: string;
-      [key: string]: unknown;
-    };
+    type: string;
+    [key: string]: unknown;
+  };
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -174,10 +174,55 @@ function clearAll() {
   clearJumpInPrompt();
 }
 
-function getAutoFinishMove() {
+function buildAutoFinishMoves(suitLastMove: string[]) {
+  const groupedMoves: string[][] = [];
+
+  for (const suit of suitLastMove) {
+    const cardValue = stripSuitCard(suit);
+    const lastGroup = groupedMoves[groupedMoves.length - 1];
+    if (lastGroup && lastGroup[0] === cardValue) lastGroup.push(cardValue);
+    else groupedMoves.push([cardValue]);
+  }
+
+  return groupedMoves
+    .map((group) => {
+      const remainingCards = 4 - group.length;
+      if (remainingCards <= 0) return null;
+      return Array.from({ length: remainingCards }, () => group[0]);
+    })
+    .filter((move): move is string[] => Array.isArray(move));
+}
+
+function isSameMove(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function getAutoFinishMove(): string[][] | null;
+function getAutoFinishMove(clickedCardValue: string): string[] | null;
+function getAutoFinishMove(clickedCardValue: string | null = null) {
   const currState = get(state);
-  if (!currState?.legal_moves_suits) return null;
-  return currState.legal_moves_suits[0] ?? null;
+  if (!currState?.legal_moves_suits?.length || !currState.suit_last_move?.length)
+    return null;
+
+  const candidateMoves = buildAutoFinishMoves(currState.suit_last_move);
+  const legalMoves = candidateMoves.filter((candidateMove) =>
+    currState.legal_moves_suits.some((legalMove) =>
+      isSameMove(legalMove, candidateMove),
+    ),
+  );
+
+  if (legalMoves.length === 0) return null;
+
+  if (clickedCardValue !== null) {
+    return legalMoves.find((move) => move.includes(clickedCardValue)) ?? null;
+  }
+
+  return legalMoves;
+}
+
+function stripSuitCard(suitCard: string) {
+  return suitCard.slice(0, -1).toUpperCase();
 }
 
 function getHighestSuitCards(suitedHand: string[], count: number) {
@@ -360,13 +405,12 @@ async function playSelectedCards() {
   clearSelectedCards();
 }
 
-async function playJumpInPrompt() {
-  const move = getAutoFinishMove();
-  if (!move) throw new Error("No finishing move is available.");
+async function playJumpInPrompt(finishMove: string[]) {
+  if (!finishMove) throw new Error("No finishing move is available.");
 
   clearJumpInPrompt();
   clearSelectedCards();
-  await send({ type: "PLAY_MOVE", suits: move });
+  await send({ type: "PLAY_MOVE", suits: finishMove, jump: true });
 }
 
 async function passTurn() {
