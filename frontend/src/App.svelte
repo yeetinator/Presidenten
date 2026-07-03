@@ -11,6 +11,7 @@
     roundSummary,
     revealedBotSeat,
     selectedCards,
+    enableCards,
     state as gameState,
   } from "./stores/gameStore";
   import { send, receive } from "./lib/transitions";
@@ -33,7 +34,13 @@
     jumpInVisible && $gameState ? gameStore.getAutoFinishMove() : null;
   $: selectedMoveValues = $selectedCards.map(stripSuitCard);
   $: isSelectionLegal = (() => {
-    if (!$gameState?.legal_moves_suits || $exchangePrompt) return false;
+    if (
+      !$gameState?.legal_moves_suits ||
+      $exchangePrompt ||
+      !$selectedCards.length ||
+      $selectedCards.length === 0
+    )
+      return false;
     const sortedSelection = [...selectedMoveValues].sort();
     return $gameState.legal_moves_suits.some((legalMove) =>
       arraysEqual([...legalMove].sort(), sortedSelection),
@@ -223,6 +230,8 @@
 
   async function handlePlay() {
     try {
+      console.log("Playing selected cards:", $selectedCards);
+      $enableCards = false;
       await gameStore.playSelectedCards();
     } catch (error) {
       console.error(error);
@@ -231,6 +240,7 @@
 
   async function handlePass() {
     try {
+      $enableCards = false;
       await gameStore.passTurn();
     } catch (error) {
       console.error(error);
@@ -239,6 +249,7 @@
 
   async function handleJumpIn(finishMove: string[]) {
     try {
+      $enableCards = false;
       await gameStore.playJumpInPrompt(finishMove);
     } catch (error) {
       console.error(error);
@@ -260,9 +271,18 @@
     if (suitCards.length !== exchangeRequiredCards) return;
 
     try {
+      $enableCards = false;
       await gameStore.sendExchangeCards(suitCards);
       gameStore.clearSelectedCards();
       gameStore.clearExchangePrompt();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  async function handleFastForward() {
+    try {
+      await gameStore.fastForwardGame();
     } catch (error) {
       console.error(error);
     }
@@ -323,6 +343,16 @@
     >
       QUIT
     </button>
+    {#if suitedHand.length === 0 && opponentViews.some((o) => o.suitedHand.length !== 0) && !$exchangePrompt && !$roundSummary && !showFinalResults}
+      <button
+        class="fixed right-21 top-4 z-30 rounded-md border border-blue-300/30 bg-blue-500 px-3 py-1 text-[0.65rem]
+        font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-blue-400 active:scale-[0.98]"
+        type="button"
+        on:click={handleFastForward}
+      >
+        FAST FORWARD
+      </button>
+    {/if}
     <section
       class="mx-auto grid h-full max-h-full grid-rows-[1fr_auto] gap-2 max-w-screen-2xl"
     >
@@ -458,7 +488,8 @@
                     disabled={haveIPassed ||
                       (!$exchangePrompt && !isMyTurn) ||
                       (!!$exchangePrompt &&
-                        (!exchangeCanChoose || exchangeRequiredCards === 0))}
+                        (!exchangeCanChoose || exchangeRequiredCards === 0)) ||
+                      !$enableCards}
                     className="shrink-0 scale-[0.75] md:scale-[0.8] pointer-events-auto"
                     onClick={() => handleToggleCard(suitCard)}
                   />

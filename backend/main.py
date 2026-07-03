@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import torch
@@ -33,6 +34,43 @@ PLAYER_TYPE_LABELS = {
     PlayerType.BASELINE: "Baseline",
     PlayerType.DMC: "DMC",
 }
+
+DISCONNECT_MESSAGE_TYPE = "__DISCONNECT__"
+
+
+@dataclass
+class GameTimings:
+    message_delay: float = MESSAGE_DELAY
+    exchange_delay: float = EXCHANGE_DELAY
+    bot_think_delay: float = BOT_THINK_DELAY
+    jump_in_window: float = JUMP_IN_WINDOW
+    reveal_delay: float = REVEAL_DELAY
+    pass_delay: float = PASS_DELAY
+
+    def set_fast_forward(self):
+        self.message_delay = 0.75
+        self.bot_think_delay = 0.25
+        self.pass_delay = 0.5
+
+    def reset(self):
+        self.message_delay = MESSAGE_DELAY
+        self.exchange_delay = EXCHANGE_DELAY
+        self.bot_think_delay = BOT_THINK_DELAY
+        self.jump_in_window = JUMP_IN_WINDOW
+        self.reveal_delay = REVEAL_DELAY
+        self.pass_delay = PASS_DELAY
+
+
+@dataclass
+class GameSession:
+    env: Presidenten | None = None
+    assigned_players: dict[int, BotPlayer] = field(default_factory=dict)
+    assign_p: dict[int, PlayerType] = field(default_factory=dict)
+    human_id: int = 0
+    timings: GameTimings = field(default_factory=GameTimings)
+    ready_event: asyncio.Event = field(default_factory=asyncio.Event)
+    next_round_event: asyncio.Event = field(default_factory=asyncio.Event)
+    game_over_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 def _parse_helper(suits):
@@ -141,6 +179,117 @@ async def send_state_update(
     await websocket.send_json(payload)
 
 
+async def websocket_router(
+    websocket: WebSocket,
+    play_queue: asyncio.Queue,
+    control_queue: asyncio.Queue,
+    disconnect_event: asyncio.Event,
+):
+    try:
+        while True:
+            message = await websocket.receive_json()
+            message_type = message.get("type")
+
+            if message_type in {"PLAY_MOVE", "EXCHANGE_CARDS"}:
+                await play_queue.put(message)
+            else:
+                await control_queue.put(message)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        disconnect_event.set()
+        sentinel = {"type": DISCONNECT_MESSAGE_TYPE}
+        await play_queue.put(sentinel)
+        await control_queue.put(sentinel)
+
+
+async def next_queued_message(
+    input_queue: asyncio.Queue,
+    pending_messages: list[dict],
+    disconnect_event: asyncio.Event,
+    *,
+    allowed_types: set[str] | None = None,
+    timeout: float | None = None,
+):
+    if disconnect_event.is_set():
+        raise WebSocketDisconnect
+
+    if allowed_types is not None:
+        for idx, pending_message in enumerate(pending_messages):
+            if pending_message.get("type") in allowed_types:
+                return pending_messages.pop(idx)
+
+    while True:
+        if disconnect_event.is_set():
+            raise WebSocketDisconnect
+
+        if timeout is None:
+            raw_data = await input_queue.get()
+        else:
+            raw_data = await asyncio.wait_for(input_queue.get(), timeout=timeout)
+
+        if raw_data.get("type") == DISCONNECT_MESSAGE_TYPE:
+            raise WebSocketDisconnect
+
+        if allowed_types is None or raw_data.get("type") in allowed_types:
+            return raw_data
+
+        pending_messages.append(raw_data)
+
+
+def apply_fast_forward(timings: GameTimings):
+    timings.set_fast_forward()
+
+
+async def control_listener(
+    control_queue: asyncio.Queue,
+    session: GameSession,
+    disconnect_event: asyncio.Event,
+):
+    while not disconnect_event.is_set():
+        try:
+            control_message = await next_queued_message(
+                control_queue,
+                [],
+                disconnect_event,
+                allowed_types={"START_GAME", "NEXT_ROUND", "FAST_FORWARD"},
+            )
+        except WebSocketDisconnect:
+            return
+
+        message_type = control_message.get("type")
+
+        if message_type == "FAST_FORWARD":
+            apply_fast_forward(session.timings)
+            continue
+
+        if message_type == "START_GAME":
+            num_players = control_message.get("num_players", 4)
+            player_config = control_message.get("player_types") or []
+            session.assign_p = {
+                p_id: PlayerType(player_type)
+                for p_id, player_type in enumerate(player_config)
+            }
+            session.env = Presidenten(num_players)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            session.assigned_players, session.human_id = build_assigned_players(
+                session.assign_p, device
+            )
+            session.env.full_reset(next_round=False)
+            session.ready_event.set()
+            continue
+
+        if message_type == "NEXT_ROUND":
+            session.next_round_event.set()
+
+
+async def wait_for_event(event: asyncio.Event, disconnect_event: asyncio.Event):
+    while not event.is_set():
+        if disconnect_event.is_set():
+            raise WebSocketDisconnect
+        await asyncio.sleep(0.05)
+
+
 def build_assigned_players(
     assign_p: dict[int, PlayerType], device: torch.device
 ) -> tuple[dict[int, BotPlayer], int]:
@@ -173,17 +322,22 @@ def build_assigned_players(
     return assigned_players, human_id
 
 
-async def wait_for_exchange_cards(websocket: WebSocket, can_choose: bool):
+async def wait_for_exchange_cards(
+    input_queue: asyncio.Queue,
+    pending_messages: list[dict],
+    disconnect_event: asyncio.Event,
+    can_choose: bool,
+):
     while True:
-        raw_data = await websocket.receive_json()
-        if raw_data.get("type") != "EXCHANGE_CARDS":
-            continue
+        raw_data = await next_queued_message(
+            input_queue,
+            pending_messages,
+            disconnect_event,
+            allowed_types={"EXCHANGE_CARDS"},
+        )
 
         suits = raw_data.get("suits", []) if can_choose else []
-        cards = parse_suits_to_selection(suits)
-
-        if isinstance(cards, list):
-            return cards
+        return parse_suits_to_selection(suits)
 
 
 async def run_exchange_phase(
@@ -192,6 +346,10 @@ async def run_exchange_phase(
     websocket: WebSocket,
     human_id: int,
     assign_p: dict[int, PlayerType],
+    input_queue: asyncio.Queue,
+    pending_messages: list[dict],
+    disconnect_event: asyncio.Event,
+    timings: GameTimings,
 ):
     cards_to_pass: dict[int | str, list[int]] = {}
     human_role = env.roles[human_id]
@@ -212,10 +370,16 @@ async def run_exchange_phase(
             "state": enrich_state(env._get_state(human_id), assign_p),
             "required_cards": required_cards,
             "can_choose": can_choose,
+            "enableCards": True,
         }
     )
 
-    cards_to_pass[human_id] = await wait_for_exchange_cards(websocket, can_choose)
+    cards_to_pass[human_id] = await wait_for_exchange_cards(
+        input_queue,
+        pending_messages,
+        disconnect_event,
+        can_choose,
+    )
 
     print(f"Cards to pass: {cards_to_pass}")
     env.exchange_log = {}
@@ -228,7 +392,7 @@ async def run_exchange_phase(
             f"{high_role} and {low_role} have exchanged {count} card(s).",
         )
         await send_state_update(websocket, env, human_id, assign_p)
-        await asyncio.sleep(EXCHANGE_DELAY)
+        await asyncio.sleep(timings.exchange_delay)
 
 
 async def run(
@@ -237,7 +401,10 @@ async def run(
     assign_p: dict,
     websocket: WebSocket,
     human_id,
-    human_waiting=False,
+    input_queue: asyncio.Queue,
+    pending_messages: list[dict],
+    disconnect_event: asyncio.Event,
+    timings: GameTimings,
 ):
     while not env.game_over:
         curr_id = env.curr_turn
@@ -249,18 +416,22 @@ async def run(
             if curr_id == human_id or (
                 env.pending_finish and env.pending_finish["queue"][0][2] == human_id
             ):
-                JUMP_IN_WINDOW = 1.5
                 await websocket.send_json(
                     {
                         "type": "JUMP_IN_PROMPT",
                         "state": enrich_state(env._get_state(human_id), assign_p),
                         "message": "JUMP IN!",
+                        "enableCards": True,
                     }
                 )
 
                 try:
-                    raw_data = await asyncio.wait_for(
-                        websocket.receive_json(), timeout=JUMP_IN_WINDOW
+                    raw_data = await next_queued_message(
+                        input_queue,
+                        pending_messages,
+                        disconnect_event,
+                        allowed_types={"PLAY_MOVE"},
+                        timeout=timings.jump_in_window,
                     )
                     if raw_data.get("type") == "PLAY_MOVE" and raw_data.get(
                         "jump", True
@@ -276,10 +447,13 @@ async def run(
 
                         if env.was_pile_reset:
                             env.clear_pile()
-                            await send_state_update(websocket, env, human_id, assign_p)
+                            if env.curr_turn != human_id:
+                                await send_state_update(
+                                    websocket, env, human_id, assign_p
+                                )
                         if env.game_over:
                             break
-                        return
+                        continue
                 except asyncio.TimeoutError:
                     await send_game_log(websocket, "Too slow!")
                     if env.pending_finish:
@@ -295,7 +469,7 @@ async def run(
                         curr_id = env.pending_finish["resume_turn"]
                         env.pending_finish["resume_played"] = True
             else:
-                await asyncio.sleep(BOT_THINK_DELAY)
+                await asyncio.sleep(timings.bot_think_delay)
 
                 bot = assigned_players[curr_id]
                 chosen_move = await asyncio.to_thread(bot.get_move, state, env)
@@ -306,19 +480,17 @@ async def run(
                         f"Player {curr_id} ({env.roles[curr_id]}): jumped in with {Presidenten.visualize_move(chosen_move)}!",
                     )
                     await send_state_update(websocket, env, human_id, assign_p)
-                    await asyncio.sleep(MESSAGE_DELAY)
+                    await asyncio.sleep(timings.message_delay)
 
                     if env.was_pile_reset:
                         env.clear_pile()
                         await send_state_update(websocket, env, human_id, assign_p)
-                elif human_waiting:
-                    return True
                 elif not env.pending_finish:
-                    await asyncio.sleep(PASS_DELAY)
+                    await asyncio.sleep(timings.pass_delay)
                 if env.was_pile_reset:
                     env.clear_pile()
                     await send_state_update(websocket, env, human_id, assign_p)
-                    await asyncio.sleep(MESSAGE_DELAY)
+                    await asyncio.sleep(timings.message_delay)
                 continue
 
         if assign_p[curr_id] == PlayerType.HUMAN:
@@ -330,9 +502,55 @@ async def run(
                         env._get_state(human_id, only_finish=pending_bool), assign_p
                     ),
                     "clearJump": pending_bool,
+                    "enableCards": True,
                 }
             )
-            return
+            raw_data = await next_queued_message(
+                input_queue,
+                pending_messages,
+                disconnect_event,
+                allowed_types={"PLAY_MOVE"},
+            )
+
+            suits_array = raw_data.get("suits", [])
+            if raw_data.get("jump"):
+                suits_array = get_finish_suits(suits_array, env._get_state(human_id))
+            elif env.pending_finish and env.pending_finish["queue"][0][2] == human_id:
+                env.step(human_id, (0, 0, 0))
+                if env.pending_finish:
+                    if env.pending_finish["queue"][0][2] == human_id:
+                        env.step(human_id, (0, 0, 0))
+                    else:
+                        bot_move = await asyncio.to_thread(
+                            assigned_players[
+                                env.pending_finish["queue"][0][2]
+                            ].get_move,
+                            env._get_state(env.pending_finish["queue"][0][2]),
+                            env,
+                        )
+                        if bot_move != (0, 0, 0):
+                            env.curr_turn = env.pending_finish["queue"][0][2]
+                            continue
+                        else:
+                            env.step(env.pending_finish["queue"][0][2], (0, 0, 0))
+
+            chosen_move = parse_suits_to_move(suits_array)
+            env.step(human_id, chosen_move, suits_array)
+
+            await send_game_log(
+                websocket,
+                f"({env.roles[human_id]}) You played: {Presidenten.visualize_move(chosen_move)}",
+            )
+            await send_state_update(websocket, env, human_id, assign_p)
+
+            if env.was_pile_reset and not env.pending_finish and not env.game_over:
+                await asyncio.sleep(timings.message_delay)
+
+                env.clear_pile()
+                await send_state_update(websocket, env, human_id, assign_p)
+            else:
+                await asyncio.sleep(timings.message_delay)
+            continue
 
         bot = assigned_players[curr_id]
         chosen_move = await asyncio.to_thread(
@@ -361,21 +579,20 @@ async def run(
             websocket,
             f"Player {curr_id} ({env.roles[curr_id]}): {Presidenten.visualize_move(chosen_move)}",
         )
-        await send_state_update(websocket, env, human_id, assign_p)
+        if env.curr_turn != human_id or env.was_pile_reset:
+            await send_state_update(websocket, env, human_id, assign_p)
 
         if env.was_pile_reset and not env.game_over:
-            await asyncio.sleep(MESSAGE_DELAY)
+            await asyncio.sleep(timings.message_delay)
 
             env.clear_pile()
-            await send_state_update(websocket, env, human_id, assign_p)
-            await asyncio.sleep(MESSAGE_DELAY)
+            if env.curr_turn == human_id:
+                continue
 
-            if env.curr_turn == human_id:
-                return
-        elif not env.pending_finish and not env.game_over:
-            if env.curr_turn == human_id:
-                return
-            await asyncio.sleep(MESSAGE_DELAY)
+            await send_state_update(websocket, env, human_id, assign_p)
+            await asyncio.sleep(timings.message_delay)
+        elif not env.pending_finish and not env.game_over and env.curr_turn != human_id:
+            await asyncio.sleep(timings.message_delay)
 
     last_active_player = list(env.playing)[0] if env.playing else None
     if last_active_player is None:
@@ -385,12 +602,12 @@ async def run(
                 break
 
     if last_active_player is not None:
-        await asyncio.sleep(MESSAGE_DELAY)
+        await asyncio.sleep(timings.message_delay)
         if last_active_player != human_id:
             await websocket.send_json(
                 {"type": "REVEAL_BOT", "seat": last_active_player}
             )
-            await asyncio.sleep(REVEAL_DELAY)
+            await asyncio.sleep(timings.reveal_delay)
 
     env.assign_roles()
     await websocket.send_json(
@@ -403,132 +620,116 @@ async def run(
     )
 
 
+async def run_connection(
+    websocket: WebSocket,
+    play_queue: asyncio.Queue,
+    control_queue: asyncio.Queue,
+    disconnect_event: asyncio.Event,
+):
+    session = GameSession()
+    pending_messages: list[dict] = []
+    control_task = asyncio.create_task(
+        control_listener(control_queue, session, disconnect_event)
+    )
+
+    try:
+        await wait_for_event(session.ready_event, disconnect_event)
+
+        if session.env is None:
+            return
+
+        await websocket.send_json(
+            {
+                "type": "LOG_ALERT",
+                "message": "Game lobby created. Dealing hands...",
+            }
+        )
+        session.timings.reset()
+        if session.env.curr_turn != session.human_id:
+            await send_state_update(
+                websocket, session.env, session.human_id, session.assign_p
+            )
+            await asyncio.sleep(session.timings.message_delay)
+        await run(
+            session.env,
+            session.assigned_players,
+            session.assign_p,
+            websocket,
+            session.human_id,
+            play_queue,
+            pending_messages,
+            disconnect_event,
+            session.timings,
+        )
+
+        while not disconnect_event.is_set():
+            await wait_for_event(session.next_round_event, disconnect_event)
+            session.next_round_event.clear()
+
+            if session.env is None or not session.env.game_over:
+                continue
+
+            session.env.full_reset(next_round=True)
+            await websocket.send_json(
+                {
+                    "type": "LOG_ALERT",
+                    "message": f"Starting Round {session.env.round}...",
+                }
+            )
+            session.timings.reset()
+            await run_exchange_phase(
+                session.env,
+                session.assigned_players,
+                websocket,
+                session.human_id,
+                session.assign_p,
+                play_queue,
+                pending_messages,
+                disconnect_event,
+                session.timings,
+            )
+            await send_state_update(
+                websocket, session.env, session.human_id, session.assign_p
+            )
+            await asyncio.sleep(session.timings.message_delay)
+            await run(
+                session.env,
+                session.assigned_players,
+                session.assign_p,
+                websocket,
+                session.human_id,
+                play_queue,
+                pending_messages,
+                disconnect_event,
+                session.timings,
+            )
+    except WebSocketDisconnect:
+        return
+    finally:
+        control_task.cancel()
+        await asyncio.gather(control_task, return_exceptions=True)
+
+
 @app.websocket("/ws/game")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    env = None
-    assigned_players = {}
-    assign_p = {}
-    human_id = 0
+    play_queue: asyncio.Queue = asyncio.Queue()
+    control_queue: asyncio.Queue = asyncio.Queue()
+    disconnect_event = asyncio.Event()
+
+    router_task = asyncio.create_task(
+        websocket_router(websocket, play_queue, control_queue, disconnect_event)
+    )
+    game_task = asyncio.create_task(
+        run_connection(websocket, play_queue, control_queue, disconnect_event)
+    )
 
     try:
-        while True:
-            data = await websocket.receive_json()
-            msg_type = data.get("type")
-
-            if msg_type == "START_GAME":
-                num_players = data.get("num_players", 4)
-                player_config = data.get(
-                    "player_types",
-                )
-                assign_p = {p_id: PlayerType(t) for p_id, t in enumerate(player_config)}
-                env = Presidenten(num_players)
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                assigned_players, human_id = build_assigned_players(assign_p, device)
-
-                env.full_reset(next_round=False)
-                await websocket.send_json(
-                    {
-                        "type": "LOG_ALERT",
-                        "message": "Game lobby created. Dealing hands...",
-                    }
-                )
-                await send_state_update(websocket, env, human_id, assign_p)
-                await asyncio.sleep(MESSAGE_DELAY)
-                await run(
-                    env,
-                    assigned_players,
-                    assign_p,
-                    websocket,
-                    human_id,
-                )
-            elif msg_type == "PLAY_MOVE":
-                if env is None or env.game_over:
-                    continue
-
-                is_turn = env.curr_turn == human_id or (
-                    env.pending_finish and env.pending_finish["queue"][0][2] == human_id
-                )
-                if not is_turn:
-                    continue
-
-                if (
-                    "jump" not in data
-                    and env.pending_finish
-                    and env.pending_finish["queue"][0][2] == human_id
-                ):
-                    env.step(human_id, (0, 0, 0))
-
-                    if env.pending_finish:
-                        if env.pending_finish["queue"][0][2] == human_id:
-                            env.step(human_id, (0, 0, 0))
-                        else:
-                            bot_passed = await run(
-                                env,
-                                assigned_players,
-                                assign_p,
-                                websocket,
-                                human_id,
-                                True,
-                            )
-                            if not bot_passed:
-                                continue
-
-                suits_array = data.get("suits", [])
-                if data.get("jump"):
-                    suits_array = get_finish_suits(
-                        suits_array, env._get_state(human_id)
-                    )
-
-                chosen_move = parse_suits_to_move(suits_array)
-                env.step(human_id, chosen_move, suits_array)
-
-                await send_game_log(
-                    websocket,
-                    f"({env.roles[human_id]}) You played: {Presidenten.visualize_move(chosen_move)}",
-                )
-                await send_state_update(websocket, env, human_id, assign_p)
-
-                if env.was_pile_reset and not env.pending_finish and not env.game_over:
-                    await asyncio.sleep(MESSAGE_DELAY)
-
-                    env.clear_pile()
-                    await send_state_update(websocket, env, human_id, assign_p)
-                else:
-                    await asyncio.sleep(MESSAGE_DELAY)
-                await run(
-                    env,
-                    assigned_players,
-                    assign_p,
-                    websocket,
-                    human_id,
-                )
-            elif msg_type == "NEXT_ROUND":
-                if env and env.game_over:
-                    env.full_reset(next_round=True)
-                    await websocket.send_json(
-                        {
-                            "type": "LOG_ALERT",
-                            "message": f"Starting Round {env.round}...",
-                        }
-                    )
-                    await run_exchange_phase(
-                        env,
-                        assigned_players,
-                        websocket,
-                        human_id,
-                        assign_p,
-                    )
-                    await send_state_update(websocket, env, human_id, assign_p)
-                    await asyncio.sleep(MESSAGE_DELAY)
-                    await run(
-                        env,
-                        assigned_players,
-                        assign_p,
-                        websocket,
-                        human_id,
-                    )
-    except WebSocketDisconnect:
-        print("Client disconnected")
+        await asyncio.gather(router_task, game_task)
     except Exception as e:
         print(f"Unexpected error: {e}")
+        raise
+    finally:
+        router_task.cancel()
+        game_task.cancel()
+        await asyncio.gather(router_task, game_task, return_exceptions=True)
