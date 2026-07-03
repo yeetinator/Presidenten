@@ -22,7 +22,6 @@
     import.meta.env.VITE_WS_URL ?? "ws://localhost:8000/ws/game";
 
   let gameStarted = false;
-  let showFinalResults = false;
   let transitionFlyDuration = 200;
 
   $: transitionFlyDuration = $fastForwardMode ? 100 : 200;
@@ -227,7 +226,6 @@
       gameStore.clearFastForwardMode();
       await gameStore.startGame(payload);
       gameStarted = true;
-      showFinalResults = false;
     } catch (error) {
       console.error(error);
     }
@@ -295,16 +293,9 @@
   }
 
   function handleQuit() {
-    showFinalResults = true;
-    gameStore.clearSelectedCards();
-    gameStore.clearExchangePrompt();
-    gameStore.disconnect();
-  }
-
-  function handleBackToLobby() {
-    showFinalResults = false;
     gameStarted = false;
     gameStore.clearAll();
+    gameStore.disconnect();
     gameStore.connect(websocketUrl);
   }
 
@@ -341,37 +332,41 @@
     class="h-screen max-h-screen overflow-hidden bg-[radial-gradient(circle_at_center,#154d2a_0%,#0b2414_48%,#050b07_100%)]
       p-2 text-white md:p-3"
   >
-    <button
-      class="fixed right-4 top-4 z-30 rounded-md border border-red-300/30 bg-red-500 px-3 py-1 text-[0.65rem]
-        font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-red-400 active:scale-[0.98]"
-      type="button"
-      on:click={handleBackToLobby}
-    >
-      QUIT
-    </button>
-    {#if suitedHand.length === 0 && opponentViews.some((o) => o.suitedHand.length !== 0) && !$exchangePrompt && !$roundSummary && !showFinalResults}
+    {#if !$roundSummary}
       <button
-        class="fixed right-21 top-4 z-30 rounded-md border border-blue-300/30 bg-blue-500 px-3 py-1 text-[0.65rem]
-        font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-blue-400 active:scale-[0.98]"
+        class="fixed right-4 top-4 z-30 rounded-md border border-red-300/30 bg-red-500 px-3 py-1 text-[0.65rem]
+        font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-red-400 active:scale-[0.98]"
         type="button"
-        on:click={handleFastForward}
+        on:click={handleQuit}
       >
-        {#if $fastForwardMode}
-          <div in:fade={{ duration: 150 }} out:fade={{ duration: 150 }}>
-            <span class="animate-arrow-pulse opacity-20">&gt;</span>
-            <span class="animate-arrow-pulse opacity-20 [animation-delay:0.15s]"
-              >&gt;</span
-            >
-            <span class="animate-arrow-pulse opacity-20 [animation-delay:0.3s]"
-              >&gt;</span
-            >
-          </div>
-        {:else}
-          <span in:fade={{ duration: 150 }} out:fade={{ duration: 150 }}
-            >FAST FORWARD</span
-          >
-        {/if}
+        QUIT
       </button>
+      {#if suitedHand.length === 0 && opponentViews.some((o) => o.suitedHand.length !== 0) && !$exchangePrompt}
+        <button
+          class="fixed right-21 top-4 z-30 rounded-md border border-blue-300/30 bg-blue-500 px-3 py-1 text-[0.65rem]
+        font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-blue-400 active:scale-[0.98]"
+          type="button"
+          on:click={handleFastForward}
+        >
+          {#if $fastForwardMode}
+            <div in:fade={{ duration: 150 }} out:fade={{ duration: 150 }}>
+              <span class="animate-arrow-pulse opacity-20">&gt;</span>
+              <span
+                class="animate-arrow-pulse opacity-20 [animation-delay:0.15s]"
+                >&gt;</span
+              >
+              <span
+                class="animate-arrow-pulse opacity-20 [animation-delay:0.3s]"
+                >&gt;</span
+              >
+            </div>
+          {:else}
+            <span in:fade={{ duration: 150 }} out:fade={{ duration: 150 }}
+              >FAST FORWARD</span
+            >
+          {/if}
+        </button>
+      {/if}
     {/if}
     <section
       class="mx-auto grid h-full max-h-full grid-rows-[1fr_auto] gap-2 max-w-screen-2xl"
@@ -561,23 +556,7 @@
         </div>
       </section>
 
-      {#if showFinalResults}
-        <SummaryModal
-          eyebrow="Game ended"
-          eyebrowClass="text-emerald-300/80"
-          title="Final Results"
-          scores={$roundSummary ? Object.entries($roundSummary.scores) : []}
-        >
-          <button
-            slot="actions"
-            class="rounded-xl border border-white/10 bg-white/10 px-5 py-3 font-semibold text-white transition hover:bg-white/15"
-            type="button"
-            on:click={handleBackToLobby}
-          >
-            Back to Lobby
-          </button>
-        </SummaryModal>
-      {:else if $roundSummary}
+      {#if $roundSummary}
         <SummaryModal
           eyebrow="Round complete"
           eyebrowClass="text-amber-200/75"
