@@ -418,7 +418,7 @@
                     on:outrostart={gameStore.startAnimation}
                     on:outroend={gameStore.endAnimation}
                     class="absolute bottom-0 transition-all duration-300 flex justify-center origin-bottom"
-                    style={`transition-duration: ${$fastForwardMode ? "150ms" : "300ms"}; z-index: ${card.playIndex * 10 + card.cardIndex}; 
+                    style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"}; z-index: ${card.playIndex * 10 + card.cardIndex}; 
                       transform: translateX(${(card.cardIndex - (visualPile[card.playIndex].length - 1) / 2) * 1.4}rem);`}
                   >
                     <div
@@ -478,7 +478,7 @@
               class="my-0.5 flex w-full justify-center overflow-visible py-1 h-20 items-center transition-all duration-300 {haveIPassed
                 ? 'opacity-40 grayscale pointer-events-none'
                 : ''}"
-              style={`transition-duration: ${$fastForwardMode ? "150ms" : "300ms"};`}
+              style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"};`}
             >
               {#each suitedHand as suitCard, index (suitCard)}
                 <div
@@ -489,7 +489,7 @@
                   on:outrostart={gameStore.startAnimation}
                   on:outroend={gameStore.endAnimation}
                   class="relative pointer-events-none transition-all duration-300"
-                  style={`transition-duration: ${$fastForwardMode ? "150ms" : "300ms"}; ${getHorizontalOverlapStyle(index)}`}
+                  style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"}; ${getHorizontalOverlapStyle(index)}`}
                 >
                   <Card
                     {suitCard}

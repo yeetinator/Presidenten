@@ -23,7 +23,7 @@
 
 <article
   class={`flex flex-col transition-all duration-300 ${className} ${opponent.has_passed ? "opacity-40 grayscale pointer-events-none" : ""}`}
-  style={`transition-duration: ${$fastForwardMode ? "150ms" : "300ms"};`}
+  style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"};`}
 >
   <div class="flex items-center justify-center gap-2">
     <img
@@ -55,7 +55,7 @@
         on:outrostart={startAnimation}
         on:outroend={endAnimation}
         class="relative transition-all duration-300"
-        style={`transition-duration: ${$fastForwardMode ? "150ms" : "300ms"}; margin-left: ${cardIndex === 0 ? 0 : -5.4}rem; z-index: ${cardIndex};`}
+        style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"}; margin-left: ${cardIndex === 0 ? 0 : -5.4}rem; z-index: ${cardIndex};`}
       >
         <Card
           {suitCard}

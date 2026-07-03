@@ -3,7 +3,7 @@ import { cubicOut } from "svelte/easing";
 import { get } from "svelte/store";
 import { fastForwardMode, state } from "../stores/gameStore";
 
-const normalDuration = 500;
+const normalDuration = 250;
 
 function getTransitionDuration() {
     return get(fastForwardMode) ? normalDuration / 2 : normalDuration;
