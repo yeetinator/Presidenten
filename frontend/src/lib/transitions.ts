@@ -1,14 +1,20 @@
 import { crossfade } from "svelte/transition";
 import { cubicOut } from "svelte/easing";
 import { get } from "svelte/store";
-import { state } from "../stores/gameStore";
+import { fastForwardMode, state } from "../stores/gameStore";
+
+const normalDuration = 500;
+
+function getTransitionDuration() {
+    return get(fastForwardMode) ? normalDuration / 2 : normalDuration;
+}
 
 export const [svelteSend, svelteReceive] = crossfade({
-    duration: 500,
+    duration: () => getTransitionDuration(),
     easing: cubicOut,
     fallback(node, params) {
         return {
-            duration: 500,
+            duration: getTransitionDuration(),
             css: (t) => `opacity: ${t}; transform: scale(${0.8 + 0.2 * t});`,
         };
     }

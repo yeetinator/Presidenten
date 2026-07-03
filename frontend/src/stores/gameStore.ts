@@ -71,6 +71,7 @@ export const roundSummary = writable<RoundSummary | null>(null);
 export const jumpInPrompt = writable<JumpInPrompt | null>(null);
 export const exchangePrompt = writable<ExchangePrompt | null>(null);
 export const isAnimating = writable<boolean>(false);
+export const fastForwardMode = writable<boolean>(false);
 export const revealedBotSeat = writable<number | null>(null);
 export const enableCards = writable<boolean>(false);
 
@@ -146,6 +147,10 @@ function clearAnimations() {
   stateUpdateQueue = [];
 }
 
+function clearFastForwardMode() {
+  fastForwardMode.set(false);
+}
+
 function clearLastMessageType() {
   lastMessageType.set(null);
 }
@@ -171,6 +176,7 @@ function clearAll() {
   clearSelectedCards();
   clearState();
   clearAnimations();
+  clearFastForwardMode();
   clearLastMessageType();
   clearRoundSummary();
   clearExchangePrompt();
@@ -312,6 +318,7 @@ function attachSocketListeners(activeSocket: WebSocket) {
       if (isRoundOverMessage(payload)) {
         clearJumpInPrompt();
         clearExchangePrompt();
+        clearFastForwardMode();
         roundSummary.set({
           scores: payload.scores,
           roles: payload.roles,
@@ -454,6 +461,7 @@ async function processQueue() {
 }
 
 async function fastForwardGame() {
+  fastForwardMode.set(true);
   await send({ type: "FAST_FORWARD" });
 }
 
@@ -480,6 +488,7 @@ export const gameStore = {
   clearExchangePrompt,
   clearLogs,
   clearJumpInPrompt,
+  clearFastForwardMode,
   clearAll,
   playSelectedCards,
   playJumpInPrompt,

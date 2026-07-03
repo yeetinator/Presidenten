@@ -1,7 +1,11 @@
 <script lang="ts">
   import Card from "../../assets/Card.svelte";
   import { send, receive } from "../../lib/transitions";
-  import { startAnimation, endAnimation } from "../../stores/gameStore";
+  import {
+    fastForwardMode,
+    startAnimation,
+    endAnimation,
+  } from "../../stores/gameStore";
 
   type OpponentView = {
     seat: number;
@@ -19,6 +23,7 @@
 
 <article
   class={`flex flex-col transition-all duration-300 ${className} ${opponent.has_passed ? "opacity-40 grayscale pointer-events-none" : ""}`}
+  style={`transition-duration: ${$fastForwardMode ? "150ms" : "300ms"};`}
 >
   <div class="flex items-center justify-center gap-2">
     <img
@@ -50,7 +55,7 @@
         on:outrostart={startAnimation}
         on:outroend={endAnimation}
         class="relative transition-all duration-300"
-        style={`margin-left: ${cardIndex === 0 ? 0 : -5.4}rem; z-index: ${cardIndex};`}
+        style={`transition-duration: ${$fastForwardMode ? "150ms" : "300ms"}; margin-left: ${cardIndex === 0 ? 0 : -5.4}rem; z-index: ${cardIndex};`}
       >
         <Card
           {suitCard}

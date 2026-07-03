@@ -8,6 +8,7 @@
     gameStore,
     exchangePrompt,
     jumpInPrompt,
+    fastForwardMode,
     roundSummary,
     revealedBotSeat,
     selectedCards,
@@ -15,13 +16,16 @@
     state as gameState,
   } from "./stores/gameStore";
   import { send, receive } from "./lib/transitions";
-  import { fly } from "svelte/transition";
+  import { fade, fly } from "svelte/transition";
 
   const websocketUrl =
     import.meta.env.VITE_WS_URL ?? "ws://localhost:8000/ws/game";
 
   let gameStarted = false;
   let showFinalResults = false;
+  let transitionFlyDuration = 200;
+
+  $: transitionFlyDuration = $fastForwardMode ? 100 : 200;
 
   $: suitedHand = $gameState?.suited_hand ?? [];
   $: totalPlayers = Object.keys($gameState?.player_roles ?? {}).length || 4;
@@ -220,6 +224,7 @@
       gameStore.clearRoundSummary();
       gameStore.clearExchangePrompt();
       gameStore.clearSelectedCards();
+      gameStore.clearFastForwardMode();
       await gameStore.startGame(payload);
       gameStarted = true;
       showFinalResults = false;
@@ -282,6 +287,7 @@
 
   async function handleFastForward() {
     try {
+      fastForwardMode.set(true);
       await gameStore.fastForwardGame();
     } catch (error) {
       console.error(error);
@@ -350,7 +356,21 @@
         type="button"
         on:click={handleFastForward}
       >
-        FAST FORWARD
+        {#if $fastForwardMode}
+          <div in:fade={{ duration: 150 }} out:fade={{ duration: 150 }}>
+            <span class="animate-arrow-pulse opacity-20">&gt;</span>
+            <span class="animate-arrow-pulse opacity-20 [animation-delay:0.15s]"
+              >&gt;</span
+            >
+            <span class="animate-arrow-pulse opacity-20 [animation-delay:0.3s]"
+              >&gt;</span
+            >
+          </div>
+        {:else}
+          <span in:fade={{ duration: 150 }} out:fade={{ duration: 150 }}
+            >FAST FORWARD</span
+          >
+        {/if}
       </button>
     {/if}
     <section
@@ -403,7 +423,7 @@
                     on:outrostart={gameStore.startAnimation}
                     on:outroend={gameStore.endAnimation}
                     class="absolute bottom-0 transition-all duration-300 flex justify-center origin-bottom"
-                    style={`z-index: ${card.playIndex * 10 + card.cardIndex}; 
+                    style={`transition-duration: ${$fastForwardMode ? "150ms" : "300ms"}; z-index: ${card.playIndex * 10 + card.cardIndex}; 
                       transform: translateX(${(card.cardIndex - (visualPile[card.playIndex].length - 1) / 2) * 1.4}rem);`}
                   >
                     <div
@@ -422,7 +442,7 @@
               </div>
               {#if visualPile.length === 0}
                 <div
-                  transition:fly={{ y: 10, duration: 200 }}
+                  transition:fly={{ y: 10, duration: transitionFlyDuration }}
                   class="absolute text-center text-emerald-50/70 py-1 pointer-events-none"
                 >
                   <div class="text-[0.6rem] uppercase tracking-[0.3em]">
@@ -455,7 +475,7 @@
           >
             {#if suitedHand.length === 0}
               <div
-                transition:fly={{ y: 5, duration: 200 }}
+                transition:fly={{ y: 5, duration: transitionFlyDuration }}
                 class="absolute inset-x-3 inset-y-1 flex items-center justify-center z-10"
               ></div>
             {/if}
@@ -463,6 +483,7 @@
               class="my-0.5 flex w-full justify-center overflow-visible py-1 h-20 items-center transition-all duration-300 {haveIPassed
                 ? 'opacity-40 grayscale pointer-events-none'
                 : ''}"
+              style={`transition-duration: ${$fastForwardMode ? "150ms" : "300ms"};`}
             >
               {#each suitedHand as suitCard, index (suitCard)}
                 <div
@@ -473,7 +494,7 @@
                   on:outrostart={gameStore.startAnimation}
                   on:outroend={gameStore.endAnimation}
                   class="relative pointer-events-none transition-all duration-300"
-                  style={getHorizontalOverlapStyle(index)}
+                  style={`transition-duration: ${$fastForwardMode ? "150ms" : "300ms"}; ${getHorizontalOverlapStyle(index)}`}
                 >
                   <Card
                     {suitCard}
@@ -584,3 +605,20 @@
     </section>
   </main>
 {/if}
+
+<style>
+  @keyframes arrow-pulse {
+    0%,
+    100% {
+      opacity: 0.2;
+      transform: translateX(0);
+    }
+    50% {
+      opacity: 1;
+      transform: translateX(0.2rem);
+    }
+  }
+  :global(.animate-arrow-pulse) {
+    animation: arrow-pulse 0.6s infinite ease-in-out;
+  }
+</style>
