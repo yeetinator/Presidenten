@@ -7,7 +7,7 @@
   export let scores: ScoreRow[] = [];
 
   $: sortedScores = [...scores].sort(
-    (left, right) => Number(left[0]) - Number(right[0]),
+    (left, right) => Number(right[1][0]) - Number(left[1][0]),
   );
 </script>
 
