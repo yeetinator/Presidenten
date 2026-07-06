@@ -5,12 +5,12 @@ from pathlib import Path
 import torch
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from game import Presidenten, PlayerType
-from playerTypes.random_bot import PresidentenRandomBot
-from playerTypes.baseline_bot import PresidentenBaselineBot
-from playerTypes.dmc_bot import PresidentenDMCBot, PresidentenValueNet
+from game import President, PlayerType
+from playerTypes.random_bot import PresidentRandomBot
+from playerTypes.baseline_bot import PresidentBaselineBot
+from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
 
-app = FastAPI(title="Presidenten Game Server")
+app = FastAPI(title="President Game Server")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BotPlayer = PresidentenRandomBot | PresidentenBaselineBot | PresidentenDMCBot
+BotPlayer = PresidentRandomBot | PresidentBaselineBot | PresidentDMCBot
 
 MESSAGE_DELAY = 1.5
 EXCHANGE_DELAY = 1.2
@@ -63,7 +63,7 @@ class GameTimings:
 
 @dataclass
 class GameSession:
-    env: Presidenten | None = None
+    env: President | None = None
     assigned_players: dict[int, BotPlayer] = field(default_factory=dict)
     assign_p: dict[int, PlayerType] = field(default_factory=dict)
     human_id: int = 0
@@ -147,7 +147,7 @@ def enrich_state(state: dict, assign_p: dict[int, PlayerType]):
     return clean_state
 
 
-def get_exchange_count(env: Presidenten, role: str) -> int:
+def get_exchange_count(env: President, role: str) -> int:
     for high_role, low_role, count in env.role_pairs:
         if role == high_role or role == low_role:
             return count
@@ -164,7 +164,7 @@ async def send_game_log(websocket: WebSocket, message: str):
 
 async def send_state_update(
     websocket: WebSocket,
-    env: Presidenten,
+    env: President,
     human_id: int,
     assign_p: dict[int, PlayerType],
     *,
@@ -270,7 +270,7 @@ async def control_listener(
                 p_id: PlayerType(player_type)
                 for p_id, player_type in enumerate(player_config)
             }
-            session.env = Presidenten(num_players)
+            session.env = President(num_players)
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             session.assigned_players, session.human_id = build_assigned_players(
                 session.assign_p, device
@@ -302,11 +302,11 @@ def build_assigned_players(
         if p_type == PlayerType.HUMAN:
             human_id = p_id
         elif p_type == PlayerType.RANDOM:
-            assigned_players[p_id] = PresidentenRandomBot(p_id)
+            assigned_players[p_id] = PresidentRandomBot(p_id)
         elif p_type == PlayerType.BASELINE:
-            assigned_players[p_id] = PresidentenBaselineBot(p_id)
+            assigned_players[p_id] = PresidentBaselineBot(p_id)
         elif p_type == PlayerType.DMC:
-            dmc_model = PresidentenValueNet().to(device)
+            dmc_model = PresidentValueNet().to(device)
 
             try:
                 load_path = torch.load(model_path, map_location=device)
@@ -317,7 +317,7 @@ def build_assigned_players(
                 )
 
             dmc_model.eval()
-            assigned_players[p_id] = PresidentenDMCBot(p_id, dmc_model, device)
+            assigned_players[p_id] = PresidentDMCBot(p_id, dmc_model, device)
 
     return assigned_players, human_id
 
@@ -341,7 +341,7 @@ async def wait_for_exchange_cards(
 
 
 async def run_exchange_phase(
-    env: Presidenten,
+    env: President,
     assigned_players: dict[int, BotPlayer],
     websocket: WebSocket,
     human_id: int,
@@ -396,7 +396,7 @@ async def run_exchange_phase(
 
 
 async def run(
-    env: Presidenten,
+    env: President,
     assigned_players: dict[int, BotPlayer],
     assign_p: dict,
     websocket: WebSocket,
@@ -477,7 +477,7 @@ async def run(
                 if chosen_move != (0, 0, 0):
                     await send_game_log(
                         websocket,
-                        f"Player {curr_id} ({env.roles[curr_id]}): jumped in with {Presidenten.visualize_move(chosen_move)}!",
+                        f"Player {curr_id} ({env.roles[curr_id]}): jumped in with {President.visualize_move(chosen_move)}!",
                     )
                     await send_state_update(websocket, env, human_id, assign_p)
                     await asyncio.sleep(timings.message_delay)
@@ -539,7 +539,7 @@ async def run(
 
             await send_game_log(
                 websocket,
-                f"({env.roles[human_id]}) You played: {Presidenten.visualize_move(chosen_move)}",
+                f"({env.roles[human_id]}) You played: {President.visualize_move(chosen_move)}",
             )
             await send_state_update(websocket, env, human_id, assign_p)
 
@@ -577,7 +577,7 @@ async def run(
 
         await send_game_log(
             websocket,
-            f"Player {curr_id} ({env.roles[curr_id]}): {Presidenten.visualize_move(chosen_move)}",
+            f"Player {curr_id} ({env.roles[curr_id]}): {President.visualize_move(chosen_move)}",
         )
         if env.curr_turn != human_id or env.was_pile_reset:
             await send_state_update(websocket, env, human_id, assign_p)

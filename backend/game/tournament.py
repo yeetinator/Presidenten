@@ -5,65 +5,65 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from .engine import Presidenten
+from .engine import President
 from .types import PlayerType
 
 if TYPE_CHECKING:
     from playerTypes.human import HumanPlayer
-    from playerTypes.random_bot import PresidentenRandomBot
-    from playerTypes.baseline_bot import PresidentenBaselineBot
-    from playerTypes.ismcts_bot import PresidentenISMCTSBot
-    from playerTypes.dmc_bot import PresidentenDMCBot
+    from playerTypes.random_bot import PresidentRandomBot
+    from playerTypes.baseline_bot import PresidentBaselineBot
+    from playerTypes.ismcts_bot import PresidentISMCTSBot
+    from playerTypes.dmc_bot import PresidentDMCBot
 
 
 def create_players(assign_p: dict[int, PlayerType], iterations=400, dmc_paths=None):
     from playerTypes.human import HumanPlayer
-    from playerTypes.random_bot import PresidentenRandomBot
-    from playerTypes.baseline_bot import PresidentenBaselineBot
-    from playerTypes.ismcts_bot import PresidentenISMCTSBot
-    from playerTypes.dmc_bot import PresidentenDMCBot, PresidentenValueNet
+    from playerTypes.random_bot import PresidentRandomBot
+    from playerTypes.baseline_bot import PresidentBaselineBot
+    from playerTypes.ismcts_bot import PresidentISMCTSBot
+    from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
 
     assigned_players: dict[
         int,
         HumanPlayer
-        | PresidentenRandomBot
-        | PresidentenBaselineBot
-        | PresidentenISMCTSBot
-        | PresidentenDMCBot,
+        | PresidentRandomBot
+        | PresidentBaselineBot
+        | PresidentISMCTSBot
+        | PresidentDMCBot,
     ] = {}
     for p_id, p_type in assign_p.items():
         if p_type == PlayerType.HUMAN:
             assigned_players[p_id] = HumanPlayer(p_id)
         elif p_type == PlayerType.RANDOM:
-            assigned_players[p_id] = PresidentenRandomBot(p_id)
+            assigned_players[p_id] = PresidentRandomBot(p_id)
         elif p_type == PlayerType.BASELINE:
-            assigned_players[p_id] = PresidentenBaselineBot(p_id)
+            assigned_players[p_id] = PresidentBaselineBot(p_id)
         elif p_type == PlayerType.ISMCTS:
-            assigned_players[p_id] = PresidentenISMCTSBot(p_id, iterations)
+            assigned_players[p_id] = PresidentISMCTSBot(p_id, iterations)
         elif p_type == PlayerType.DMC:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            dmc_model = PresidentenValueNet().to(device)
+            dmc_model = PresidentValueNet().to(device)
 
             if dmc_paths and p_id in dmc_paths:
                 snap = torch.load(dmc_paths[p_id], map_location=device)
                 dmc_model.load_state_dict(snap["model_state_dict"])
 
             dmc_model.eval()
-            assigned_players[p_id] = PresidentenDMCBot(p_id, dmc_model, device)
+            assigned_players[p_id] = PresidentDMCBot(p_id, dmc_model, device)
     return assigned_players
 
 
-def play_presidenten_game(
+def play_president_game(
     game_id,
     num_players,
     num_rounds,
     assigned_players: dict[
         int,
         HumanPlayer
-        | PresidentenRandomBot
-        | PresidentenBaselineBot
-        | PresidentenISMCTSBot
-        | PresidentenDMCBot,
+        | PresidentRandomBot
+        | PresidentBaselineBot
+        | PresidentISMCTSBot
+        | PresidentDMCBot,
     ],
     assign_p: dict[int, PlayerType],
     parallelism="g",
@@ -73,7 +73,7 @@ def play_presidenten_game(
     ismcts_ids: set[int] = {
         p_id for p_id, p_type in assign_p.items() if p_type == PlayerType.ISMCTS
     }
-    env = Presidenten(players=num_players, verbose=has_human)
+    env = President(players=num_players, verbose=has_human)
 
     for idx in range(num_rounds):
         state = env.full_reset(next_round=(idx > 0))
@@ -115,7 +115,7 @@ def play_presidenten_game(
             curr_p_type = assigned_players[curr_p_id]
 
             if curr_p_id in ismcts_ids:
-                assert curr_p_type.__class__.__name__ == "PresidentenISMCTSBot"
+                assert curr_p_type.__class__.__name__ == "PresidentISMCTSBot"
                 chosen_move = curr_p_type.get_move(
                     state,
                     env,
@@ -129,7 +129,7 @@ def play_presidenten_game(
                 p_name = assign_p[curr_p_id].name if assign_p[curr_p_id] else "Unknown"
                 print(
                     f"\nPlayer {curr_p_id} ({state['my_role']}, {p_name}) chose: "
-                    f"{Presidenten.visualize_move(chosen_move)}\n"
+                    f"{President.visualize_move(chosen_move)}\n"
                 )
                 if curr_p_type.__class__.__name__ != "HumanPlayer":
                     input("Press Enter to continue...\n")
@@ -152,10 +152,10 @@ worker_players: (
     dict[
         int,
         HumanPlayer
-        | PresidentenRandomBot
-        | PresidentenBaselineBot
-        | PresidentenISMCTSBot
-        | PresidentenDMCBot,
+        | PresidentRandomBot
+        | PresidentBaselineBot
+        | PresidentISMCTSBot
+        | PresidentDMCBot,
     ]
     | None
 ) = None
@@ -169,7 +169,7 @@ def init_worker(assign_p, iterations, dmc_paths):
 def worker_game_task(game_id, num_players, num_rounds, assign_p):
     global worker_players
     assert worker_players is not None, "Worker players not initialized"
-    return play_presidenten_game(
+    return play_president_game(
         game_id,
         num_players,
         num_rounds,
@@ -238,7 +238,7 @@ def search_parallelism(
         for idx in range(total_games):
             if idx % 10 == 0:
                 print(f"\n=== GAME {idx+1} ===\n")
-            round_scores = play_presidenten_game(
+            round_scores = play_president_game(
                 idx,
                 num_players,
                 num_rounds,

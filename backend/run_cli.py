@@ -4,7 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-PACKAGE_NAME = "presidenten_game"
+PACKAGE_NAME = "president_game"
 PACKAGE_DIR = Path(__file__).resolve().parent / "game"
 
 
@@ -31,7 +31,7 @@ from game.cli_utils import get_settings
 from game.tournament import (
     create_players,
     game_parallelism,
-    play_presidenten_game,
+    play_president_game,
     print_scores,
     search_parallelism,
     update_final_scores,
@@ -71,7 +71,7 @@ def main():
         for idx in range(TOTAL_GAMES):
             if idx % 10 == 0:
                 print(f"\n=== GAME {idx+1} ===\n")
-            round_scores = play_presidenten_game(
+            round_scores = play_president_game(
                 idx,
                 num_players,
                 num_rounds,

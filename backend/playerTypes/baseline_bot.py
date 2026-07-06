@@ -3,7 +3,7 @@ from itertools import combinations
 import math
 
 
-class PresidentenBaselineBot:
+class PresidentBaselineBot:
     def __init__(self, player_id):
         self.player_id = player_id
 
@@ -28,7 +28,7 @@ class PresidentenBaselineBot:
                 return [chosen_jump]
 
             if len(unique_vals) == 2:
-                return [chosen_jump]  # Jump in with 2's only if you can win immediately
+                return [chosen_jump]  # Jump in with 2s only if you can win immediately
             return [(0, 0, 0)]
 
         hand_counts = Counter(hand)
@@ -37,7 +37,7 @@ class PresidentenBaselineBot:
         if not playable_moves:
             return [(0, 0, 0)]
 
-        if 15 in unique_vals:  # Prefer playing less 2's
+        if 15 in unique_vals:  # Prefer playing less 2s
             if len(unique_vals) == 1:
                 playable_moves.sort(key=lambda x: x[1])
                 return playable_moves

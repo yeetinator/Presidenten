@@ -60,7 +60,7 @@
     >
       <div class="mb-8 space-y-3">
         <p class="text-sm uppercase tracking-[0.35em] text-green-200/80">
-          Presidenten Lobby
+          President Lobby
         </p>
         <h1 class="text-4xl font-black tracking-tight md:text-6xl">
           Configure the match

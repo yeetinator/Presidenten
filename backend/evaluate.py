@@ -6,9 +6,9 @@ import json
 import random
 import sys
 import numpy as np
-from playerTypes.dmc_bot import PresidentenValueNet, PresidentenDMCBot
-from playerTypes.baseline_bot import PresidentenBaselineBot
-from game import Presidenten
+from playerTypes.dmc_bot import PresidentValueNet, PresidentDMCBot
+from playerTypes.baseline_bot import PresidentBaselineBot
+from game import President
 
 TOTAL_GAMES = 800
 NUM_ROUNDS = 10
@@ -30,7 +30,7 @@ def evaluate_snapshot(snapshot_file):
     except (IndexError, ValueError):
         batch_num = 0
 
-    model = PresidentenValueNet(INPUT_DIM).to(device)
+    model = PresidentValueNet(INPUT_DIM).to(device)
     checkpoint = torch.load(snapshot_file, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
@@ -43,14 +43,14 @@ def evaluate_snapshot(snapshot_file):
         random.seed(curr_seed)
         np.random.seed(curr_seed)
         num_players = 4 + (game_idx % 4)
-        bot_instances: dict[int, PresidentenDMCBot | PresidentenBaselineBot] = {
-            0: PresidentenDMCBot(0, model, device)
+        bot_instances: dict[int, PresidentDMCBot | PresidentBaselineBot] = {
+            0: PresidentDMCBot(0, model, device)
         }
 
         for seat in range(1, num_players):
-            bot_instances[seat] = PresidentenBaselineBot(seat)
+            bot_instances[seat] = PresidentBaselineBot(seat)
 
-        env = Presidenten(num_players)
+        env = President(num_players)
         for round_idx in range(NUM_ROUNDS):
             state = env.full_reset(next_round=(round_idx > 0))
             if round_idx > 0:

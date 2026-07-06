@@ -1,4 +1,4 @@
-from game import Presidenten, get_val_input
+from game import President, get_val_input
 from collections import Counter
 
 
@@ -12,12 +12,12 @@ class HumanPlayer:
             return (0, 0, 0)
 
         print(f"\nPlayer {self.player_id} ({state["my_role"]}), it's your turn!")
-        print(f"Your hand: {Presidenten.visualize_hand(state["hand"])}")
-        print(f"Last move: {Presidenten.visualize_move(state["last_move"])}")
+        print(f"Your hand: {President.visualize_hand(state["hand"])}")
+        print(f"Last move: {President.visualize_move(state["last_move"])}")
 
         print("Legal moves: ")
         for idx, move in enumerate(legal_moves):
-            print(f"  {idx}: {Presidenten.visualize_move(move)}")
+            print(f"  {idx}: {President.visualize_move(move)}")
 
         move_idx = get_val_input(
             "Enter move index: ", int, lambda x: 0 <= x < len(legal_moves)
@@ -43,7 +43,7 @@ class HumanPlayer:
                     f"\nAs a {my_role}, your highest {count} card(s) will be passed to the {hr}."
                 )
                 highest_cards = state["hand"][-count:]
-                print(f"Cards passed: {Presidenten.visualize_hand(highest_cards)}")
+                print(f"Cards passed: {President.visualize_hand(highest_cards)}")
             return []
 
         def parse_card(card: str):
@@ -63,14 +63,14 @@ class HumanPlayer:
 
             for card, selected_count in chosen_counts.items():
                 if hand_counts[card] < selected_count:
-                    card_name = Presidenten.visualize_card(card)
+                    card_name = President.visualize_card(card)
                     print(f"Selection Error: You don't have enough {card_name}s.")
 
                     return False
             return True
 
         print(f"\n=== {my_role.upper()} CARD EXCHANGE ===")
-        print(f"Your hand: {Presidenten.visualize_hand(state["hand"])}")
+        print(f"Your hand: {President.visualize_hand(state["hand"])}")
 
         prompt = (
             f"Enter {count} card values to pass (comma-separated, duplicates allowed): "

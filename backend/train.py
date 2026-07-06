@@ -5,9 +5,9 @@ import os
 import numpy as np
 import multiprocessing
 import torch.multiprocessing as mp
-from playerTypes.baseline_bot import PresidentenBaselineBot
-from playerTypes.dmc_bot import PresidentenDMCBot, PresidentenValueNet
-from game import Presidenten
+from playerTypes.baseline_bot import PresidentBaselineBot
+from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
+from game import President
 
 BATCH_GAMES = 52
 ROUNDS_PER_GAME = 10
@@ -34,7 +34,7 @@ def parallel_worker(epsilon, elite_snapshots=None):
     if paths:
         for path in paths:
             if path not in _SNAPSHOT_CACHE:
-                snap_model = PresidentenValueNet(INPUT_DIM).to("cpu")
+                snap_model = PresidentValueNet(INPUT_DIM).to("cpu")
                 checkpoint = torch.load(path, map_location="cpu")
                 snap_model.load_state_dict(checkpoint["model_state_dict"])
                 snap_model.eval()
@@ -50,15 +50,15 @@ def parallel_worker(epsilon, elite_snapshots=None):
 def run_single_game(live_model, device, epsilon, elite_snapshots=None):
     global _SNAPSHOT_CACHE
     num_players = random.randint(4, 7)
-    bot_instances: dict[int, PresidentenDMCBot | PresidentenBaselineBot] = {}
-    bot_instances[0] = PresidentenDMCBot(
+    bot_instances: dict[int, PresidentDMCBot | PresidentBaselineBot] = {}
+    bot_instances[0] = PresidentDMCBot(
         0, live_model, device, training=True, epsilon=epsilon
     )
 
     for seat in range(1, num_players):
         roll = random.random()
         if roll < 0.65:
-            bot_instances[seat] = PresidentenDMCBot(
+            bot_instances[seat] = PresidentDMCBot(
                 player_id=seat,
                 model=live_model,
                 device=device,
@@ -68,22 +68,22 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
         elif roll < 0.80 and elite_snapshots:
             snap_path = random.choice(elite_snapshots)
             snap_model = _SNAPSHOT_CACHE[snap_path]
-            bot_instances[seat] = PresidentenDMCBot(
+            bot_instances[seat] = PresidentDMCBot(
                 player_id=seat, model=snap_model, device=device, training=False
             )
         elif roll < 0.90 and elite_snapshots:
             snap_path = random.choice(elite_snapshots)
             snap_model = _SNAPSHOT_CACHE[snap_path]
-            bot_instances[seat] = PresidentenDMCBot(
+            bot_instances[seat] = PresidentDMCBot(
                 player_id=seat,
                 model=snap_model,
                 device=device,
                 profile="aggressive",
             )
         else:
-            bot_instances[seat] = PresidentenBaselineBot(player_id=seat)
+            bot_instances[seat] = PresidentBaselineBot(player_id=seat)
 
-    env = Presidenten(num_players)
+    env = President(num_players)
     game_x, game_y = [], []
 
     for round_idx in range(ROUNDS_PER_GAME):
@@ -105,7 +105,7 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
             move_count += 1
             if move_count > 500:
                 for bot in bot_instances.values():
-                    if isinstance(bot, PresidentenDMCBot):
+                    if isinstance(bot, PresidentDMCBot):
                         bot.trajectory.clear()
                 return np.empty((0, INPUT_DIM), dtype=np.float32), np.empty(
                     (0, 1), dtype=np.float32
@@ -127,7 +127,7 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
 
         for rank, p_id in enumerate(env.out_order):
             bot = bot_instances[p_id]
-            if isinstance(bot, PresidentenDMCBot):
+            if isinstance(bot, PresidentDMCBot):
                 if bot.training and len(bot.trajectory) > 0 and bot.model == live_model:
                     round_score = env.players - 1 - rank
                     normalized_score = (round_score / max_possible_score) * 2 - 1
@@ -149,8 +149,8 @@ def main():
     print(f"Using device: {device}")
 
     resume_path = "snapshots/latest_model.pt"
-    live_model = PresidentenValueNet(INPUT_DIM).to(device)
-    shared_model = PresidentenValueNet(INPUT_DIM).to("cpu")
+    live_model = PresidentValueNet(INPUT_DIM).to(device)
+    shared_model = PresidentValueNet(INPUT_DIM).to("cpu")
     shared_model.share_memory()
     shared_model.load_state_dict(live_model.state_dict())
 

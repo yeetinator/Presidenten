@@ -4,11 +4,11 @@ import numpy as np
 import random
 import itertools
 from collections import Counter
-from playerTypes.baseline_bot import PresidentenBaselineBot
-from game import Presidenten
+from playerTypes.baseline_bot import PresidentBaselineBot
+from game import President
 
 
-class PresidentenValueNet(nn.Module):
+class PresidentValueNet(nn.Module):
     def __init__(self, input_dim=115):
         super().__init__()
         self.net = nn.Sequential(
@@ -26,11 +26,11 @@ class PresidentenValueNet(nn.Module):
         return self.net(x)
 
 
-class PresidentenDMCBot:
+class PresidentDMCBot:
     def __init__(
         self,
         player_id,
-        model: PresidentenValueNet,
+        model: PresidentValueNet,
         device,
         training=False,
         epsilon=0.2,
@@ -44,7 +44,7 @@ class PresidentenDMCBot:
         self.epsilon = epsilon
         self.profile = profile
 
-    def get_move(self, state: dict, env: Presidenten, *args, **kwargs):
+    def get_move(self, state: dict, env: President, *args, **kwargs):
         legal_moves = state["legal_moves"]
         if not legal_moves:
             return (0, 0, 0)
@@ -124,7 +124,7 @@ class PresidentenDMCBot:
             return (
                 list(possible_passes[0])
                 if possible_passes
-                else PresidentenBaselineBot(self.player_id).choose_cards_to_pass(state)
+                else PresidentBaselineBot(self.player_id).choose_cards_to_pass(state)
             )
 
         features_tensor = torch.FloatTensor(np.array(all_hypo_features)).to(self.device)

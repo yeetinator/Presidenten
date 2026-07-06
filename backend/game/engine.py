@@ -4,10 +4,10 @@ import random
 from collections import Counter
 
 
-class Presidenten:
+class President:
     def __init__(self, players=4, verbose=False):
         if players < 4:
-            raise ValueError("Presidenten requires at least 4 players.")
+            raise ValueError("President requires at least 4 players.")
 
         self.players = players
         self.verbose = verbose
@@ -557,7 +557,7 @@ class Presidenten:
 
     @staticmethod
     def visualize_hand(hand):
-        return [Presidenten.visualize_card(card) for card in hand]
+        return [President.visualize_card(card) for card in hand]
 
     @staticmethod
     def visualize_card(card):
@@ -576,7 +576,7 @@ class Presidenten:
             return "Pass"
 
         card_val, count, twos = move
-        card_name = Presidenten.visualize_card(card_val)
+        card_name = President.visualize_card(card_val)
 
         if twos:
             rcount = count - twos

@@ -2,8 +2,8 @@ import math
 import random
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
-from game import Presidenten
-from playerTypes.baseline_bot import PresidentenBaselineBot
+from game import President
+from playerTypes.baseline_bot import PresidentBaselineBot
 
 
 class ISMCTSNode:
@@ -40,12 +40,12 @@ class ISMCTSNode:
         return best_child
 
 
-def _execute_mcts_batch(player_id, iterations, real_env: Presidenten):
-    bot = PresidentenISMCTSBot(player_id, iterations)
+def _execute_mcts_batch(player_id, iterations, real_env: President):
+    bot = PresidentISMCTSBot(player_id, iterations)
     return bot.run_search_batch(real_env)
 
 
-class PresidentenISMCTSBot:
+class PresidentISMCTSBot:
     def __init__(self, player_id, iterations=200):
         self.player_id = player_id
         self.iterations = iterations
@@ -53,7 +53,7 @@ class PresidentenISMCTSBot:
     def get_move(
         self,
         state: dict,
-        real_env: Presidenten,
+        real_env: President,
         executor: ProcessPoolExecutor | None = None,
         parallelism="g",
         num_workers=10,
@@ -61,7 +61,7 @@ class PresidentenISMCTSBot:
         legal_moves = state["legal_moves"]
         opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
         total_stats = {}
-        baseline_bot = PresidentenBaselineBot(player_id=self.player_id)
+        baseline_bot = PresidentBaselineBot(player_id=self.player_id)
         active_opp_counts = [count for count in opp_hand_counts.values() if count > 0]
         avg_opp_count = (
             sum(active_opp_counts) / len(active_opp_counts) if active_opp_counts else 0
@@ -126,10 +126,10 @@ class PresidentenISMCTSBot:
             key=lambda move: legal_root_moves[move]["visits"],
         )
 
-    def run_search_batch(self, real_env: Presidenten):
+    def run_search_batch(self, real_env: President):
         root = ISMCTSNode()
         rollout_bots = {
-            p: PresidentenBaselineBot(player_id=p) for p in range(real_env.players)
+            p: PresidentBaselineBot(player_id=p) for p in range(real_env.players)
         }
         known_cards = list(real_env.hands[self.player_id])
         for _, move in real_env.history:
@@ -301,7 +301,7 @@ class PresidentenISMCTSBot:
 
     def _deal_hidden_cards(
         self,
-        real_env: Presidenten,
+        real_env: President,
         hidden_pool,
         pending_finish_cards,
         opp_hand_counts,
@@ -389,7 +389,7 @@ class PresidentenISMCTSBot:
         self,
         p,
         assigned_cards,
-        real_env: Presidenten,
+        real_env: President,
         pile_card,
         pile_count,
         history_vector,
@@ -429,14 +429,14 @@ class PresidentenISMCTSBot:
 
     def _determinize_environment(
         self,
-        real_env: Presidenten,
+        real_env: President,
         base_hidden_pool,
         pending_finish_cards,
         guaranteed_cards,
         pair_id,
         min_received,
     ):
-        sim_env = Presidenten(players=real_env.players)
+        sim_env = President(players=real_env.players)
 
         sim_env.last_move = real_env.last_move
         sim_env.pile_leader = real_env.pile_leader
@@ -516,6 +516,6 @@ class PresidentenISMCTSBot:
         if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
             return []
 
-        return PresidentenBaselineBot(player_id=self.player_id).choose_cards_to_pass(
+        return PresidentBaselineBot(player_id=self.player_id).choose_cards_to_pass(
             state
         )

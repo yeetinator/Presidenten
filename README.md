@@ -1,6 +1,6 @@
-# Presidenten
+# President
 
-Presidenten is a card game project with two parts:
+President is a card game project with two parts:
 
 - A Python backend for the game engine, CLI tools, Deep Monte Carlo training, and the FastAPI websocket server.
 - A Svelte frontend for the browser UI.
