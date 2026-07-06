@@ -52,8 +52,10 @@ class PresidentenDMCBot:
         if len(legal_moves) == 1:
             return legal_moves[0]
         else:
+            state_vec = vectorize_state(state, env.players)
             features = [
-                vectorize_state_action(state, move, env.players) for move in legal_moves
+                np.concatenate([state_vec, vectorize_move(move)])
+                for move in legal_moves
             ]
             if self.training and random.random() < self.epsilon:
                 best_idx = random.randint(0, len(legal_moves) - 1)
@@ -110,12 +112,11 @@ class PresidentenDMCBot:
             if not hand_counts:
                 continue
 
+            hypo_state_vec = vectorize_state(hypothetical_state, num_players)
             for card, count_held in hand_counts.items():
                 for play_count in range(1, count_held + 1):
                     move = (card, play_count, 0)
-                    features = vectorize_state_action(
-                        hypothetical_state, move, num_players
-                    )
+                    features = np.concatenate([hypo_state_vec, vectorize_move(move)])
                     all_hypo_features.append(features)
                     combo_map.append(combo_idx)
 
@@ -146,7 +147,7 @@ class PresidentenDMCBot:
         return list(best_pass) if best_pass else []
 
 
-def vectorize_state_action(state, move, num_players=4):
+def vectorize_state(state, num_players=4):
     ROLE_MAP = {
         "President": 1.0,
         "Vice-President": 0.8,
@@ -229,7 +230,7 @@ def vectorize_state_action(state, move, num_players=4):
         dtype=np.float32,
     )
 
-    state_vector = np.concatenate(
+    return np.concatenate(
         [
             hand_vector,  # 13
             history_vector,  # 13
@@ -243,6 +244,8 @@ def vectorize_state_action(state, move, num_players=4):
         ]
     )
 
+
+def vectorize_move(move):
     action_vector = np.zeros(16, dtype=np.float32)
     m_card, m_count, m_twos = move
     if m_card == 0:
@@ -251,4 +254,4 @@ def vectorize_state_action(state, move, num_players=4):
         action_vector[m_card - 3] = 1.0
         action_vector[13] = float(m_count) / 4.0
         action_vector[14] = float(m_twos) / 4.0
-    return np.concatenate([state_vector, action_vector])
+    return action_vector
