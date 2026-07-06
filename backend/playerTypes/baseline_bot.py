@@ -80,11 +80,11 @@ class PresidentenBaselineBot:
             high_card_moves.sort(key=lambda x: (x[2], hand_counts[x[0]], x[0], -x[1]))
 
         ranked = low_card_moves + high_card_moves
-        for i in range(len(ranked)):
-            _, icount, twos = ranked[i]
-            if icount == len(hand) and twos > 0:
-                ranked.pop(i)
-        return ranked or [legal_moves[0]]
+        return [
+            (card_val, count, twos)
+            for card_val, count, twos in ranked
+            if not (count == len(hand) and twos > 0)
+        ] or [legal_moves[0]]
 
     def get_move(self, state: dict, *args, **kwargs):
         legal_moves = state["legal_moves"]

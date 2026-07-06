@@ -6,14 +6,16 @@ import glob
 import shutil
 
 
-def run_step(script_name):
+def run_step(script_name, args=None):
     print(f"\n================ LAUNCHING {script_name.upper()} ================")
     backend_dir = os.path.dirname(os.path.abspath(__file__))
     script_path = os.path.join(backend_dir, script_name)
 
-    result = subprocess.run(
-        ["python", script_path], capture_output=False, text=True, cwd=backend_dir
-    )
+    cmd = ["python", script_path]
+    if args:
+        cmd.extend(args)
+
+    result = subprocess.run(cmd, capture_output=False, text=True, cwd=backend_dir)
     if result.returncode != 0:
         print(f"Error: {script_name} failed with return code {result.returncode}.")
         return False
@@ -36,7 +38,6 @@ def manage_league_files():
         return
 
     os.makedirs("snapshots/elites", exist_ok=True)
-    os.makedirs("snapshots/graduated", exist_ok=True)
     temp_dir = "snapshots/tmp"
     os.makedirs(temp_dir, exist_ok=True)
 
@@ -44,32 +45,11 @@ def manage_league_files():
         possible_paths = [
             f"snapshots/model_gen_{batch_num}.pt",
             f"snapshots/elites/model_gen_{batch_num}.pt",
-            f"snapshots/graduated/model_gen_{batch_num}.pt",
         ]
         for path in possible_paths:
             if os.path.exists(path):
                 return path
         return None
-
-    graduated_empty = len(glob.glob("snapshots/graduated/model_gen_*.pt")) == 0
-    graduated_batches = set()
-
-    if graduated_empty:
-        valid_candidates = [r for r in results if r["avg_norm_score"] > 0.35]
-        valid_candidates.sort(key=lambda x: (x["avg_norm_score"], x["wins"]))
-        worst_2 = valid_candidates[:2]
-
-        print(f"Graduated folder is empty. Moving {len(worst_2)} anchor models:")
-        for res in worst_2:
-            batch = res["batch"]
-            src_path = find_path(batch)
-
-            if src_path:
-                shutil.copy2(src_path, f"{temp_dir}/grad_model_{batch}.pt")
-                graduated_batches.add(batch)
-                print(
-                    f"  -> Staged graduated: Batch {batch} (Score: {res['avg_norm_score']:.4f})"
-                )
 
     top_8 = results[:8]
     print("Staging top 8 models")
@@ -77,10 +57,8 @@ def manage_league_files():
 
     for res in top_8:
         batch = res["batch"]
-        if batch in graduated_batches:
-            continue
-
         src_path = find_path(batch)
+
         if src_path:
             shutil.copy2(src_path, f"{temp_dir}/elite_model_{batch}.pt")
             print(
@@ -96,10 +74,6 @@ def manage_league_files():
         os.remove(snap)
 
     print("Committing staged files")
-    for staged_grad in glob.glob(f"{temp_dir}/grad_model_*.pt"):
-        batch = staged_grad.split("_")[-1].split(".")[0]
-        shutil.move(staged_grad, f"snapshots/graduated/model_gen_{batch}.pt")
-
     for staged_elite in glob.glob(f"{temp_dir}/elite_model_*.pt"):
         batch = staged_elite.split("_")[-1].split(".")[0]
         shutil.move(staged_elite, f"snapshots/elites/model_gen_{batch}.pt")
@@ -119,7 +93,7 @@ def main():
         print(f"\n=== STARTING LEAGUE GENERATION CYCLE {gen_cycle} ===")
         if not run_step("train.py"):
             break
-        if not run_step("evaluate.py"):
+        if not run_step("evaluate.py", [str(gen_cycle)]):
             break
 
         manage_league_files()

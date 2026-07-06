@@ -4,6 +4,7 @@ import numpy as np
 import random
 import itertools
 from collections import Counter
+from playerTypes.baseline_bot import PresidentenBaselineBot
 from game import Presidenten
 
 
@@ -27,7 +28,13 @@ class PresidentenValueNet(nn.Module):
 
 class PresidentenDMCBot:
     def __init__(
-        self, player_id, model: PresidentenValueNet, device, training=False, epsilon=0.2
+        self,
+        player_id,
+        model: PresidentenValueNet,
+        device,
+        training=False,
+        epsilon=0.2,
+        profile=None,
     ):
         self.player_id = player_id
         self.model = model.to(device)
@@ -35,6 +42,7 @@ class PresidentenDMCBot:
         self.trajectory = []
         self.training = training
         self.epsilon = epsilon
+        self.profile = profile
 
     def get_move(self, state: dict, env: Presidenten, *args, **kwargs):
         legal_moves = state["legal_moves"]
@@ -54,7 +62,17 @@ class PresidentenDMCBot:
                 with torch.no_grad():
                     output_tensor: torch.Tensor = self.model(features_tensor)
                     q_values = output_tensor.squeeze(-1).cpu().numpy()
-                best_idx = np.argmax(q_values)
+
+                if self.profile == "aggressive":
+                    non_pass_indices = [
+                        i for i, m in enumerate(legal_moves) if m != (0, 0, 0)
+                    ]
+                    if non_pass_indices:
+                        best_idx = max(non_pass_indices, key=lambda i: q_values[i])
+                    else:
+                        best_idx = np.argmax(q_values)
+                else:
+                    best_idx = np.argmax(q_values)
             chosen_move = legal_moves[best_idx]
 
             if self.training:
@@ -75,11 +93,11 @@ class PresidentenDMCBot:
         )
         hand = state["hand"]
         possible_passes = list(set(itertools.combinations(hand, count)))
-        best_pass = None
-        best_value = -float("inf")
         num_players = len(state["opp_hand_counts"]) + 1
+        all_hypo_features = []
+        combo_map = []
 
-        for pass_combo in possible_passes:
+        for combo_idx, pass_combo in enumerate(possible_passes):
             hypothetical_state = state.copy()
             hypo_hand = list(hand)
 
@@ -92,23 +110,39 @@ class PresidentenDMCBot:
             if not hand_counts:
                 continue
 
-            hypo_features = []
             for card, count_held in hand_counts.items():
                 for play_count in range(1, count_held + 1):
                     move = (card, play_count, 0)
                     features = vectorize_state_action(
                         hypothetical_state, move, num_players
                     )
-                    hypo_features.append(features)
+                    all_hypo_features.append(features)
+                    combo_map.append(combo_idx)
 
-            features_tensor = torch.FloatTensor(np.array(hypo_features)).to(self.device)
-            with torch.no_grad():
-                q_values = self.model(features_tensor).squeeze(-1).cpu().numpy()
+        if not all_hypo_features:
+            return (
+                list(possible_passes[0])
+                if possible_passes
+                else PresidentenBaselineBot(self.player_id).choose_cards_to_pass(state)
+            )
 
-            value = np.mean(q_values)
-            if value > best_value:
-                best_value = value
-                best_pass = pass_combo
+        features_tensor = torch.FloatTensor(np.array(all_hypo_features)).to(self.device)
+        with torch.no_grad():
+            q_values = self.model(features_tensor).squeeze(-1).cpu().numpy()
+
+        combo_scores = {i: [] for i in range(len(possible_passes))}
+        for q_val, combo_idx in zip(q_values, combo_map):
+            combo_scores[combo_idx].append(q_val)
+
+        best_pass = None
+        best_value = -float("inf")
+
+        for combo_idx, scores in combo_scores.items():
+            if scores:
+                avg_value = np.mean(scores)
+                if avg_value > best_value:
+                    best_value = avg_value
+                    best_pass = possible_passes[combo_idx]
         return list(best_pass) if best_pass else []
 
 

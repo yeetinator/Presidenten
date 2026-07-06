@@ -9,13 +9,13 @@ from playerTypes.baseline_bot import PresidentenBaselineBot
 from playerTypes.dmc_bot import PresidentenDMCBot, PresidentenValueNet
 from game import Presidenten
 
-BATCH_GAMES = 50
+BATCH_GAMES = 52
 ROUNDS_PER_GAME = 10
 SAVE_SNAPSHOT_EVERY = 250
 LEARNING_RATE = 1e-4
 INPUT_DIM = 115
 GRADIENT_CLIP = 1.0
-NUM_WORKERS = 10
+NUM_WORKERS = 13
 
 _SNAPSHOT_CACHE = {}
 _SHARED_MODEL = None
@@ -78,8 +78,7 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
                 player_id=seat,
                 model=snap_model,
                 device=device,
-                training=True,
-                epsilon=0.35,
+                profile="aggressive",
             )
         else:
             bot_instances[seat] = PresidentenBaselineBot(player_id=seat)
@@ -157,7 +156,7 @@ def main():
 
     optimizer = torch.optim.Adam(live_model.parameters(), lr=LEARNING_RATE)
     loss_fn = torch.nn.MSELoss()
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99995)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, 0.99995)
 
     if os.path.exists(resume_path):
         print(f"Resuming checkpoint from {resume_path}...")
@@ -174,7 +173,6 @@ def main():
     print("Starting training loop. Press Ctrl+C to stop and save the model.")
     max_batches = 0 if batch_idx == 0 else batch_idx % 2000
     running_losses = []
-    log_interval = 20
 
     with ctx.Pool(
         processes=NUM_WORKERS, initializer=init_worker, initargs=(shared_model,)
@@ -185,9 +183,7 @@ def main():
                 max_batches += 1
                 epsilon = max(0.05, epsilon * 0.9997)
                 all_x, all_y = [], []
-                elite_paths = glob.glob("snapshots/elites/model_gen_*.pt")
-                graduated_paths = glob.glob("snapshots/graduated/model_gen_*.pt")
-                elite_snapshots = elite_paths + graduated_paths
+                elite_snapshots = glob.glob("snapshots/elites/model_gen_*.pt")
                 tasks = [
                     (
                         epsilon,
@@ -243,7 +239,7 @@ def main():
 
                     running_losses.append(avg_loss)
 
-                    if batch_idx % log_interval == 0:
+                    if batch_idx % 25 == 0:
                         rolling_loss = np.mean(running_losses)
                         print(
                             f"=========================================================================\n"

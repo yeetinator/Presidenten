@@ -3,14 +3,22 @@ import concurrent.futures
 import torch
 import os
 import json
+import random
+import sys
+import numpy as np
 from playerTypes.dmc_bot import PresidentenValueNet, PresidentenDMCBot
 from playerTypes.baseline_bot import PresidentenBaselineBot
 from game import Presidenten
 
-TOTAL_GAMES = 1000
+TOTAL_GAMES = 800
 NUM_ROUNDS = 10
-NUM_WORKERS = 10  # Adjust based on your system's CPU cores and memory
+NUM_WORKERS = 8
 INPUT_DIM = 115
+
+try:
+    gen_cycle = int(sys.argv[1]) * 10000
+except (IndexError, ValueError):
+    gen_cycle = 0
 
 
 def evaluate_snapshot(snapshot_file):
@@ -31,6 +39,9 @@ def evaluate_snapshot(snapshot_file):
     accumulated_wins = 0
 
     for game_idx in range(TOTAL_GAMES):
+        curr_seed = gen_cycle + game_idx
+        random.seed(curr_seed)
+        np.random.seed(curr_seed)
         num_players = 4 + (game_idx % 4)
         bot_instances: dict[int, PresidentenDMCBot | PresidentenBaselineBot] = {
             0: PresidentenDMCBot(0, model, device)
