@@ -405,55 +405,90 @@
           </aside>
 
           <div class="flex items-center justify-center xl:row-start-2">
-            <div
-              class="w-full max-w-md flex items-center justify-center p-3 min-h-28 relative"
+            <button
+              type="button"
+              class="w-full max-w-xs aspect-square flex flex-col justify-between p-4 relative"
+              disabled={!isMyTurn || haveIPassed || !isSelectionLegal}
+              on:click={handlePlay}
             >
               <div
-                class="relative flex items-end justify-center overflow-visible h-20 w-full"
+                class="w-full text-center pointer-events-none z-10 select-none"
               >
-                {#each flatVisualPile as card (card.suitCard)}
-                  <div
-                    in:receive={{ key: card.suitCard }}
-                    out:send={{ key: card.suitCard, isPile: true }}
-                    on:introstart={gameStore.startAnimation}
-                    on:introend={gameStore.endAnimation}
-                    on:outrostart={gameStore.startAnimation}
-                    on:outroend={gameStore.endAnimation}
-                    class="absolute bottom-0 transition-all duration-300 flex justify-center origin-bottom"
-                    style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"}; z-index: ${card.playIndex * 10 + card.cardIndex}; 
-                      transform: translateX(${(card.cardIndex - (visualPile[card.playIndex].length - 1) / 2) * 1.4}rem);`}
+                {#if isMyTurn && isSelectionLegal}
+                  <span
+                    class="text-[0.6rem] font-black uppercase tracking-[0.25em] text-emerald-400 animate-pulse"
+                    >➔ Click the Pile to Play Move</span
                   >
+                {:else if $selectedCards.length > 0 && !isSelectionLegal && !$exchangePrompt}
+                  <span
+                    class="text-[0.6rem] font-bold uppercase tracking-[0.25em] text-red-400/90"
+                    >✕ Illegal Combination</span
+                  >
+                {:else}
+                  <span
+                    class="text-[0.55rem] font-bold uppercase tracking-[0.25em] text-white/20"
+                    >Game Pile</span
+                  >
+                {/if}
+              </div>
+              <div
+                class="absolute inset-0 flex items-center justify-center overflow-visible pointer-events-none"
+              >
+                <div
+                  class="relative flex items-center justify-center overflow-visible h-28 w-full"
+                >
+                  {#each flatVisualPile as card (card.suitCard)}
                     <div
-                      style={`transform: rotate(${cardRotations[card.suitCard] ?? 0}deg);`}
-                      class="origin-center flex justify-center items-center"
+                      in:receive={{ key: card.suitCard }}
+                      out:send={{ key: card.suitCard, isPile: true }}
+                      on:introstart={gameStore.startAnimation}
+                      on:introend={gameStore.endAnimation}
+                      on:outrostart={gameStore.startAnimation}
+                      on:outroend={gameStore.endAnimation}
+                      class="absolute transition-all duration-300 flex justify-center origin-center"
+                      style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"}; z-index: ${card.playIndex * 10 + card.cardIndex}; 
+                      transform: translateX(${(card.cardIndex - (visualPile[card.playIndex].length - 1) / 2) * 1.4}rem);`}
                     >
-                      <Card
-                        suitCard={card.suitCard}
-                        isFaceUp={true}
-                        disabled={true}
-                        className="shrink-0 scale-[0.85] origin-center"
-                      />
+                      <div
+                        style={`transform: rotate(${cardRotations[card.suitCard] ?? 0}deg);`}
+                        class="origin-center flex justify-center items-center"
+                      >
+                        <Card
+                          suitCard={card.suitCard}
+                          isFaceUp={true}
+                          disabled={true}
+                          className="shrink-0 scale-[0.85] origin-center shadow-lg shadow-black/40"
+                        />
+                      </div>
                     </div>
-                  </div>
-                {/each}
+                  {/each}
+                </div>
               </div>
               {#if visualPile.length === 0}
                 <div
-                  transition:fly={{ y: 10, duration: transitionFlyDuration }}
-                  class="absolute text-center text-emerald-50/70 py-1 pointer-events-none"
+                  transition:fade={{ duration: transitionFlyDuration }}
+                  class="absolute inset-0 flex flex-col items-center justify-center text-center text-emerald-50/40 p-4 pointer-events-none select-none"
                 >
-                  <div class="text-[0.6rem] uppercase tracking-[0.3em]">
-                    Game Pile
-                  </div>
-                  <div class="mt-0.5 text-xl font-black text-white/70">
+                  <div
+                    class="text-xl font-black text-white/10 uppercase tracking-wider"
+                  >
                     Empty
                   </div>
-                  <div class="mt-0.5 text-xs">
-                    Play any valid combination to lead
+                  <div
+                    class="mt-1 text-[0.65rem] max-w-48 leading-normal opacity-80"
+                  >
+                    {#if $exchangePrompt}
+                      Card exchange phase active
+                    {:else if isMyTurn}
+                      Select cards from your hand to lead
+                    {:else}
+                      Waiting for players...
+                    {/if}
                   </div>
                 </div>
               {/if}
-            </div>
+              <div class="h-3 pointer-events-none"></div>
+            </button>
           </div>
 
           <aside class="flex items-center justify-center xl:row-start-2">
@@ -508,6 +543,7 @@
                       (!!$exchangePrompt &&
                         (!exchangeCanChoose || exchangeRequiredCards === 0)) ||
                       !$enableCards}
+                    exchange={!!$exchangePrompt}
                     className="shrink-0 scale-[0.75] md:scale-[0.95] pointer-events-auto"
                     onClick={() => handleToggleCard(suitCard)}
                   />
@@ -534,15 +570,6 @@
                   Confirm Exchange
                 </button>
               {:else}
-                <button
-                  class="rounded-lg border border-emerald-300/30 bg-emerald-400 px-4 py-1.5 font-semibold
-                    text-emerald-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40 text-xs"
-                  type="button"
-                  disabled={!isMyTurn || !isSelectionLegal}
-                  on:click={handlePlay}
-                >
-                  Play
-                </button>
                 <button
                   class="rounded-lg border border-white/10 bg-white/10 px-4 py-1.5 font-semibold
                     text-white transition hover:bg-white/15 text-xs"
