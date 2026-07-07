@@ -14,17 +14,21 @@
 
 <button
   type="button"
-  class={`relative h-28 w-20 select-none rounded-xl bg-white shadow-md outline-none transition-all duration-200 ease-out md:h-36 md:w-24 ${className} ${
-    isSelected
-      ? "-translate-y-6 scale-105 shadow-xl ring-4 ring-emerald-400"
-      : "hover:-translate-y-2 hover:shadow-lg"
-  } border border-slate-200 ${isBlinking && !disabled ? "animate-jump-ready" : ""}`}
+  class={`relative h-28 w-20 select-none rounded-md bg-white shadow-md outline-none transition-all duration-200 ease-out md:h-36 md:w-24 ${className} ${
+    disabled
+      ? ""
+      : isSelected
+        ? "-translate-y-6 scale-105 shadow-xl ring-4 ring-emerald-400"
+        : "hover:-translate-y-2 hover:shadow-lg"
+  } border border-slate-200 overflow-hidden ${isBlinking && !disabled ? "animate-jump-ready" : ""}`}
   {disabled}
   on:click={onClick}
 >
-  <div class="w-full h-full overflow-hidden rounded-xl pointer-events-none">
-    <img src={imgSrc} alt="Playing Card" class="h-full w-full object-contain" />
-  </div>
+  <img
+    src={imgSrc}
+    alt="Playing Card"
+    class="h-full w-full object-fill pointer-events-none"
+  />
 </button>
 
 <style>

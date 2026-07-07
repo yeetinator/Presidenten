@@ -431,7 +431,7 @@
                         suitCard={card.suitCard}
                         isFaceUp={true}
                         disabled={true}
-                        className="shrink-0 scale-[0.7] origin-center"
+                        className="shrink-0 scale-[0.85] origin-center"
                       />
                     </div>
                   </div>
@@ -508,7 +508,7 @@
                       (!!$exchangePrompt &&
                         (!exchangeCanChoose || exchangeRequiredCards === 0)) ||
                       !$enableCards}
-                    className="shrink-0 scale-[0.75] md:scale-[0.8] pointer-events-auto"
+                    className="shrink-0 scale-[0.75] md:scale-[0.95] pointer-events-auto"
                     onClick={() => handleToggleCard(suitCard)}
                   />
                 </div>
@@ -516,7 +516,7 @@
             </div>
           </div>
           <div
-            class="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 p-2 text-xs md:text-sm"
+            class="flex items-center justify-between gap-2 p-2 text-xs md:text-sm"
           >
             <div class="text-xs text-green-50/75">{selectedMoveLabel}</div>
             <div class="flex gap-2">

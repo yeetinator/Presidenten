@@ -36,12 +36,6 @@
         class={`truncate text-sm font-black ${opponent.is_turn ? "text-yellow-400" : "text-white"}`}
       >
         {opponent.label}
-        {#if opponent.has_passed}
-          <span
-            class="ml-1 text-[0.65rem] font-bold text-red-400 tracking-wider"
-            >PASSED</span
-          >
-        {/if}
       </div>
     </div>
   </div>
