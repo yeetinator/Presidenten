@@ -51,6 +51,10 @@
     );
   })();
 
+  $: isExchangeReady =
+    !!$exchangePrompt && $selectedCards.length === exchangeRequiredCards;
+  $: isCenterClickable = (isMyTurn && isSelectionLegal) || isExchangeReady;
+
   $: opponentViews = Object.entries($gameState?.player_roles ?? {})
     .map(([seatStr, role]) => {
       const seat = Number(seatStr);
@@ -232,6 +236,11 @@
     }
   }
 
+  function handleCenterAction() {
+    if (isExchangeReady) handleConfirmExchange();
+    else if (isMyTurn && isSelectionLegal) handlePlay();
+  }
+
   async function handlePlay() {
     try {
       console.log("Playing selected cards:", $selectedCards);
@@ -336,7 +345,7 @@
     {#if !$roundSummary}
       <Rules className="left-4" side="left" />
       <button
-        class="fixed right-4 top-4 z-30 rounded-md border border-red-300/30 bg-red-500 px-3 py-1 text-[0.65rem]
+        class="fixed right-5 top-4 z-30 rounded-md border border-red-300/30 bg-red-500 px-3 py-1 text-[0.65rem]
         font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-red-400 active:scale-[0.98]"
         type="button"
         on:click={handleQuit}
@@ -345,7 +354,7 @@
       </button>
       {#if suitedHand.length === 0 && opponentViews.some((o) => o.suitedHand.length !== 0) && !$exchangePrompt}
         <button
-          class="fixed right-21 top-4 z-30 rounded-md border border-blue-300/30 bg-blue-500 px-3 py-1 text-[0.65rem]
+          class="fixed right-22 top-4 z-30 rounded-md border border-blue-300/30 bg-blue-500 px-3 py-1 text-[0.65rem]
         font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-blue-400 active:scale-[0.98]"
           type="button"
           on:click={handleFastForward}
@@ -375,7 +384,7 @@
     >
       <section
         class="rounded-2xl border border-emerald-300/15 bg-[radial-gradient(circle_at_top,rgba(52,211,153,0.18),rgba(6,20,12,0.96)_68%)]
-          p-3 shadow-lg backdrop-blur-md flex flex-col justify-between overflow-hidden"
+          p-1 shadow-lg backdrop-blur-md flex flex-col justify-between overflow-hidden"
       >
         <div
           class="grid gap-3 xl:grid-cols-[16rem_1fr_16rem] xl:grid-rows-[auto_1fr] h-full items-center"
@@ -407,22 +416,32 @@
           <div class="flex items-center justify-center xl:row-start-2">
             <button
               type="button"
-              class="w-full max-w-xs aspect-square flex flex-col justify-between p-4 relative"
-              disabled={!isMyTurn || haveIPassed || !isSelectionLegal}
-              on:click={handlePlay}
+              class="w-full max-w-xs aspect-square flex flex-col justify-between p-4 relative rounded-3xl border transition-all duration-300 outline-none
+              {isExchangeReady
+                ? 'border-amber-400 bg-amber-500/5 shadow-[0_0_30px_rgba(245,158,11,0.25)] hover:bg-amber-500/10 cursor-pointer active:scale-[0.99]'
+                : isMyTurn && isSelectionLegal
+                  ? 'border-emerald-400 bg-emerald-500/5 shadow-[0_0_30px_rgba(52,211,153,0.2)] hover:bg-emerald-500/10 cursor-pointer active:scale-[0.99]'
+                  : 'border-white/5 bg-white/1 cursor-default'}"
+              disabled={!isCenterClickable}
+              on:click={handleCenterAction}
             >
               <div
                 class="w-full text-center pointer-events-none z-10 select-none"
               >
-                {#if isMyTurn && isSelectionLegal}
+                {#if isExchangeReady}
+                  <span
+                    class="text-[0.6rem] font-black uppercase tracking-[0.25em] text-amber-400 animate-pulse"
+                    >➔ Click Here to Send Cards
+                  </span>
+                {:else if isMyTurn && isSelectionLegal}
                   <span
                     class="text-[0.6rem] font-black uppercase tracking-[0.25em] text-emerald-400 animate-pulse"
-                    >➔ Click the Pile to Play Move</span
-                  >
+                    >➔ Click Here to Play Move
+                  </span>
                 {:else if $selectedCards.length > 0 && !isSelectionLegal && !$exchangePrompt}
                   <span
                     class="text-[0.6rem] font-bold uppercase tracking-[0.25em] text-red-400/90"
-                    >✕ Illegal Combination</span
+                    >✕ Invalid Combination</span
                   >
                 {:else}
                   <span
@@ -464,30 +483,11 @@
                   {/each}
                 </div>
               </div>
-              {#if visualPile.length === 0}
-                <div
-                  transition:fade={{ duration: transitionFlyDuration }}
-                  class="absolute inset-0 flex flex-col items-center justify-center text-center text-emerald-50/40 p-4 pointer-events-none select-none"
-                >
-                  <div
-                    class="text-xl font-black text-white/10 uppercase tracking-wider"
-                  >
-                    Empty
-                  </div>
-                  <div
-                    class="mt-1 text-[0.65rem] max-w-48 leading-normal opacity-80"
-                  >
-                    {#if $exchangePrompt}
-                      Card exchange phase active
-                    {:else if isMyTurn}
-                      Select cards from your hand to lead
-                    {:else}
-                      Waiting for players...
-                    {/if}
-                  </div>
-                </div>
-              {/if}
-              <div class="h-3 pointer-events-none"></div>
+              <div
+                class="w-full text-center pointer-events-none z-10 select-none text-[0.65rem] font-medium tracking-wide text-white/60 leading-normal max-w-56 mx-auto"
+              >
+                {selectedMoveLabel}
+              </div>
             </button>
           </div>
 
@@ -501,18 +501,22 @@
             {/if}
           </aside>
         </div>
-        <div class="grid gap-2">
-          <div
-            class="px-3 py-1 overflow-visible relative min-h-22 flex items-center justify-center"
-          >
-            {#if suitedHand.length === 0}
-              <div
-                transition:fly={{ y: 5, duration: transitionFlyDuration }}
-                class="absolute inset-x-3 inset-y-1 flex items-center justify-center z-10"
-              ></div>
+        <div class="w-full flex flex-col gap-1 mt-auto">
+          <div class="h-9 flex justify-center z-20 overflow-visible">
+            {#if isMyTurn && $gameState?.can_pass && !$exchangePrompt && $gameState?.pile_leader !== 0}
+              <button
+                transition:fade={{ duration: 100 }}
+                type="button"
+                class="rounded-full border border-white/20 bg-black/50 backdrop-blur-md px-6 py-1.5 text-[0.65rem] font-black uppercase tracking-[0.2em] text-white/90 shadow-md transition-all hover:bg-white/10 hover:text-white active:scale-95"
+                on:click={handlePass}>Pass Turn</button
+              >
             {/if}
+          </div>
+          <div
+            class="px-3 pt-6 overflow-visible relative flex items-center justify-center"
+          >
             <div
-              class="my-0.5 flex w-full justify-center overflow-visible py-1 h-20 items-center transition-all duration-300 {haveIPassed
+              class="flex w-full justify-center overflow-visible h-28 md:h-36 items-center transition-all duration-300 {haveIPassed
                 ? 'opacity-40 grayscale pointer-events-none'
                 : ''}"
               style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"};`}
@@ -551,37 +555,6 @@
               {/each}
             </div>
           </div>
-          <div
-            class="flex items-center justify-between gap-2 p-2 text-xs md:text-sm"
-          >
-            <div class="text-xs text-green-50/75">{selectedMoveLabel}</div>
-            <div class="flex gap-2">
-              {#if $exchangePrompt}
-                <button
-                  class={`rounded-lg px-4 py-1.5 font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 text-xs ${
-                    $selectedCards.length === exchangeRequiredCards
-                      ? "border border-emerald-200/30 bg-emerald-300 text-emerald-950 hover:bg-emerald-200"
-                      : "border border-emerald-300/20 bg-emerald-500/40 text-emerald-50 hover:bg-emerald-400/50"
-                  }`}
-                  type="button"
-                  disabled={$selectedCards.length !== exchangeRequiredCards}
-                  on:click={handleConfirmExchange}
-                >
-                  Confirm Exchange
-                </button>
-              {:else}
-                <button
-                  class="rounded-lg border border-white/10 bg-white/10 px-4 py-1.5 font-semibold
-                    text-white transition hover:bg-white/15 text-xs"
-                  type="button"
-                  disabled={!isMyTurn || !$gameState?.can_pass}
-                  on:click={handlePass}
-                >
-                  Pass
-                </button>
-              {/if}
-            </div>
-          </div>
         </div>
       </section>
 
@@ -590,7 +563,8 @@
           eyebrow="Round complete"
           eyebrowClass="text-amber-200/75"
           title="Play the next round or quit"
-          scores={Object.entries($roundSummary.scores)}
+          scores={$roundSummary.scores}
+          playerTypes={$gameState?.player_types}
         >
           <div slot="actions" class="flex gap-3">
             <button

@@ -22,7 +22,7 @@
 </script>
 
 <article
-  class={`flex flex-col transition-all duration-300 ${className} ${opponent.has_passed ? "opacity-40 grayscale pointer-events-none" : ""}`}
+  class={`flex flex-col gap-1 transition-all duration-300 ${className} ${opponent.has_passed ? "opacity-40 grayscale pointer-events-none" : ""}`}
   style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"};`}
 >
   <div class="flex items-center justify-center gap-2">

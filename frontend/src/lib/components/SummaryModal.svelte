@@ -1,14 +1,13 @@
 <script lang="ts">
-  type ScoreRow = [string, [number, number]];
-
   export let eyebrow = "";
   export let eyebrowClass = "text-emerald-300/80";
   export let title = "";
-  export let scores: ScoreRow[] = [];
+  export let scores: Record<number, [number, number]> = [];
+  export let playerTypes: Record<number, string> = {};
 
-  $: sortedScores = [...scores].sort(
-    (left, right) => Number(right[1][0]) - Number(left[1][0]),
-  );
+  $: sortedScores = [...Object.entries(scores)]
+    .sort((left, right) => Number(right[1][0]) - Number(left[1][0]))
+    .map(([seat, [points, wins]]) => [Number(seat), [points, wins]] as const);
 </script>
 
 <div
@@ -45,7 +44,10 @@
         <div
           class="grid grid-cols-[0.7fr_1fr_1fr] gap-px bg-white/10 text-sm text-slate-100"
         >
-          <div class="bg-black/30 px-4 py-3 font-semibold">Player {seat}</div>
+          <div class="bg-black/30 px-4 py-3 font-semibold">
+            {playerTypes[seat] || `Player`}
+            {playerTypes[seat] === "Human" ? "" : `${seat}`}
+          </div>
           <div class="bg-black/30 px-4 py-3">{points}</div>
           <div class="bg-black/30 px-4 py-3">{wins}</div>
         </div>

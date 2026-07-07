@@ -25,13 +25,13 @@ export interface StateUpdateMessage {
 
 export interface RoundOverMessage {
   type: "ROUND_OVER";
-  scores: Record<string, [number, number]>;
+  scores: Record<number, [number, number]>;
   roles: Record<string, string>;
   out_order: number[];
 }
 
 export interface RoundSummary {
-  scores: Record<string, [number, number]>;
+  scores: Record<number, [number, number]>;
   roles: Record<string, string>;
   out_order: number[];
 }
@@ -81,9 +81,9 @@ type IncomingWebSocketMessage =
   | ExchangePromptMessage
   | RoundOverMessage
   | {
-    type: string;
-    [key: string]: unknown;
-  };
+      type: string;
+      [key: string]: unknown;
+    };
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -212,7 +212,10 @@ function getAutoFinishMove(): string[][] | null;
 function getAutoFinishMove(clickedCardValue: string): string[] | null;
 function getAutoFinishMove(clickedCardValue: string | null = null) {
   const currState = get(state);
-  if (!currState?.legal_moves_suits?.length || !currState.suit_last_move?.length)
+  if (
+    !currState?.legal_moves_suits?.length ||
+    !currState.suit_last_move?.length
+  )
     return null;
 
   const candidateMoves = buildAutoFinishMoves(currState.suit_last_move);
