@@ -60,7 +60,7 @@
     <section
       class="w-full rounded-3xl border border-white/10 bg-black/25 p-8 shadow-2xl shadow-black/35 backdrop-blur-md md:p-10"
     >
-      <Rules className="fixed right-4 top-4" side="right" />
+      <Rules className="right-4" side="right" />
       <div class="mb-8 space-y-3">
         <p class="text-sm uppercase tracking-[0.35em] text-green-200/80">
           President Lobby

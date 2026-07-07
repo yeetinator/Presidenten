@@ -2,14 +2,14 @@
   import { fly } from "svelte/transition";
 
   export let className = "";
-  export let side = "";
+  export let side: "left" | "right" = "right";
 
   let isHovered = false;
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class={`${className} z-30 flex h-9 w-9 items-center justify-center rounded-full
+  class={`fixed top-4 ${className} z-30 flex h-9 w-9 items-center justify-center rounded-full
          border border-white/20 bg-white/10 shadow-lg shadow-black/20
          backdrop-blur-md transition-all duration-200
          hover:border-white/30 hover:bg-white/20 active:scale-95`}
@@ -26,7 +26,7 @@
     <div
       in:fly={{ x: -15, duration: 200 }}
       out:fly={{ x: -10, duration: 150 }}
-      class={`absolute ${side}-12 top-0 w-96 rounded-2xl border border-white/10
+      class={`absolute ${side === "left" ? "left-12" : "right-12"} top-0 w-96 rounded-2xl border border-white/10
              bg-slate-950/95 p-5 text-sm shadow-2xl shadow-black/50 backdrop-blur-xl`}
     >
       <div class="mb-3 border-b border-white/10 pb-2">

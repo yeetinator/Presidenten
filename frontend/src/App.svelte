@@ -334,7 +334,7 @@
       p-2 text-white md:p-3"
   >
     {#if !$roundSummary}
-      <Rules className="fixed left-4 top-4" side="left" />
+      <Rules className="left-4" side="left" />
       <button
         class="fixed right-4 top-4 z-30 rounded-md border border-red-300/30 bg-red-500 px-3 py-1 text-[0.65rem]
         font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-red-400 active:scale-[0.98]"
