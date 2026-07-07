@@ -4,6 +4,7 @@ import os
 import json
 import glob
 import shutil
+import torch
 
 
 def run_step(script_name, args=None):
@@ -87,8 +88,20 @@ def manage_league_files():
     print("League management completed.")
 
 
+def get_resume_cycle():
+    resume_path = "snapshots/latest_model.pt"
+    if os.path.exists(resume_path):
+        try:
+            checkpoint = torch.load(resume_path, map_location=torch.device("cpu"))
+            batch_idx = checkpoint.get("batch_idx", 0)
+            return (batch_idx // 2000) + 1
+        except Exception as e:
+            print(f"Error loading checkpoint from {resume_path}: {e}")
+    return 1
+
+
 def main():
-    gen_cycle = 1
+    gen_cycle = get_resume_cycle()
     while True:
         print(f"\n=== STARTING LEAGUE GENERATION CYCLE {gen_cycle} ===")
         if not run_step("train.py"):

@@ -77,7 +77,14 @@ class PresidentBaselineBot:
             low_card_moves.sort(key=lambda x: (x[2], hand_counts[x[0]], x[0], -x[1]))
 
         if high_card_moves:
-            high_card_moves.sort(key=lambda x: (x[2], hand_counts[x[0]], x[0], -x[1]))
+            high_card_moves.sort(
+                key=lambda x: (
+                    x[2],
+                    hand_counts[x[0]],
+                    x[0],
+                    -x[1] if x[0] != 15 else x[1],
+                )
+            )
 
         ranked = low_card_moves + high_card_moves
         return [
