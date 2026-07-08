@@ -35,15 +35,6 @@ cd backend
 uvicorn main:app --reload
 ```
 
-Other useful backend commands:
-
-```powershell
-cd backend
-python run_cli.py
-python train_dmc.py
-python evaluate_dmc.py
-```
-
 ## Run the frontend
 
 Start the frontend development server from the `frontend/` folder:
@@ -52,8 +43,3 @@ Start the frontend development server from the `frontend/` folder:
 cd frontend
 npm run dev
 ```
-
-## Notes
-
-- Model snapshots and trained weights will be stored in `snapshots/`. I put my personal best model in `backend/playerTypes`.
-- If PyTorch installation fails on your machine, install the wheel recommended by the official PyTorch installer for your platform, then rerun `pip install -r requirements.txt`.
