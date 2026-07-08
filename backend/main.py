@@ -549,7 +549,11 @@ async def run(
                 env.clear_pile()
                 await send_state_update(websocket, env, human_id, assign_p)
             else:
-                await asyncio.sleep(timings.message_delay)
+                await asyncio.sleep(
+                    timings.message_delay
+                    if chosen_move != (0, 0, 0)
+                    else timings.pass_delay
+                )
             continue
 
         bot = assigned_players[curr_id]
@@ -592,7 +596,11 @@ async def run(
             await send_state_update(websocket, env, human_id, assign_p)
             await asyncio.sleep(timings.message_delay)
         elif not env.pending_finish and not env.game_over and env.curr_turn != human_id:
-            await asyncio.sleep(timings.message_delay)
+            await asyncio.sleep(
+                timings.message_delay
+                if chosen_move != (0, 0, 0)
+                else timings.pass_delay
+            )
 
     last_active_player = list(env.playing)[0] if env.playing else None
     if last_active_player is None:

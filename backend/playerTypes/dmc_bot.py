@@ -94,7 +94,7 @@ class PresidentDMCBot:
             (None, None, 0),
         )
         hand = state["hand"]
-        possible_passes = list(set(itertools.combinations(hand, count)))
+        possible_passes = sorted(list(set(itertools.combinations(hand, count))))
         num_players = len(state["opp_hand_counts"]) + 1
         all_hypo_features = []
         combo_map = []

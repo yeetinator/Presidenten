@@ -85,6 +85,8 @@
     isSelectionLegal,
     exchangeRequiredCards,
     exchangeCanChoose,
+    !!$gameState?.can_pass,
+    $gameState?.legal_moves_suits,
   );
 
   let visualPile: string[][] = [];
@@ -173,18 +175,25 @@
     legal: boolean,
     reqCards: number,
     canChoose: boolean,
+    canPass: boolean,
+    legalMoves: string[][] | undefined,
   ) {
-    if (cards.length > 0) {
-      if (exchange) return `Selected ${cards.length}/${reqCards} cards`;
-      return legal ? `Valid Move: ${cards.length} cards` : "Illegal Move";
-    }
-    if (!exchange && !myTurn) return "Waiting for your turn";
     if (exchange) {
+      if (cards.length > 0) return `Selected ${cards.length}/${reqCards} cards`;
       if (reqCards === 0) return "Citizen's are exempt from exchanging";
       return canChoose
         ? `Select ${reqCards} cards to give away`
         : `Highest ${reqCards} cards pre-selected`;
     }
+
+    if (!myTurn) return "Waiting for your turn";
+
+    if (cards.length > 0)
+      return legal ? `Valid Move: ${cards.length} cards` : "Illegal Move";
+
+    if (legalMoves && legalMoves.length === 0 && canPass)
+      return "You can only pass this turn";
+
     return "Click cards from your hand to queue them for play";
   }
 
