@@ -23,10 +23,10 @@ def run_step(script_name, args=None):
     return True
 
 
-def manage_league_files():
+def manage_league_files(snapshot_dir="snapshots"):
     print("\n================ MANAGING LEAGUE POOL ================")
 
-    json_path = "snapshots/evaluation_results.json"
+    json_path = f"{snapshot_dir}/evaluation_results.json"
     if not os.path.exists(json_path):
         print(f"Error: {json_path} not found. Skipping league management.")
         return
@@ -38,14 +38,14 @@ def manage_league_files():
         print("Error: No evaluation results found. Skipping league management.")
         return
 
-    os.makedirs("snapshots/elites", exist_ok=True)
-    temp_dir = "snapshots/tmp"
+    os.makedirs(f"{snapshot_dir}/elites", exist_ok=True)
+    temp_dir = f"{snapshot_dir}/tmp"
     os.makedirs(temp_dir, exist_ok=True)
 
     def find_path(batch_num):
         possible_paths = [
-            f"snapshots/model_gen_{batch_num}.pt",
-            f"snapshots/elites/model_gen_{batch_num}.pt",
+            f"{snapshot_dir}/model_gen_{batch_num}.pt",
+            f"{snapshot_dir}/elites/model_gen_{batch_num}.pt",
         ]
         for path in possible_paths:
             if os.path.exists(path):
@@ -68,16 +68,16 @@ def manage_league_files():
             elite_count += 1
 
     print(f"Purging old files")
-    for old_file in glob.glob("snapshots/elites/model_gen_*.pt"):
+    for old_file in glob.glob(f"{snapshot_dir}/elites/model_gen_*.pt"):
         os.remove(old_file)
 
-    for snap in glob.glob("snapshots/model_gen_*.pt"):
+    for snap in glob.glob(f"{snapshot_dir}/model_gen_*.pt"):
         os.remove(snap)
 
     print("Committing staged files")
     for staged_elite in glob.glob(f"{temp_dir}/elite_model_*.pt"):
         batch = staged_elite.split("_")[-1].split(".")[0]
-        shutil.move(staged_elite, f"snapshots/elites/model_gen_{batch}.pt")
+        shutil.move(staged_elite, f"{snapshot_dir}/elites/model_gen_{batch}.pt")
 
     shutil.rmtree(temp_dir)
 
@@ -88,8 +88,8 @@ def manage_league_files():
     print("League management completed.")
 
 
-def get_resume_cycle():
-    resume_path = "snapshots/latest_model.pt"
+def get_resume_cycle(snapshot_dir="snapshots"):
+    resume_path = f"{snapshot_dir}/latest_model.pt"
     if os.path.exists(resume_path):
         try:
             checkpoint = torch.load(resume_path, map_location=torch.device("cpu"))
@@ -100,18 +100,30 @@ def get_resume_cycle():
     return 1
 
 
-def main():
-    gen_cycle = get_resume_cycle()
+def run_orchestrator(
+    snapshot_dir="snapshots",
+    train_script="train_dmc.py",
+    evaluate_script="evaluate_dmc.py",
+):
+    gen_cycle = get_resume_cycle(snapshot_dir)
     while True:
         print(f"\n=== STARTING LEAGUE GENERATION CYCLE {gen_cycle} ===")
-        if not run_step("train.py"):
+        if not run_step(train_script):
             break
-        if not run_step("evaluate.py", [str(gen_cycle)]):
+        if not run_step(evaluate_script, [str(gen_cycle)]):
             break
 
-        manage_league_files()
+        manage_league_files(snapshot_dir)
         gen_cycle += 1
         time.sleep(5)
+
+
+def main():
+    run_orchestrator(
+        snapshot_dir="snapshots",
+        train_script="train_dmc.py",
+        evaluate_script="evaluate_dmc.py",
+    )
 
 
 if __name__ == "__main__":

@@ -44,7 +44,13 @@ class PresidentDMCBot:
         self.epsilon = epsilon
         self.profile = profile
 
-    def get_move(self, state: dict, env: President, *args, **kwargs):
+    def vectorize_state(self, state: dict, env: President | None = None):
+        num_players = (
+            env.players if env is not None else len(state["opp_hand_counts"]) + 1
+        )
+        return vectorize_state(state, num_players)
+
+    def get_move(self, state: dict, env: President | None = None, *args, **kwargs):
         legal_moves = state["legal_moves"]
         if not legal_moves:
             return (0, 0, 0)
@@ -52,7 +58,7 @@ class PresidentDMCBot:
         if len(legal_moves) == 1:
             return legal_moves[0]
         else:
-            state_vec = vectorize_state(state, env.players)
+            state_vec = self.vectorize_state(state, env)
             features = [
                 np.concatenate([state_vec, vectorize_move(move)])
                 for move in legal_moves
@@ -81,7 +87,7 @@ class PresidentDMCBot:
                 self.trajectory.append(features[best_idx])
             return chosen_move
 
-    def choose_cards_to_pass(self, state: dict):
+    def choose_cards_to_pass(self, state: dict, env: President | None = None):
         if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
             return []
 
@@ -95,24 +101,23 @@ class PresidentDMCBot:
         )
         hand = state["hand"]
         possible_passes = sorted(list(set(itertools.combinations(hand, count))))
-        num_players = len(state["opp_hand_counts"]) + 1
         all_hypo_features = []
         combo_map = []
 
         for combo_idx, pass_combo in enumerate(possible_passes):
-            hypothetical_state = state.copy()
+            hypo_state = state.copy()
             hypo_hand = list(hand)
 
             for c in pass_combo:
                 hypo_hand.remove(c)
 
-            hypothetical_state["hand"] = hypo_hand
+            hypo_state["hand"] = hypo_hand
             hand_counts = Counter(hypo_hand)
 
             if not hand_counts:
                 continue
 
-            hypo_state_vec = vectorize_state(hypothetical_state, num_players)
+            hypo_state_vec = self.vectorize_state(hypo_state, env)
             for card, count_held in hand_counts.items():
                 for play_count in range(1, count_held + 1):
                     move = (card, play_count, 0)

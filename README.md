@@ -40,8 +40,8 @@ Other useful backend commands:
 ```powershell
 cd backend
 python run_cli.py
-python train.py
-python evaluate.py
+python train_dmc.py
+python evaluate_dmc.py
 ```
 
 ## Run the frontend

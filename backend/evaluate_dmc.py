@@ -13,15 +13,9 @@ from game import President
 TOTAL_GAMES = 800
 NUM_ROUNDS = 10
 NUM_WORKERS = 8
-INPUT_DIM = 115
-
-try:
-    gen_cycle = int(sys.argv[1]) * 10000
-except (IndexError, ValueError):
-    gen_cycle = 0
 
 
-def evaluate_snapshot(snapshot_file):
+def evaluate_snapshot(snapshot_file, net_class, bot_class, input_dim, gen_cycle=0):
     torch.set_num_threads(1)
     device = torch.device("cpu")
 
@@ -30,7 +24,7 @@ def evaluate_snapshot(snapshot_file):
     except (IndexError, ValueError):
         batch_num = 0
 
-    model = PresidentValueNet(INPUT_DIM).to(device)
+    model = net_class(input_dim).to(device)
     checkpoint = torch.load(snapshot_file, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
@@ -44,7 +38,7 @@ def evaluate_snapshot(snapshot_file):
         np.random.seed(curr_seed)
         num_players = 4 + (game_idx % 4)
         bot_instances: dict[int, PresidentDMCBot | PresidentBaselineBot] = {
-            0: PresidentDMCBot(0, model, device)
+            0: bot_class(0, model, device)
         }
 
         for seat in range(1, num_players):
@@ -52,13 +46,13 @@ def evaluate_snapshot(snapshot_file):
 
         env = President(num_players)
         for round_idx in range(NUM_ROUNDS):
-            state = env.full_reset(next_round=(round_idx > 0))
+            state = env.full_reset(round_idx > 0)
             if round_idx > 0:
                 cards_to_pass = {}
                 for p_id, role in env.roles.items():
                     if role != "Citizen":
                         cards_to_pass[p_id] = bot_instances[p_id].choose_cards_to_pass(
-                            env._get_state(p_id)
+                            env._get_state(p_id), env
                         )
 
                 for pair in env.role_pairs:
@@ -97,11 +91,22 @@ def evaluate_snapshot(snapshot_file):
     }
 
 
-def main():
-    snapshot_files = glob.glob("snapshots/model_gen_*.pt") + glob.glob(
-        "snapshots/elites/model_gen_*.pt"
-    )
+def run_evaluation(
+    net_class=PresidentValueNet,
+    bot_class=PresidentDMCBot,
+    input_dim=115,
+    snapshot_dir="snapshots",
+    gen_cycle=None,
+):
+    if gen_cycle is None:
+        try:
+            gen_cycle = int(sys.argv[1]) * 10000
+        except (IndexError, ValueError):
+            gen_cycle = 0
 
+    snapshot_files = glob.glob(f"{snapshot_dir}/model_gen_*.pt") + glob.glob(
+        f"{snapshot_dir}/elites/model_gen_*.pt"
+    )
     if not snapshot_files:
         print("No snapshot files found.")
         return
@@ -111,7 +116,9 @@ def main():
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
         futures = {
-            executor.submit(evaluate_snapshot, snapshot): snapshot
+            executor.submit(
+                evaluate_snapshot, snapshot, net_class, bot_class, input_dim, gen_cycle
+            ): snapshot
             for snapshot in snapshot_files
         }
         completed = 0
@@ -136,9 +143,18 @@ def main():
         )
     print("=" * 65)
 
-    json_path = "snapshots/evaluation_results.json"
+    json_path = f"{snapshot_dir}/evaluation_results.json"
     with open(json_path, "w") as f:
         json.dump(results, f, indent=4)
+
+
+def main():
+    run_evaluation(
+        net_class=PresidentValueNet,
+        bot_class=PresidentDMCBot,
+        input_dim=115,
+        snapshot_dir="snapshots",
+    )
 
 
 if __name__ == "__main__":

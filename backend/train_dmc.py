@@ -8,33 +8,44 @@ import torch.multiprocessing as mp
 from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
 from game import President
+from typing import Type, Optional
 
 BATCH_GAMES = 52
 ROUNDS_PER_GAME = 10
 SAVE_SNAPSHOT_EVERY = 250
 LEARNING_RATE = 1e-4
-INPUT_DIM = 115
 GRADIENT_CLIP = 1.0
 NUM_WORKERS = 13
 
 _SNAPSHOT_CACHE = {}
 _SHARED_MODEL = None
+_NET_CLASS: Type[torch.nn.Module] = PresidentValueNet
+_BOT_CLASS: Type = PresidentDMCBot
+_INPUT_DIM: int = 115
 
 
-def init_worker(shared_model):
+def init_worker(
+    shared_model,
+    net_class,
+    bot_class,
+    input_dim,
+):
     torch.set_num_threads(1)
-    global _SHARED_MODEL
+    global _SHARED_MODEL, _NET_CLASS, _BOT_CLASS, _INPUT_DIM
     _SHARED_MODEL = shared_model
+    _NET_CLASS = net_class
+    _BOT_CLASS = bot_class
+    _INPUT_DIM = input_dim
 
 
 def parallel_worker(epsilon, elite_snapshots=None):
-    global _SHARED_MODEL, _SNAPSHOT_CACHE
+    global _SHARED_MODEL, _SNAPSHOT_CACHE, _NET_CLASS, _INPUT_DIM
 
     paths = elite_snapshots or []
     if paths:
         for path in paths:
             if path not in _SNAPSHOT_CACHE:
-                snap_model = PresidentValueNet(INPUT_DIM).to("cpu")
+                snap_model = _NET_CLASS(_INPUT_DIM).to("cpu")
                 checkpoint = torch.load(path, map_location="cpu")
                 snap_model.load_state_dict(checkpoint["model_state_dict"])
                 snap_model.eval()
@@ -48,52 +59,39 @@ def parallel_worker(epsilon, elite_snapshots=None):
 
 
 def run_single_game(live_model, device, epsilon, elite_snapshots=None):
-    global _SNAPSHOT_CACHE
+    global _SNAPSHOT_CACHE, _BOT_CLASS, _INPUT_DIM
     num_players = random.randint(4, 7)
     bot_instances: dict[int, PresidentDMCBot | PresidentBaselineBot] = {}
-    bot_instances[0] = PresidentDMCBot(
-        0, live_model, device, training=True, epsilon=epsilon
-    )
+    bot_instances[0] = _BOT_CLASS(0, live_model, device, True, epsilon)
 
     for seat in range(1, num_players):
         roll = random.random()
         if roll < 0.65:
-            bot_instances[seat] = PresidentDMCBot(
-                player_id=seat,
-                model=live_model,
-                device=device,
-                training=True,
-                epsilon=epsilon,
-            )
+            bot_instances[seat] = _BOT_CLASS(seat, live_model, device, True, epsilon)
         elif roll < 0.80 and elite_snapshots:
             snap_path = random.choice(elite_snapshots)
             snap_model = _SNAPSHOT_CACHE[snap_path]
-            bot_instances[seat] = PresidentDMCBot(
-                player_id=seat, model=snap_model, device=device, training=False
-            )
+            bot_instances[seat] = _BOT_CLASS(seat, snap_model, device)
         elif roll < 0.90 and elite_snapshots:
             snap_path = random.choice(elite_snapshots)
             snap_model = _SNAPSHOT_CACHE[snap_path]
-            bot_instances[seat] = PresidentDMCBot(
-                player_id=seat,
-                model=snap_model,
-                device=device,
-                profile="aggressive",
+            bot_instances[seat] = _BOT_CLASS(
+                seat, snap_model, device, profile="aggressive"
             )
         else:
-            bot_instances[seat] = PresidentBaselineBot(player_id=seat)
+            bot_instances[seat] = PresidentBaselineBot(seat)
 
     env = President(num_players)
     game_x, game_y = [], []
 
     for round_idx in range(ROUNDS_PER_GAME):
-        state = env.full_reset(next_round=(round_idx > 0))
+        state = env.full_reset(round_idx > 0)
         if round_idx > 0:
             cards_to_pass = {}
             for p_id, role in env.roles.items():
                 if role != "Citizen":
                     cards_to_pass[p_id] = bot_instances[p_id].choose_cards_to_pass(
-                        env._get_state(p_id)
+                        env._get_state(p_id), env
                     )
 
             for pair in env.role_pairs:
@@ -107,7 +105,7 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
                 for bot in bot_instances.values():
                     if isinstance(bot, PresidentDMCBot):
                         bot.trajectory.clear()
-                return np.empty((0, INPUT_DIM), dtype=np.float32), np.empty(
+                return np.empty((0, _INPUT_DIM), dtype=np.float32), np.empty(
                     (0, 1), dtype=np.float32
                 )
 
@@ -129,7 +127,7 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
             bot = bot_instances[p_id]
             if isinstance(bot, PresidentDMCBot):
                 if bot.training and len(bot.trajectory) > 0 and bot.model == live_model:
-                    round_score = env.players - 1 - rank
+                    round_score = max_possible_score - rank
                     normalized_score = (round_score / max_possible_score) * 2 - 1
 
                     for i, features in enumerate(reversed(bot.trajectory)):
@@ -140,17 +138,22 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
     return np.array(game_x, dtype=np.float32), np.array(game_y, dtype=np.float32)
 
 
-def main():
-    os.makedirs("snapshots", exist_ok=True)
+def run_training_loop(
+    net_class=PresidentValueNet,
+    bot_class=PresidentDMCBot,
+    input_dim=115,
+    snapshot_dir="snapshots",
+):
+    os.makedirs(snapshot_dir, exist_ok=True)
 
     ctx = mp.get_context("spawn")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print(f"Using device: {device}")
 
-    resume_path = "snapshots/latest_model.pt"
-    live_model = PresidentValueNet(INPUT_DIM).to(device)
-    shared_model = PresidentValueNet(INPUT_DIM).to("cpu")
+    resume_path = os.path.join(snapshot_dir, "latest_model.pt")
+    live_model = net_class(input_dim).to(device)
+    shared_model = net_class(input_dim).to("cpu")
     shared_model.share_memory()
     shared_model.load_state_dict(live_model.state_dict())
 
@@ -175,7 +178,9 @@ def main():
     running_losses = []
 
     with ctx.Pool(
-        processes=NUM_WORKERS, initializer=init_worker, initargs=(shared_model,)
+        processes=NUM_WORKERS,
+        initializer=init_worker,
+        initargs=(shared_model, net_class, bot_class, input_dim),
     ) as pool:
         try:
             while max_batches < 2000:
@@ -183,7 +188,9 @@ def main():
                 max_batches += 1
                 epsilon = max(0.05, epsilon * 0.9997)
                 all_x, all_y = [], []
-                elite_snapshots = glob.glob("snapshots/elites/model_gen_*.pt")
+                elite_snapshots = glob.glob(
+                    os.path.join(snapshot_dir, "elites/model_gen_*.pt")
+                )
                 tasks = [
                     (
                         epsilon,
@@ -218,9 +225,9 @@ def main():
                     epoch_losses = []
 
                     for epoch in range(epochs):
-                        permutation = torch.randperm(dataset_size)
+                        perm = torch.randperm(dataset_size)
                         for i in range(0, dataset_size, mini_batch_size):
-                            indices = permutation[i : i + mini_batch_size]
+                            indices = perm[i : i + mini_batch_size]
                             batch_x, batch_y = x_tensor[indices], y_tensor[indices]
 
                             optimizer.zero_grad()
@@ -252,7 +259,9 @@ def main():
                     print(f"Batch {batch_idx}: No training data collected.")
 
                 if batch_idx % SAVE_SNAPSHOT_EVERY == 0:
-                    snapshot_path = f"snapshots/model_gen_{batch_idx}.pt"
+                    snapshot_path = os.path.join(
+                        snapshot_dir, f"model_gen_{batch_idx}.pt"
+                    )
                     checkpoint = {
                         "batch_idx": batch_idx,
                         "model_state_dict": live_model.state_dict(),
@@ -274,6 +283,15 @@ def main():
             for worker in active_workers:
                 worker.join(timeout=0.1)
             os._exit(1)
+
+
+def main():
+    run_training_loop(
+        net_class=PresidentValueNet,
+        bot_class=PresidentDMCBot,
+        input_dim=115,
+        snapshot_dir="snapshots",
+    )
 
 
 if __name__ == "__main__":
