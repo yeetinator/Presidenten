@@ -91,7 +91,7 @@ type IncomingWebSocketMessage =
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 let socket: WebSocket | null = null;
-let currentUrl: string | null = null;
+let currUrl: string | null = null;
 let stateUpdateQueue: (() => void)[] = [];
 let activeAnimationsCount = 0;
 
@@ -364,15 +364,14 @@ function attachSocketListeners(activeSocket: WebSocket) {
 }
 
 function connect(url: string) {
-  if (socket && socket.readyState <= WebSocket.OPEN && currentUrl === url)
-    return;
+  if (socket && socket.readyState <= WebSocket.OPEN && currUrl === url) return;
 
   if (socket) {
     socket.close();
     socket = null;
   }
 
-  currentUrl = url;
+  currUrl = url;
   connectionStatus.set("connecting");
 
   const nextSocket = new WebSocket(url);
@@ -417,8 +416,8 @@ function waitForSocketOpen() {
 
 async function send(payload: Record<string, unknown>) {
   if (!socket || socket.readyState === WebSocket.CLOSED) {
-    if (!currentUrl) throw new Error("No websocket URL has been configured.");
-    connect(currentUrl);
+    if (!currUrl) throw new Error("No websocket URL has been configured.");
+    connect(currUrl);
   }
 
   await waitForSocketOpen();

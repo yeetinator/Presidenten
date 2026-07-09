@@ -334,13 +334,13 @@ class President:
                 return finish_moves
 
         hand = self.hands[p_id]
-        current_last_move = self.last_move if last_move is None else last_move
+        curr_last_move = self.last_move if last_move is None else last_move
 
         # Can't pass on an empty pile
-        legal_moves = finish_moves if current_last_move[0] != 0 else []
+        legal_moves = finish_moves if curr_last_move[0] != 0 else []
         counts = Counter(hand)
         num_twos = counts[15]
-        pile_card, pile_count, _ = current_last_move
+        pile_card, pile_count, _ = curr_last_move
 
         for card, count in counts.items():
             if self.first_turn and card != 3:

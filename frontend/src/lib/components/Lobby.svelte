@@ -45,8 +45,8 @@
   }
 
   function setPlayerType(slotIndex: number, value: number) {
-    playerTypes = playerTypes.map((currentValue, currentIndex) =>
-      currentIndex === slotIndex ? value : currentValue,
+    playerTypes = playerTypes.map((currValue, currIndex) =>
+      currIndex === slotIndex ? value : currValue,
     );
   }
 </script>
