@@ -370,7 +370,6 @@ async def run_exchange_phase(
             "state": enrich_state(env._get_state(human_id), assign_p),
             "required_cards": required_cards,
             "can_choose": can_choose,
-            "enableCards": True,
         }
     )
 
@@ -421,7 +420,6 @@ async def run(
                         "type": "JUMP_IN_PROMPT",
                         "state": enrich_state(env._get_state(human_id), assign_p),
                         "message": "JUMP IN!",
-                        "enableCards": True,
                     }
                 )
 
@@ -502,7 +500,6 @@ async def run(
                         env._get_state(human_id, only_finish=pending_bool), assign_p
                     ),
                     "clearJump": pending_bool,
-                    "enableCards": True,
                 }
             )
             raw_data = await next_queued_message(

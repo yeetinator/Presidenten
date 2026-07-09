@@ -13,19 +13,15 @@
     roundSummary,
     revealedBotSeat,
     selectedCards,
-    enableCards,
     state as gameState,
   } from "./stores/gameStore";
   import { send, receive } from "./lib/transitions";
-  import { fade, fly } from "svelte/transition";
+  import { fade } from "svelte/transition";
 
   const websocketUrl =
     import.meta.env.VITE_WS_URL ?? "ws://localhost:8000/ws/game";
 
   let gameStarted = false;
-  let transitionFlyDuration = 200;
-
-  $: transitionFlyDuration = $fastForwardMode ? 100 : 200;
 
   $: suitedHand = $gameState?.suited_hand ?? [];
   $: totalPlayers = Object.keys($gameState?.player_roles ?? {}).length || 4;
@@ -50,6 +46,12 @@
       arraysEqual([...legalMove].sort(), sortedSelection),
     );
   })();
+
+  let enableCards = false;
+  $: if ($gameState || $exchangePrompt || $jumpInPrompt) {
+    const needPlayerInput = isMyTurn || !!$exchangePrompt || jumpInVisible;
+    if (needPlayerInput) enableCards = true;
+  }
 
   $: isExchangeReady =
     !!$exchangePrompt && $selectedCards.length === exchangeRequiredCards;
@@ -244,7 +246,7 @@
   async function handlePlay() {
     try {
       console.log("Playing selected cards:", $selectedCards);
-      $enableCards = false;
+      enableCards = false;
       await gameStore.playSelectedCards();
     } catch (error) {
       console.error(error);
@@ -253,7 +255,7 @@
 
   async function handlePass() {
     try {
-      $enableCards = false;
+      enableCards = false;
       await gameStore.passTurn();
     } catch (error) {
       console.error(error);
@@ -262,7 +264,7 @@
 
   async function handleJumpIn(finishMove: string[]) {
     try {
-      $enableCards = false;
+      enableCards = false;
       await gameStore.playJumpInPrompt(finishMove);
     } catch (error) {
       console.error(error);
@@ -284,7 +286,7 @@
     if (suitCards.length !== exchangeRequiredCards) return;
 
     try {
-      $enableCards = false;
+      enableCards = false;
       await gameStore.sendExchangeCards(suitCards);
       gameStore.clearSelectedCards();
       gameStore.clearExchangePrompt();
@@ -546,7 +548,7 @@
                       (!$exchangePrompt && !isMyTurn) ||
                       (!!$exchangePrompt &&
                         (!exchangeCanChoose || exchangeRequiredCards === 0)) ||
-                      !$enableCards}
+                      !enableCards}
                     exchange={!!$exchangePrompt}
                     className="shrink-0 scale-[0.75] md:scale-[0.95] pointer-events-auto"
                     onClick={() => handleToggleCard(suitCard)}
