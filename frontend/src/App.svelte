@@ -13,6 +13,7 @@
     roundSummary,
     revealedBotSeat,
     selectedCards,
+    isDealing,
     state as gameState,
   } from "./stores/gameStore";
   import { send, receive } from "./lib/transitions";
@@ -22,8 +23,17 @@
     import.meta.env.VITE_WS_URL ?? "ws://localhost:8000/ws/game";
 
   let gameStarted = false;
+  let deck: string[] = [];
+  let visibleCardsPerSeat: Record<number, string[]> = {};
+  let isAnimatingDeal = false;
 
-  $: suitedHand = $gameState?.suited_hand ?? [];
+  $: if ($isDealing && !isAnimatingDeal && $gameState) {
+    runDealSequence();
+  }
+
+  $: suitedHand = $isDealing
+    ? (visibleCardsPerSeat[0] ?? [])
+    : ($gameState?.suited_hand ?? []);
   $: totalPlayers = Object.keys($gameState?.player_roles ?? {}).length || 4;
   $: exchangeRequiredCards = $exchangePrompt?.requiredCards ?? 0;
   $: exchangeCanChoose = $exchangePrompt?.canChoose ?? false;
@@ -67,7 +77,9 @@
     .sort((a, b) => a.relativeOffset - b.relativeOffset)
     .map((opponent, index, arr) => ({
       ...opponent,
-      suitedHand: $gameState?.opp_suited_hands?.[opponent.seat] ?? [],
+      suitedHand: $isDealing
+        ? (visibleCardsPerSeat[opponent.seat] ?? [])
+        : ($gameState?.opp_suited_hands?.[opponent.seat] ?? []),
       label: `${displayBotType(opponent.role)} ${$gameState?.player_types?.[opponent.seat] ?? "Bot"}`,
       position:
         index === 0 ? "left" : index === arr.length - 1 ? "right" : "top",
@@ -243,6 +255,53 @@
     else if (isMyTurn && isSelectionLegal) handlePlay();
   }
 
+  async function runDealSequence() {
+    if (!$gameState) return;
+    isAnimatingDeal = true;
+
+    const rawHands: Record<number, string[]> = {
+      0: $gameState.suited_hand ?? [],
+      ...($gameState.opp_suited_hands ?? {}),
+    };
+    const allCards: string[] = [];
+    visibleCardsPerSeat = {};
+
+    for (const [seatStr, hand] of Object.entries(rawHands)) {
+      const seat = Number(seatStr);
+      visibleCardsPerSeat[seat] = [];
+      allCards.push(...hand);
+    }
+    deck = allCards;
+
+    const seats = Object.keys(rawHands)
+      .map(Number)
+      .sort((a, b) => a - b);
+    const maxHandSize = Math.max(
+      ...Object.values(rawHands).map((h) => h.length),
+      0,
+    );
+    const dealQueue: { seat: number; card: string }[] = [];
+
+    for (let cardIdx = 0; cardIdx < maxHandSize; cardIdx++)
+      for (const seat of seats)
+        if (rawHands[seat][cardIdx])
+          dealQueue.push({ seat, card: rawHands[seat][cardIdx] });
+
+    const delayMs = 55;
+    for (const step of dealQueue) {
+      deck = deck.filter((c) => c !== step.card);
+      visibleCardsPerSeat[step.seat] = [
+        ...(visibleCardsPerSeat[step.seat] ?? []),
+        step.card,
+      ];
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await gameStore.dealtCards();
+    isAnimatingDeal = false;
+  }
+
   async function handlePlay() {
     try {
       console.log("Playing selected cards:", $selectedCards);
@@ -416,81 +475,103 @@
           </aside>
 
           <div class="flex items-center justify-center xl:row-start-2">
-            <button
-              type="button"
-              class="w-full max-w-xs aspect-square flex flex-col justify-between p-4 relative rounded-3xl border transition-all duration-300 outline-none
-              {isExchangeReady
-                ? 'border-amber-400 bg-amber-500/5 shadow-[0_0_30px_rgba(245,158,11,0.25)] hover:bg-amber-500/10 cursor-pointer active:scale-[0.99]'
-                : isMyTurn && isSelectionLegal
-                  ? 'border-emerald-400 bg-emerald-500/5 shadow-[0_0_30px_rgba(52,211,153,0.2)] hover:bg-emerald-500/10 cursor-pointer active:scale-[0.99]'
-                  : 'border-white/5 bg-white/1 cursor-default'}"
-              disabled={!isCenterClickable}
-              on:click={handleCenterAction}
-            >
-              <div
-                class="w-full text-center pointer-events-none z-10 select-none"
-              >
-                {#if isExchangeReady}
-                  <span
-                    class="text-[0.6rem] font-black uppercase tracking-[0.25em] text-amber-400 animate-pulse"
-                    >➔ Click Here to Send Cards
-                  </span>
-                {:else if isMyTurn && isSelectionLegal}
-                  <span
-                    class="text-[0.6rem] font-black uppercase tracking-[0.25em] text-emerald-400 animate-pulse"
-                    >➔ Click Here to Play Move
-                  </span>
-                {:else if $selectedCards.length > 0 && !isSelectionLegal && !$exchangePrompt}
-                  <span
-                    class="text-[0.6rem] font-bold uppercase tracking-[0.25em] text-red-400/90"
-                    >✕ Invalid Combination</span
-                  >
-                {:else}
-                  <span
-                    class="text-[0.55rem] font-bold uppercase tracking-[0.25em] text-white/20"
-                    >Game Pile</span
-                  >
-                {/if}
-              </div>
-              <div
-                class="absolute inset-0 flex items-center justify-center overflow-visible pointer-events-none"
+            {#if !$isDealing}
+              <button
+                type="button"
+                class="w-full max-w-xs aspect-square flex flex-col justify-between p-4 relative rounded-3xl border transition-all duration-300 outline-none
+                  {isExchangeReady
+                  ? 'border-amber-400 bg-amber-500/5 shadow-[0_0_30px_rgba(245,158,11,0.25)] hover:bg-amber-500/10 cursor-pointer active:scale-[0.99]'
+                  : isMyTurn && isSelectionLegal
+                    ? 'border-emerald-400 bg-emerald-500/5 shadow-[0_0_30px_rgba(52,211,153,0.2)] hover:bg-emerald-500/10 cursor-pointer active:scale-[0.99]'
+                    : 'border-white/5 bg-white/1 cursor-default'}"
+                disabled={!isCenterClickable}
+                on:click={handleCenterAction}
               >
                 <div
-                  class="relative flex items-center justify-center overflow-visible h-28 w-full"
+                  class="w-full text-center pointer-events-none z-10 select-none"
                 >
-                  {#each flatVisualPile as card (card.suitCard)}
-                    <div
-                      in:receive={{ key: card.suitCard }}
-                      out:send={{ key: card.suitCard, isPile: true }}
-                      on:introstart={gameStore.startAnimation}
-                      on:introend={gameStore.endAnimation}
-                      on:outrostart={gameStore.startAnimation}
-                      on:outroend={gameStore.endAnimation}
-                      class="absolute transition-all duration-300 flex justify-center origin-center"
-                      style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"}; z-index: ${card.playIndex * 10 + card.cardIndex}; 
-                      transform: translateX(${(card.cardIndex - (visualPile[card.playIndex].length - 1) / 2) * 1.4}rem);`}
+                  {#if isExchangeReady}
+                    <span
+                      class="text-[0.6rem] font-black uppercase tracking-[0.25em] text-amber-400 animate-pulse"
+                      >➔ Click Here to Send Cards
+                    </span>
+                  {:else if isMyTurn && isSelectionLegal}
+                    <span
+                      class="text-[0.6rem] font-black uppercase tracking-[0.25em] text-emerald-400 animate-pulse"
+                      >➔ Click Here to Play Move
+                    </span>
+                  {:else if $selectedCards.length > 0 && !isSelectionLegal && !$exchangePrompt}
+                    <span
+                      class="text-[0.6rem] font-bold uppercase tracking-[0.25em] text-red-400/90"
+                      >✕ Invalid Combination</span
                     >
-                      <div
-                        style={`transform: rotate(${cardRotations[card.suitCard] ?? 0}deg);`}
-                        class="origin-center flex justify-center items-center"
-                      >
-                        <Card
-                          suitCard={card.suitCard}
-                          isFaceUp={true}
-                          disabled={true}
-                          className="shrink-0 scale-[0.85] origin-center shadow-lg shadow-black/40"
-                        />
-                      </div>
-                    </div>
-                  {/each}
+                  {:else}
+                    <span
+                      class="text-[0.55rem] font-bold uppercase tracking-[0.25em] text-white/20"
+                      >Game Pile</span
+                    >
+                  {/if}
                 </div>
-              </div>
-              <div
-                class="w-full text-center pointer-events-none z-10 select-none text-[0.65rem] font-medium tracking-wide text-white/60 leading-normal max-w-56 mx-auto"
-              >
-                {selectedMoveLabel}
-              </div>
-            </button>
+                <div
+                  class="absolute inset-0 flex items-center justify-center overflow-visible pointer-events-none"
+                >
+                  <div
+                    class="relative flex items-center justify-center overflow-visible h-28 w-full"
+                  >
+                    {#each flatVisualPile as card (card.suitCard)}
+                      <div
+                        in:receive={{ key: card.suitCard }}
+                        out:send={{ key: card.suitCard, isPile: true }}
+                        on:introstart={gameStore.startAnimation}
+                        on:introend={gameStore.endAnimation}
+                        on:outrostart={gameStore.startAnimation}
+                        on:outroend={gameStore.endAnimation}
+                        class="absolute transition-all duration-300 flex justify-center origin-center"
+                        style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"}; z-index: ${card.playIndex * 10 + card.cardIndex}; 
+                      transform: translateX(${(card.cardIndex - (visualPile[card.playIndex].length - 1) / 2) * 1.4}rem);`}
+                      >
+                        <div
+                          style={`transform: rotate(${cardRotations[card.suitCard] ?? 0}deg);`}
+                          class="origin-center flex justify-center items-center"
+                        >
+                          <Card
+                            suitCard={card.suitCard}
+                            isFaceUp={true}
+                            disabled={true}
+                            className="shrink-0 scale-[0.85] origin-center shadow-lg shadow-black/40"
+                          />
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+                <div
+                  class="w-full text-center pointer-events-none z-10 select-none text-[0.65rem] font-medium tracking-wide text-white/60 leading-normal max-w-56 mx-auto"
+                >
+                  {selectedMoveLabel}
+                </div>
+              </button>
+            {:else}
+              {#each deck as suitCard (suitCard)}
+                <div
+                  in:receive={{ key: suitCard }}
+                  out:send={{ key: suitCard }}
+                  on:introstart={gameStore.startAnimation}
+                  on:introend={gameStore.endAnimation}
+                  on:outrostart={gameStore.startAnimation}
+                  on:outroend={gameStore.endAnimation}
+                  class="absolute transition-all duration-300 flex justify-center origin-center"
+                  style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"};`}
+                >
+                  <Card
+                    {suitCard}
+                    isFaceUp={false}
+                    disabled={true}
+                    className="shrink-0 scale-[0.85] origin-center shadow-lg shadow-black/40"
+                  />
+                </div>
+              {/each}
+            {/if}
           </div>
 
           <aside class="flex items-center justify-center xl:row-start-2">

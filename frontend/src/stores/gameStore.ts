@@ -16,6 +16,11 @@ export interface GameStateUpdate {
   pile_leader: number | null;
 }
 
+export interface DealCardsMessage {
+  type: "DEAL_CARDS";
+  state: GameStateUpdate;
+}
+
 export interface StateUpdateMessage {
   type: "STATE_UPDATE";
   state: GameStateUpdate;
@@ -70,12 +75,14 @@ export const exchangePrompt = writable<ExchangePrompt | null>(null);
 export const isAnimating = writable<boolean>(false);
 export const fastForwardMode = writable<boolean>(false);
 export const revealedBotSeat = writable<number | null>(null);
+export const isDealing = writable<boolean>(false);
 
 type IncomingWebSocketMessage =
   | StateUpdateMessage
   | JumpInPromptMessage
   | ExchangePromptMessage
   | RoundOverMessage
+  | DealCardsMessage
   | {
       type: string;
       [key: string]: unknown;
@@ -168,6 +175,10 @@ function clearJumpInPrompt() {
   jumpInPrompt.set(null);
 }
 
+function clearDealing() {
+  isDealing.set(false);
+}
+
 function clearAll() {
   clearSelectedCards();
   clearState();
@@ -178,6 +189,7 @@ function clearAll() {
   clearExchangePrompt();
   clearLogs();
   clearJumpInPrompt();
+  clearDealing();
 }
 
 function buildAutoFinishMoves(suitLastMove: string[]) {
@@ -254,6 +266,21 @@ function attachSocketListeners(activeSocket: WebSocket) {
     try {
       const payload = JSON.parse(event.data) as IncomingWebSocketMessage;
       lastMessageType.set(payload.type);
+
+      if (payload.type === "DEAL_CARDS") {
+        const msg = payload as DealCardsMessage;
+        if (isGameStateUpdate(msg.state)) {
+          const action = () => {
+            isDealing.set(true);
+            state.set(msg.state);
+            clearSelectedCards();
+            clearExchangePrompt();
+            clearJumpInPrompt();
+          };
+          if (get(isAnimating)) stateUpdateQueue.push(action);
+          else action();
+        }
+      }
 
       if (payload.type === "STATE_UPDATE") {
         const msg = payload as StateUpdateMessage;
@@ -407,6 +434,11 @@ async function startGame(payload: {
   await send(payload);
 }
 
+async function dealtCards() {
+  await send({ type: "DEALT_CARDS" });
+  clearDealing();
+}
+
 async function playSelectedCards() {
   await send({
     type: "PLAY_MOVE",
@@ -472,9 +504,11 @@ export const gameStore = {
   revealedBotSeat,
   jumpInPrompt,
   exchangePrompt,
+  isDealing,
   connect,
   disconnect,
   startGame,
+  dealtCards,
   clearSelectedCards,
   clearRoundSummary,
   clearExchangePrompt,
