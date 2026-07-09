@@ -1,5 +1,6 @@
 import { writable, get } from "svelte/store";
 import { tick } from "svelte";
+import { TABLE_THEMES, type ThemeKey, type TableTheme } from "../lib/themes";
 
 export interface GameStateUpdate {
   suited_hand: string[];
@@ -64,6 +65,12 @@ export interface ExchangePromptMessage {
   can_choose: boolean;
 }
 
+const initialThemeKey =
+  (localStorage.getItem("president_table_theme") as ThemeKey) || "emerald";
+export const currThemeKey = writable<ThemeKey>(initialThemeKey);
+export const currTheme = writable<TableTheme>(
+  TABLE_THEMES[initialThemeKey] || TABLE_THEMES.emerald,
+);
 export const logs = writable<string[]>([]);
 export const state = writable<GameStateUpdate | null>(null);
 export const connectionStatus = writable<ConnectionStatus>("disconnected");
@@ -103,6 +110,14 @@ export function startAnimation() {
 export function endAnimation() {
   activeAnimationsCount = Math.max(0, activeAnimationsCount - 1);
   if (activeAnimationsCount === 0) isAnimating.set(false);
+}
+
+export function setTheme(key: ThemeKey) {
+  if (TABLE_THEMES[key]) {
+    currThemeKey.set(key);
+    currTheme.set(TABLE_THEMES[key]);
+    localStorage.setItem("president_table_theme", key);
+  }
 }
 
 function isGameStateUpdate(value: unknown): value is GameStateUpdate {
@@ -504,6 +519,7 @@ export const gameStore = {
   jumpInPrompt,
   exchangePrompt,
   isDealing,
+  currTheme,
   connect,
   disconnect,
   startGame,
@@ -522,5 +538,6 @@ export const gameStore = {
   getAutoFinishMove,
   startAnimation,
   endAnimation,
+  setTheme,
   fastForwardGame,
 };

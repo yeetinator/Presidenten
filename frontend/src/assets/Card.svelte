@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { currTheme } from "../stores/gameStore";
+
   export let suitCard: string = "3C";
   export let isFaceUp: boolean = true;
   export let isSelected: boolean = false;
@@ -11,6 +13,7 @@
   $: imgSrc = isFaceUp
     ? `/cards/${suitCard.trim().toUpperCase()}.svg`
     : "/cards/1B.svg";
+  $: jumpColor = $currTheme?.jumpInColor ?? "#ef4444";
 </script>
 
 <button
@@ -19,9 +22,10 @@
     disabled && !exchange
       ? ""
       : isSelected
-        ? "-translate-y-6 scale-105 shadow-xl ring-4 ring-emerald-400"
+        ? "-translate-y-6 scale-105 shadow-xl ring-4"
         : "hover:-translate-y-2 hover:shadow-lg"
   } border ${isBlinking && !disabled ? "animate-jump-ready" : "border-slate-200"}`}
+  style={`${isSelected ? `ring-color: ${$currTheme?.cardRing ?? "#34d399"}; --tw-ring-color: ${$currTheme?.cardRing ?? "#34d399"};` : ""} --jump-color: ${jumpColor};`}
   {disabled}
   on:click={onClick}
 >
@@ -57,10 +61,10 @@
     content: "";
     position: absolute;
     inset: -1px;
-    border: 1px solid rgba(220, 38, 38, 1);
+    border: 1px solid var(--jump-color, #ef4444);
     box-shadow:
-      0 0 0 5px rgba(220, 38, 38, 0.8),
-      0 0 20px rgba(220, 38, 38, 0.6);
+      0 0 0 5px var(--jump-color, #ef4444),
+      0 0 20px var(--jump-color, #ef4444);
     border-radius: inherit;
     pointer-events: none;
     animation: red-flash 0.8s infinite ease-in-out;

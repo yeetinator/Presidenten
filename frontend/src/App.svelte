@@ -15,6 +15,7 @@
     selectedCards,
     isDealing,
     state as gameState,
+    currTheme,
   } from "./stores/gameStore";
   import { send, receive } from "./lib/transitions";
   import { fade } from "svelte/transition";
@@ -400,8 +401,17 @@
   <Lobby onStartGame={handleStartGame} />
 {:else}
   <main
-    class="h-screen max-h-screen overflow-hidden bg-[radial-gradient(circle_at_center,#154d2a_0%,#0b2414_48%,#050b07_100%)]
-      p-2 text-white md:p-3"
+    class="h-screen max-h-screen overflow-hidden p-2 text-white md:p-3"
+    style={`
+      background: ${$currTheme.mainBg};
+      --bg-felt: ${$currTheme.feltBg};
+      --border-felt: ${$currTheme.feltBorder};
+      --accent-border: ${$currTheme.accentBorder};
+      --accent-bg: ${$currTheme.accentBg};
+      --accent-text: ${$currTheme.accentText};
+      --accent-shadow: ${$currTheme.accentShadow};
+      --card-ring: ${$currTheme.cardRing};
+    `}
   >
     {#if !$roundSummary}
       <Rules className="left-4" side="left" />
@@ -444,8 +454,8 @@
       class="mx-auto grid h-full max-h-full grid-rows-[1fr_auto] gap-2 max-w-screen-2xl"
     >
       <section
-        class="rounded-2xl border border-emerald-300/15 bg-[radial-gradient(circle_at_top,rgba(52,211,153,0.18),rgba(6,20,12,0.96)_68%)]
-          p-1 shadow-lg backdrop-blur-md flex flex-col justify-between overflow-hidden"
+        class="rounded-2xl border p-1 shadow-lg backdrop-blur-md flex flex-col justify-between overflow-hidden"
+        style="background: var(--bg-felt); border-color: var(--border-felt);"
       >
         <div
           class="grid gap-3 xl:grid-cols-[16rem_1fr_16rem] xl:grid-rows-[auto_1fr] h-full items-center"
@@ -482,8 +492,11 @@
                   {isExchangeReady
                   ? 'border-amber-400 bg-amber-500/5 shadow-[0_0_30px_rgba(245,158,11,0.25)] hover:bg-amber-500/10 cursor-pointer active:scale-[0.99]'
                   : isMyTurn && isSelectionLegal
-                    ? 'border-emerald-400 bg-emerald-500/5 shadow-[0_0_30px_rgba(52,211,153,0.2)] hover:bg-emerald-500/10 cursor-pointer active:scale-[0.99]'
+                    ? 'cursor-pointer active:scale-[0.99]'
                     : 'border-white/5 bg-white/1 cursor-default'}"
+                style={isMyTurn && isSelectionLegal
+                  ? `border-color: var(--accent-border); background-color: var(--accent-bg); box-shadow: var(--accent-shadow);`
+                  : ""}
                 disabled={!isCenterClickable}
                 on:click={handleCenterAction}
               >
@@ -497,7 +510,8 @@
                     </span>
                   {:else if isMyTurn && isSelectionLegal}
                     <span
-                      class="text-[0.6rem] font-black uppercase tracking-[0.25em] text-emerald-400 animate-pulse"
+                      class="text-[0.6rem] font-black uppercase tracking-[0.25em] animate-pulse"
+                      style="color: var(--accent-text);"
                       >➔ Click Here to Play Move
                     </span>
                   {:else if $selectedCards.length > 0 && !isSelectionLegal && !$exchangePrompt}
