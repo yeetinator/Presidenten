@@ -20,7 +20,6 @@ export interface StateUpdateMessage {
   type: "STATE_UPDATE";
   state: GameStateUpdate;
   clearJump?: boolean;
-  enableCards?: boolean;
 }
 
 export interface RoundOverMessage {
@@ -40,7 +39,6 @@ export interface JumpInPromptMessage {
   type: "JUMP_IN_PROMPT";
   state: GameStateUpdate;
   message: string;
-  enableCards?: boolean;
 }
 
 export interface JumpInPrompt {
@@ -59,7 +57,6 @@ export interface ExchangePromptMessage {
   state: GameStateUpdate;
   required_cards: number;
   can_choose: boolean;
-  enableCards?: boolean;
 }
 
 export const logs = writable<string[]>([]);
@@ -73,7 +70,6 @@ export const exchangePrompt = writable<ExchangePrompt | null>(null);
 export const isAnimating = writable<boolean>(false);
 export const fastForwardMode = writable<boolean>(false);
 export const revealedBotSeat = writable<number | null>(null);
-export const enableCards = writable<boolean>(false);
 
 type IncomingWebSocketMessage =
   | StateUpdateMessage
@@ -267,7 +263,6 @@ function attachSocketListeners(activeSocket: WebSocket) {
             clearExchangePrompt();
 
             if (msg.clearJump !== false) clearJumpInPrompt();
-            if (msg.enableCards === true) enableCards.set(true);
           };
           if (get(isAnimating)) stateUpdateQueue.push(action);
           else action();
@@ -285,7 +280,6 @@ function attachSocketListeners(activeSocket: WebSocket) {
                 typeof msg.message === "string" ? msg.message : "JUMP IN!",
               state: msg.state,
             });
-            if (msg.enableCards === true) enableCards.set(true);
           };
           if (get(isAnimating)) stateUpdateQueue.push(action);
           else action();
@@ -311,7 +305,6 @@ function attachSocketListeners(activeSocket: WebSocket) {
               requiredCards: msg.required_cards,
               canChoose: msg.can_choose,
             });
-            if (msg.enableCards === true) enableCards.set(true);
           };
           if (get(isAnimating)) stateUpdateQueue.push(action);
           else action();
@@ -474,23 +467,18 @@ isAnimating.subscribe((animating) => {
 
 export const gameStore = {
   state,
-  connectionStatus,
-  lastMessageType,
   selectedCards,
   roundSummary,
   revealedBotSeat,
   jumpInPrompt,
   exchangePrompt,
-  enableCards,
   connect,
   disconnect,
-  send,
   startGame,
   clearSelectedCards,
   clearRoundSummary,
   clearExchangePrompt,
   clearLogs,
-  clearJumpInPrompt,
   clearFastForwardMode,
   clearAll,
   playSelectedCards,
