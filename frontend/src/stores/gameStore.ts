@@ -1,5 +1,6 @@
 import { writable, get } from "svelte/store";
 import { tick } from "svelte";
+import { TABLE_THEMES, type ThemeKey, type TableTheme } from "../lib/themes";
 
 export interface GameStateUpdate {
   suited_hand: string[];
@@ -16,11 +17,15 @@ export interface GameStateUpdate {
   pile_leader: number | null;
 }
 
+export interface DealCardsMessage {
+  type: "DEAL_CARDS";
+  state: GameStateUpdate;
+}
+
 export interface StateUpdateMessage {
   type: "STATE_UPDATE";
   state: GameStateUpdate;
   clearJump?: boolean;
-  enableCards?: boolean;
 }
 
 export interface RoundOverMessage {
@@ -40,7 +45,6 @@ export interface JumpInPromptMessage {
   type: "JUMP_IN_PROMPT";
   state: GameStateUpdate;
   message: string;
-  enableCards?: boolean;
 }
 
 export interface JumpInPrompt {
@@ -59,9 +63,14 @@ export interface ExchangePromptMessage {
   state: GameStateUpdate;
   required_cards: number;
   can_choose: boolean;
-  enableCards?: boolean;
 }
 
+const initialThemeKey =
+  (localStorage.getItem("president_table_theme") as ThemeKey) || "emerald";
+export const currThemeKey = writable<ThemeKey>(initialThemeKey);
+export const currTheme = writable<TableTheme>(
+  TABLE_THEMES[initialThemeKey] || TABLE_THEMES.emerald,
+);
 export const logs = writable<string[]>([]);
 export const state = writable<GameStateUpdate | null>(null);
 export const connectionStatus = writable<ConnectionStatus>("disconnected");
@@ -73,13 +82,14 @@ export const exchangePrompt = writable<ExchangePrompt | null>(null);
 export const isAnimating = writable<boolean>(false);
 export const fastForwardMode = writable<boolean>(false);
 export const revealedBotSeat = writable<number | null>(null);
-export const enableCards = writable<boolean>(false);
+export const isDealing = writable<boolean>(false);
 
 type IncomingWebSocketMessage =
   | StateUpdateMessage
   | JumpInPromptMessage
   | ExchangePromptMessage
   | RoundOverMessage
+  | DealCardsMessage
   | {
       type: string;
       [key: string]: unknown;
@@ -88,7 +98,7 @@ type IncomingWebSocketMessage =
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 let socket: WebSocket | null = null;
-let currentUrl: string | null = null;
+let currUrl: string | null = null;
 let stateUpdateQueue: (() => void)[] = [];
 let activeAnimationsCount = 0;
 
@@ -100,6 +110,14 @@ export function startAnimation() {
 export function endAnimation() {
   activeAnimationsCount = Math.max(0, activeAnimationsCount - 1);
   if (activeAnimationsCount === 0) isAnimating.set(false);
+}
+
+export function setTheme(key: ThemeKey) {
+  if (TABLE_THEMES[key]) {
+    currThemeKey.set(key);
+    currTheme.set(TABLE_THEMES[key]);
+    localStorage.setItem("president_table_theme", key);
+  }
 }
 
 function isGameStateUpdate(value: unknown): value is GameStateUpdate {
@@ -172,6 +190,10 @@ function clearJumpInPrompt() {
   jumpInPrompt.set(null);
 }
 
+function clearDealing() {
+  isDealing.set(false);
+}
+
 function clearAll() {
   clearSelectedCards();
   clearState();
@@ -182,6 +204,7 @@ function clearAll() {
   clearExchangePrompt();
   clearLogs();
   clearJumpInPrompt();
+  clearDealing();
 }
 
 function buildAutoFinishMoves(suitLastMove: string[]) {
@@ -259,6 +282,21 @@ function attachSocketListeners(activeSocket: WebSocket) {
       const payload = JSON.parse(event.data) as IncomingWebSocketMessage;
       lastMessageType.set(payload.type);
 
+      if (payload.type === "DEAL_CARDS") {
+        const msg = payload as DealCardsMessage;
+        if (isGameStateUpdate(msg.state)) {
+          const action = () => {
+            isDealing.set(true);
+            state.set(msg.state);
+            clearSelectedCards();
+            clearExchangePrompt();
+            clearJumpInPrompt();
+          };
+          if (get(isAnimating)) stateUpdateQueue.push(action);
+          else action();
+        }
+      }
+
       if (payload.type === "STATE_UPDATE") {
         const msg = payload as StateUpdateMessage;
         if (isGameStateUpdate(msg.state)) {
@@ -267,7 +305,6 @@ function attachSocketListeners(activeSocket: WebSocket) {
             clearExchangePrompt();
 
             if (msg.clearJump !== false) clearJumpInPrompt();
-            if (msg.enableCards === true) enableCards.set(true);
           };
           if (get(isAnimating)) stateUpdateQueue.push(action);
           else action();
@@ -285,7 +322,6 @@ function attachSocketListeners(activeSocket: WebSocket) {
                 typeof msg.message === "string" ? msg.message : "JUMP IN!",
               state: msg.state,
             });
-            if (msg.enableCards === true) enableCards.set(true);
           };
           if (get(isAnimating)) stateUpdateQueue.push(action);
           else action();
@@ -311,7 +347,6 @@ function attachSocketListeners(activeSocket: WebSocket) {
               requiredCards: msg.required_cards,
               canChoose: msg.can_choose,
             });
-            if (msg.enableCards === true) enableCards.set(true);
           };
           if (get(isAnimating)) stateUpdateQueue.push(action);
           else action();
@@ -344,15 +379,14 @@ function attachSocketListeners(activeSocket: WebSocket) {
 }
 
 function connect(url: string) {
-  if (socket && socket.readyState <= WebSocket.OPEN && currentUrl === url)
-    return;
+  if (socket && socket.readyState <= WebSocket.OPEN && currUrl === url) return;
 
   if (socket) {
     socket.close();
     socket = null;
   }
 
-  currentUrl = url;
+  currUrl = url;
   connectionStatus.set("connecting");
 
   const nextSocket = new WebSocket(url);
@@ -397,8 +431,8 @@ function waitForSocketOpen() {
 
 async function send(payload: Record<string, unknown>) {
   if (!socket || socket.readyState === WebSocket.CLOSED) {
-    if (!currentUrl) throw new Error("No websocket URL has been configured.");
-    connect(currentUrl);
+    if (!currUrl) throw new Error("No websocket URL has been configured.");
+    connect(currUrl);
   }
 
   await waitForSocketOpen();
@@ -412,6 +446,11 @@ async function startGame(payload: {
   player_types: number[];
 }) {
   await send(payload);
+}
+
+async function dealtCards() {
+  await send({ type: "DEALT_CARDS" });
+  clearDealing();
 }
 
 async function playSelectedCards() {
@@ -474,23 +513,21 @@ isAnimating.subscribe((animating) => {
 
 export const gameStore = {
   state,
-  connectionStatus,
-  lastMessageType,
   selectedCards,
   roundSummary,
   revealedBotSeat,
   jumpInPrompt,
   exchangePrompt,
-  enableCards,
+  isDealing,
+  currTheme,
   connect,
   disconnect,
-  send,
   startGame,
+  dealtCards,
   clearSelectedCards,
   clearRoundSummary,
   clearExchangePrompt,
   clearLogs,
-  clearJumpInPrompt,
   clearFastForwardMode,
   clearAll,
   playSelectedCards,
@@ -501,5 +538,6 @@ export const gameStore = {
   getAutoFinishMove,
   startAnimation,
   endAnimation,
+  setTheme,
   fastForwardGame,
 };

@@ -70,6 +70,7 @@ class GameSession:
     timings: GameTimings = field(default_factory=GameTimings)
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     next_round_event: asyncio.Event = field(default_factory=asyncio.Event)
+    dealt_cards_event: asyncio.Event = field(default_factory=asyncio.Event)
     game_over_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -252,7 +253,12 @@ async def control_listener(
                 control_queue,
                 [],
                 disconnect_event,
-                allowed_types={"START_GAME", "NEXT_ROUND", "FAST_FORWARD"},
+                allowed_types={
+                    "START_GAME",
+                    "NEXT_ROUND",
+                    "FAST_FORWARD",
+                    "DEALT_CARDS",
+                },
             )
         except WebSocketDisconnect:
             return
@@ -281,6 +287,10 @@ async def control_listener(
 
         if message_type == "NEXT_ROUND":
             session.next_round_event.set()
+            continue
+
+        if message_type == "DEALT_CARDS":
+            session.dealt_cards_event.set()
 
 
 async def wait_for_event(event: asyncio.Event, disconnect_event: asyncio.Event):
@@ -370,7 +380,6 @@ async def run_exchange_phase(
             "state": enrich_state(env._get_state(human_id), assign_p),
             "required_cards": required_cards,
             "can_choose": can_choose,
-            "enableCards": True,
         }
     )
 
@@ -421,7 +430,6 @@ async def run(
                         "type": "JUMP_IN_PROMPT",
                         "state": enrich_state(env._get_state(human_id), assign_p),
                         "message": "JUMP IN!",
-                        "enableCards": True,
                     }
                 )
 
@@ -495,6 +503,7 @@ async def run(
 
         if assign_p[curr_id] == PlayerType.HUMAN:
             pending_bool = False if env.pending_finish else True
+
             await websocket.send_json(
                 {
                     "type": "STATE_UPDATE",
@@ -502,7 +511,6 @@ async def run(
                         env._get_state(human_id, only_finish=pending_bool), assign_p
                     ),
                     "clearJump": pending_bool,
-                    "enableCards": True,
                 }
             )
             raw_data = await next_queued_message(
@@ -652,11 +660,18 @@ async def run_connection(
                 "message": "Game lobby created. Dealing hands...",
             }
         )
+        await websocket.send_json(
+            {
+                "type": "DEAL_CARDS",
+                "state": enrich_state(
+                    session.env._get_state(session.human_id), session.assign_p
+                ),
+            }
+        )
+        await wait_for_event(session.dealt_cards_event, disconnect_event)
+
         session.timings.reset()
         if session.env.curr_turn != session.human_id:
-            await send_state_update(
-                websocket, session.env, session.human_id, session.assign_p
-            )
             await asyncio.sleep(session.timings.message_delay)
         await run(
             session.env,
@@ -684,6 +699,16 @@ async def run_connection(
                     "message": f"Starting Round {session.env.round}...",
                 }
             )
+            await websocket.send_json(
+                {
+                    "type": "DEAL_CARDS",
+                    "state": enrich_state(
+                        session.env._get_state(session.human_id), session.assign_p
+                    ),
+                }
+            )
+            await wait_for_event(session.dealt_cards_event, disconnect_event)
+
             session.timings.reset()
             await run_exchange_phase(
                 session.env,
