@@ -121,7 +121,7 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
         env.assign_roles()
 
         max_possible_score = env.players - 1
-        gamma = 0.95
+        gamma = 1.0
 
         for rank, p_id in enumerate(env.out_order):
             bot = bot_instances[p_id]

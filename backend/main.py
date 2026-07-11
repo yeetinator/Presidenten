@@ -306,7 +306,7 @@ def build_assigned_players(
     assigned_players: dict[int, BotPlayer] = {}
     human_id = 0
 
-    model_path = Path(__file__).resolve().parent / "playerTypes" / "best_dmc_29750.pt"
+    model_path = Path(__file__).resolve().parent / "playerTypes" / "model_gen_48250.pt"
 
     for p_id, p_type in assign_p.items():
         if p_type == PlayerType.HUMAN:

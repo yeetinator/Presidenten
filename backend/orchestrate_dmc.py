@@ -23,10 +23,10 @@ def run_step(script_name, args=None):
     return True
 
 
-def manage_league_files(snapshot_dir="snapshots"):
+def manage_league_files(snapshot_dir="snapshots", gen_cycle=None):
     print("\n================ MANAGING LEAGUE POOL ================")
 
-    json_path = f"{snapshot_dir}/evaluation_results.json"
+    json_path = f"{snapshot_dir}/evals/evaluation_results_{gen_cycle}.json"
     if not os.path.exists(json_path):
         print(f"Error: {json_path} not found. Skipping league management.")
         return
@@ -42,30 +42,16 @@ def manage_league_files(snapshot_dir="snapshots"):
     temp_dir = f"{snapshot_dir}/tmp"
     os.makedirs(temp_dir, exist_ok=True)
 
-    def find_path(batch_num):
-        possible_paths = [
-            f"{snapshot_dir}/model_gen_{batch_num}.pt",
-            f"{snapshot_dir}/elites/model_gen_{batch_num}.pt",
-        ]
-        for path in possible_paths:
-            if os.path.exists(path):
-                return path
-        return None
-
     top_8 = results[:8]
     print("Staging top 8 models")
-    elite_count = 1
 
-    for res in top_8:
+    for rank, res in enumerate(top_8, start=1):
         batch = res["batch"]
-        src_path = find_path(batch)
+        src_path = res["path"]
 
-        if src_path:
+        if os.path.exists(src_path):
             shutil.copy2(src_path, f"{temp_dir}/elite_model_{batch}.pt")
-            print(
-                f"  -> Rank {elite_count}: Batch {batch} staged (Score: {res['avg_norm_score']:.4f})"
-            )
-            elite_count += 1
+            print(f"  -> Rank {rank}: Batch {batch:<5} staged (Elo: {res['elo']:.2f})")
 
     print(f"Purging old files")
     for old_file in glob.glob(f"{snapshot_dir}/elites/model_gen_*.pt"):
@@ -80,11 +66,6 @@ def manage_league_files(snapshot_dir="snapshots"):
         shutil.move(staged_elite, f"{snapshot_dir}/elites/model_gen_{batch}.pt")
 
     shutil.rmtree(temp_dir)
-
-    try:
-        os.remove(json_path)
-    except Exception as e:
-        print(f"Error removing {json_path}: {e}")
     print("League management completed.")
 
 
@@ -113,7 +94,7 @@ def run_orchestrator(
         if not run_step(evaluate_script, [str(gen_cycle)]):
             break
 
-        manage_league_files(snapshot_dir)
+        manage_league_files(snapshot_dir, gen_cycle)
         gen_cycle += 1
         time.sleep(5)
 
