@@ -110,7 +110,6 @@ def update_pairwise_elo(ratings, sampled_keys, match_scores, k_factor=K_FACTOR):
             m1, m2 = sampled_keys[i], sampled_keys[j]
             r1, r2 = ratings[m1], ratings[m2]
             e1 = 1.0 / (1.0 + 10.0 ** ((r2 - r1) / 400.0))
-            e2 = 1.0 - e1
 
             if match_scores[i] > match_scores[j]:
                 s1, s2 = 1.0, 0.0
@@ -119,10 +118,8 @@ def update_pairwise_elo(ratings, sampled_keys, match_scores, k_factor=K_FACTOR):
             else:
                 s1, s2 = 0.5, 0.5
 
-            delta1 = (k_factor / (n - 1)) * (s1 - e1)
-            delta2 = (k_factor / (n - 1)) * (s2 - e2)
-            ratings[m1] += delta1
-            ratings[m2] += delta2
+            ratings[m1] += (k_factor / (n - 1)) * (s1 - e1)
+            ratings[m2] += (k_factor / (n - 1)) * (s2 - (1.0 - e1))
 
 
 def anchor_baseline_elo(ratings):
@@ -227,12 +224,7 @@ def run_evaluation(
 
 
 def main():
-    run_evaluation(
-        net_class=PresidentValueNet,
-        bot_class=PresidentDMCBot,
-        input_dim=115,
-        snapshot_dir="snapshots",
-    )
+    run_evaluation()
 
 
 if __name__ == "__main__":

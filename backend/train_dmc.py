@@ -8,7 +8,7 @@ import torch.multiprocessing as mp
 from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
 from game import President
-from typing import Type, Optional
+from typing import Type
 
 BATCH_GAMES = 52
 ROUNDS_PER_GAME = 10
@@ -286,12 +286,7 @@ def run_training_loop(
 
 
 def main():
-    run_training_loop(
-        net_class=PresidentValueNet,
-        bot_class=PresidentDMCBot,
-        input_dim=115,
-        snapshot_dir="snapshots",
-    )
+    run_training_loop()
 
 
 if __name__ == "__main__":
