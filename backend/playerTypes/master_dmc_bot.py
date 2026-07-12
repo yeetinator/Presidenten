@@ -1,15 +1,26 @@
+import torch.nn as nn
 import numpy as np
 from game import President
 from playerTypes.dmc_bot import (
     PresidentDMCBot,
-    PresidentValueNet,
     vectorize_state,
 )
 
 
-class MasterValueNet(PresidentValueNet):
+class MasterValueNet(nn.Module):
     def __init__(self, input_dim=193):
-        super().__init__(input_dim)
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 1024),
+            nn.LayerNorm(1024),
+            nn.LeakyReLU(0.1),
+            nn.Linear(1024, 512),
+            nn.LayerNorm(512),
+            nn.LeakyReLU(0.1),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.1),
+            nn.Linear(256, 1),
+        )
 
     def forward(self, x):
         return self.net(x)

@@ -60,7 +60,7 @@ def run_duplicate_match(match_args):
 
         env = President(num_players)
         for round_idx in range(NUM_ROUNDS):
-            round_seed = match_seed * 1000 + round_idx
+            round_seed = (match_seed * 1000 + round_idx) % (2**32 - 1)
             random.seed(round_seed)
             np.random.seed(round_seed)
 
