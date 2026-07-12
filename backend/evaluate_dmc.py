@@ -4,8 +4,7 @@ import os
 import json
 import random
 import sys
-from playerTypes.dmc_bot import PresidentValueNet, PresidentDMCBot
-from playerTypes.baseline_bot import PresidentBaselineBot
+from playerTypes.dmc_bot import PresidentValueNet, PresidentDMCBot, PresidentBaselineBot
 from dmc_utils import get_cached_model, eval_game_loop, run_elo_tournament
 
 NUM_MATCHES = 300

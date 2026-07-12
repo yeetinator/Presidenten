@@ -9,8 +9,8 @@ from playerTypes.dmc_bot import (
     PresidentDMCBot,
     MasterDMCBot,
     MasterValueNet,
+    PresidentBaselineBot,
 )
-from playerTypes.baseline_bot import PresidentBaselineBot
 from dmc_utils import get_cached_model, eval_game_loop, run_elo_tournament
 
 NUM_MATCHES = 300
