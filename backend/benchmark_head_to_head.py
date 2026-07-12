@@ -5,8 +5,12 @@ import numpy as np
 import torch
 
 from game import President
-from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
-from playerTypes.master_dmc_bot import MasterDMCBot, MasterValueNet
+from playerTypes.dmc_bot import (
+    PresidentDMCBot,
+    PresidentValueNet,
+    MasterDMCBot,
+    MasterValueNet,
+)
 
 TOTAL_GAMES = 792
 NUM_ROUNDS = 10

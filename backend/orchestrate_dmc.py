@@ -100,11 +100,7 @@ def run_orchestrator(
 
 
 def main():
-    run_orchestrator(
-        snapshot_dir="snapshots",
-        train_script="train_dmc.py",
-        evaluate_script="evaluate_dmc.py",
-    )
+    run_orchestrator()
 
 
 if __name__ == "__main__":
