@@ -108,6 +108,13 @@ def run_evaluation(
     print(" RANK  | MASTER BATCH GENERATION | ELO RATING vs BASIC FIELD")
     print("=" * 65)
     print(f" BASELINE CONTROL BOT     | Elo: {ratings[BASELINE_KEY]:.2f}")
+
+    if basic_elites:
+        best_basic_key = max(basic_elites, key=lambda k: ratings[k])
+        best_basic_file = os.path.basename(best_basic_key)
+        print(
+            f" BEST BASIC ELITE BOT     | File: {best_basic_file:<15} | Elo: {ratings[best_basic_key]:.2f}"
+        )
     print("-" * 65)
 
     for rank, res in enumerate(results, start=1):
