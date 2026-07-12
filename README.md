@@ -5,7 +5,7 @@ President is a card game project with two parts:
 - A Python backend for the game engine, CLI tools, RL training, and the FastAPI websocket server.
 - A Svelte frontend for the browser UI.
 
-<video src="./public/jump_in.mp4" autoplay loop muted playsinline width="600"></video>
+![Jump In Demo](./public/jump_in.gif)
 
 ## Architecture
 
