@@ -57,9 +57,7 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
     return game_loop(num_players, bot_instances, live_model)
 
 
-def run_training_loop(
-    snapshot_dir="snapshots",
-):
+def run_training_loop(snapshot_dir="snapshots"):
     os.makedirs(snapshot_dir, exist_ok=True)
 
     ctx = mp.get_context("spawn")

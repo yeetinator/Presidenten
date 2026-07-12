@@ -40,10 +40,7 @@ def run_duplicate_match(match_args):
     return sampled_keys, slot_norm_scores
 
 
-def run_evaluation(
-    snapshot_dir="snapshots",
-    gen_cycle=None,
-):
+def run_evaluation(snapshot_dir="snapshots", gen_cycle=None):
     if gen_cycle is None:
         try:
             gen_cycle = int(sys.argv[1])
