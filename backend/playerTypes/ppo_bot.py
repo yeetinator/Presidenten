@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import Categorical
 import numpy as np
-from playerTypes.dmc_bot import vectorize_state
+from playerTypes.dmc_bot import vectorize_state, STATE_DIM, MASTER_VEC_DIM
 
 
 def generate_action_space():
@@ -25,7 +25,9 @@ MOVE_TO_IDX, IDX_TO_MOVE, ACTION_DIM = generate_action_space()
 
 
 class PresidentActorCritic(nn.Module):
-    def __init__(self, actor_dim=115, critic_dim=193, action_dim=ACTION_DIM):
+    def __init__(
+        self, actor_dim=STATE_DIM, critic_dim=MASTER_VEC_DIM, action_dim=ACTION_DIM
+    ):
         super().__init__()
         self.actor = nn.Sequential(
             nn.Linear(actor_dim, 512),

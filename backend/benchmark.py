@@ -111,14 +111,12 @@ def main():
     print(f" Old DMC Bot Path: {OLD_DMC_CHECKPOINT}\n")
 
     device = torch.device("cpu")
-    master_model = MasterValueNet(input_dim=193).to(
-        device
-    )  # PresidentValueNet(input_dim=115).to(device)
+    master_model = MasterValueNet().to(device)  # PresidentValueNet().to(device)
     master_ckpt = torch.load(MASTER_CHECKPOINT, map_location=device)
     master_model.load_state_dict(master_ckpt["model_state_dict"])
     master_model.eval()
 
-    old_dmc_model = PresidentValueNet(input_dim=115).to(device)
+    old_dmc_model = PresidentValueNet().to(device)
     old_ckpt = torch.load(OLD_DMC_CHECKPOINT, map_location=device)
     old_dmc_model.load_state_dict(old_ckpt["model_state_dict"])
     old_dmc_model.eval()

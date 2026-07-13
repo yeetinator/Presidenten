@@ -10,6 +10,7 @@ from playerTypes.dmc_bot import (
     PresidentValueNet,
     MasterDMCBot,
     MasterValueNet,
+    MASTER_INPUT_DIM,
 )
 from backend.utils import (
     init_worker,
@@ -63,7 +64,9 @@ def run_single_game(live_model, device, epsilon, basic_elites, master_elites):
             bot_instances[seat] = MasterDMCBot(seat, model, device)
         else:
             bot_instances[seat] = PresidentBaselineBot(seat)
-    return game_loop(num_players, bot_instances, live_model, 193, MasterDMCBot)
+    return game_loop(
+        num_players, bot_instances, live_model, MASTER_INPUT_DIM, MasterDMCBot
+    )
 
 
 def run_training_loop(

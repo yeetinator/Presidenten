@@ -5,7 +5,7 @@ import random
 import concurrent.futures
 import numpy as np
 from game import President
-from playerTypes.dmc_bot import PresidentDMCBot
+from playerTypes.dmc_bot import PresidentDMCBot, INPUT_DIM
 
 NUM_ROUNDS = 10
 GRADIENT_CLIP = 1.0
@@ -40,7 +40,11 @@ def prune_cache(active_paths, max_size=200):
 
 
 def game_loop(
-    num_players, bot_instances, live_model, input_dim=115, bot_class=PresidentDMCBot
+    num_players,
+    bot_instances,
+    live_model,
+    input_dim=INPUT_DIM,
+    bot_class=PresidentDMCBot,
 ):
     env = President(num_players)
     game_x, game_y = [], []
