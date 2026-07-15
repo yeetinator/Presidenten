@@ -5,20 +5,23 @@ import json
 import glob
 import shutil
 import torch
+import sys
 
 
-def run_step(script_name, args=None):
-    print(f"\n================ LAUNCHING {script_name.upper()} ================")
-    backend_dir = os.path.dirname(os.path.abspath(__file__))
-    script_path = os.path.join(backend_dir, script_name)
+def run_step(module_name, args=None):
+    print(f"\n================ LAUNCHING {module_name.upper()} ================")
+    curr_dir = os.path.dirname(os.path.abspath(__file__))
+    backend_dir = os.path.dirname(curr_dir)
+    folder_name = os.path.basename(curr_dir)
+    module_path = f"{folder_name}.{module_name}"
 
-    cmd = ["python", script_path]
+    cmd = [sys.executable, "-m", module_path]
     if args:
         cmd.extend(args)
 
     result = subprocess.run(cmd, capture_output=False, text=True, cwd=backend_dir)
     if result.returncode != 0:
-        print(f"Error: {script_name} failed with return code {result.returncode}.")
+        print(f"Error: {module_name} failed with return code {result.returncode}.")
         return False
     return True
 
@@ -83,8 +86,8 @@ def get_resume_cycle(snapshot_dir="snapshots"):
 
 def run_orchestrator(
     snapshot_dir="snapshots",
-    train_script="train_dmc.py",
-    evaluate_script="evaluate_dmc.py",
+    train_script="train_dmc",
+    evaluate_script="evaluate_dmc",
 ):
     gen_cycle = get_resume_cycle(snapshot_dir)
     while True:

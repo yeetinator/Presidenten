@@ -4,8 +4,12 @@ import random
 import torch
 import os
 import json
-from backend.utils import run_elo_tournament, get_cached_model, eval_game_loop
-from playerTypes.dmc_bot import PresidentBaselineBot, PresidentValueNet, PresidentDMCBot
+from utils import run_elo_tournament, get_cached_model, eval_game_loop
+from playerTypes.dmc_bot import (
+    PresidentBaselineBot,
+    PresidentValueNet,
+    PresidentDMCBot,
+)
 from playerTypes.ppo_bot import PresidentActorCritic, PresidentPPOBot
 
 BASELINE_KEY = "BASELINE_BOT"

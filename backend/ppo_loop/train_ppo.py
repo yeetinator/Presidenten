@@ -20,7 +20,7 @@ from playerTypes.dmc_bot import (
     PresidentValueNet,
     PresidentDMCBot,
 )
-from backend.utils import (
+from utils import (
     init_worker,
     get_cached_model,
     prune_cache,

@@ -4,8 +4,12 @@ import os
 import json
 import random
 import sys
-from playerTypes.dmc_bot import PresidentValueNet, PresidentDMCBot, PresidentBaselineBot
-from backend.utils import get_cached_model, eval_game_loop, run_elo_tournament
+from playerTypes.dmc_bot import (
+    PresidentValueNet,
+    PresidentDMCBot,
+    PresidentBaselineBot,
+)
+from utils import get_cached_model, eval_game_loop, run_elo_tournament
 
 NUM_MATCHES = 300
 BASELINE_KEY = "BASELINE_BOT"

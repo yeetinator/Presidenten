@@ -4,15 +4,15 @@ import random
 import torch
 import torch.multiprocessing as mp
 import numpy as np
-from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import (
     PresidentDMCBot,
     PresidentValueNet,
     MasterDMCBot,
     MasterValueNet,
+    PresidentBaselineBot,
     MASTER_INPUT_DIM,
 )
-from backend.utils import (
+from utils import (
     init_worker,
     get_cached_model,
     prune_cache,
