@@ -3,15 +3,23 @@ import os
 import multiprocessing
 import random
 import concurrent.futures
+import sys
+import glob
+import json
+import subprocess
+import shutil
+import time
 import numpy as np
 from game import President
 from playerTypes.player import Player
-from playerTypes.dmc_bot import PresidentDMCBot, INPUT_DIM
+from playerTypes.baseline_bot import PresidentBaselineBot
+from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet, INPUT_DIM
 
 NUM_ROUNDS = 10
 GRADIENT_CLIP = 1.0
 NUM_WORKERS = 12
 K_FACTOR = 16.0
+BASELINE_KEY = "BASELINE_BOT"
 
 _SNAPSHOT_CACHE = {}
 
@@ -227,6 +235,130 @@ def handle_keyboard_interrupt(pool):
     os._exit(1)
 
 
+def run_duplicate_match(match_args):
+    match_seed, num_players, sampled_keys, keys_set, net_class, bot_class = match_args
+    device = torch.device("cpu")
+    slot_norm_scores = [0.0] * num_players
+
+    for rotation in range(num_players):
+        seat_assignments = [
+            sampled_keys[(i + rotation) % num_players] for i in range(num_players)
+        ]
+        bot_instances: dict[int, Player] = {}
+
+        for seat, key in enumerate(seat_assignments):
+            if key == BASELINE_KEY:
+                bot_instances[seat] = PresidentBaselineBot(seat)
+            elif key in keys_set and bot_class != PresidentDMCBot:
+                model = get_cached_model(key, net_class)
+                bot_instances[seat] = bot_class(seat, model, device)
+            else:
+                model = get_cached_model(key, PresidentValueNet)
+                bot_instances[seat] = PresidentDMCBot(seat, model, device)
+        slot_norm_scores = eval_game_loop(
+            num_players,
+            match_seed,
+            bot_instances,
+            seat_assignments,
+            rotation,
+            slot_norm_scores,
+        )
+    return sampled_keys, slot_norm_scores
+
+
+def run_evaluation(
+    snapshot_dir,
+    name: str,
+    net_class,
+    bot_class,
+    basic_snapshot_dir=None,
+    gen_cycle=None,
+):
+    if gen_cycle is None:
+        try:
+            gen_cycle = int(sys.argv[1])
+        except (IndexError, ValueError):
+            gen_cycle = 1
+
+    candidates = glob.glob(f"{snapshot_dir}/model_gen_*.pt")
+    elites = glob.glob(f"{snapshot_dir}/elites/model_gen_*.pt")
+    snapshot_files = list(set(candidates + elites))
+
+    basic_elites = (
+        glob.glob(f"{basic_snapshot_dir}/elites/model_gen_*.pt")
+        + glob.glob(f"{basic_snapshot_dir}/model_gen_*.pt")
+        if basic_snapshot_dir
+        else []
+    )
+    if not snapshot_files:
+        print(f"No {name} snapshot files found.")
+        return
+
+    keys_set = set(snapshot_files)
+    active_pool = [BASELINE_KEY] + snapshot_files + basic_elites
+    num_matches = get_num_matches(len(active_pool))
+
+    print(
+        f"Starting {name} Elo Tournament ({num_matches} Matches across mixed pool)..."
+    )
+
+    base_entropy = random.randint(1_000_000, 99_000_000)
+    match_tasks = []
+
+    for match_idx in range(num_matches):
+        num_players = 4 + (match_idx % 4)
+        match_seed = base_entropy + (gen_cycle * 10000) + match_idx
+        sampled_snap = random.choice(snapshot_files)
+        other_pool = [k for k in active_pool if k != sampled_snap]
+
+        if len(other_pool) >= num_players - 1:
+            sampled_others = random.sample(other_pool, num_players - 1)
+        else:
+            sampled_others = list(other_pool)
+            while len(sampled_others) < num_players - 1:
+                sampled_others.append(BASELINE_KEY)
+
+        sampled_keys = [sampled_snap] + sampled_others
+        random.shuffle(sampled_keys)
+
+        match_tasks.append(
+            (match_seed, num_players, sampled_keys, keys_set, net_class, bot_class)
+        )
+
+    ratings, results = run_elo_tournament(
+        active_pool,
+        run_duplicate_match,
+        match_tasks,
+        BASELINE_KEY,
+        snapshot_files,
+    )
+
+    print("\n" + "=" * 65)
+    print(f" RANK  | {name.upper()} BATCH GENERATION | ELO RATING vs BASIC FIELD")
+    print("=" * 65)
+    print(f" BASELINE CONTROL BOT     | Elo: {ratings[BASELINE_KEY]:.2f}")
+
+    if basic_elites:
+        best_basic_key = max(basic_elites, key=lambda k: ratings[k])
+        best_basic_file = os.path.basename(best_basic_key)
+        print(
+            f" BEST BASIC ELITE BOT     | File: {best_basic_file:<15} | Elo: {ratings[best_basic_key]:.2f}"
+        )
+    print("-" * 65)
+
+    for rank, res in enumerate(results, start=1):
+        marker = " <- ELITE" if rank <= 8 else ""
+        print(
+            f" {rank:<5} {marker:<9} | Batch {res['batch']:<10} | Elo: {res['elo']:.2f}"
+        )
+    print("=" * 65)
+
+    os.makedirs(f"{snapshot_dir}/evals", exist_ok=True)
+    json_path = f"{snapshot_dir}/evals/evaluation_results_{gen_cycle}.json"
+    with open(json_path, "w") as f:
+        json.dump(results, f, indent=4)
+
+
 def parse_batch_num(filepath):
     try:
         filename = os.path.basename(filepath)
@@ -298,3 +430,93 @@ def run_elo_tournament(
 
 def get_num_matches(pool_len: int):
     return ((pool_len * 60 + NUM_WORKERS - 1) // NUM_WORKERS) * NUM_WORKERS
+
+
+def manage_league_files(snapshot_dir, gen_cycle=None):
+    print("\n================ MANAGING LEAGUE POOL ================")
+
+    json_path = f"{snapshot_dir}/evals/evaluation_results_{gen_cycle}.json"
+    if not os.path.exists(json_path):
+        print(f"Error: {json_path} not found. Skipping league management.")
+        return
+
+    with open(json_path, "r") as f:
+        results = json.load(f)
+
+    if not results:
+        print("Error: No evaluation results found. Skipping league management.")
+        return
+
+    os.makedirs(f"{snapshot_dir}/elites", exist_ok=True)
+    temp_dir = f"{snapshot_dir}/tmp"
+    os.makedirs(temp_dir, exist_ok=True)
+
+    top_8 = results[:8]
+    print("Staging top 8 models")
+
+    for rank, res in enumerate(top_8, start=1):
+        batch = res["batch"]
+        src_path = res["path"]
+
+        if os.path.exists(src_path):
+            shutil.copy2(src_path, f"{temp_dir}/elite_model_{batch}.pt")
+            print(f"  -> Rank {rank}: Batch {batch:<5} staged (Elo: {res['elo']:.2f})")
+
+    print(f"Purging old files")
+    for old_file in glob.glob(f"{snapshot_dir}/elites/model_gen_*.pt"):
+        os.remove(old_file)
+
+    for snap in glob.glob(f"{snapshot_dir}/model_gen_*.pt"):
+        os.remove(snap)
+
+    print("Committing staged files")
+    for staged_elite in glob.glob(f"{temp_dir}/elite_model_*.pt"):
+        batch = staged_elite.split("_")[-1].split(".")[0]
+        shutil.move(staged_elite, f"{snapshot_dir}/elites/model_gen_{batch}.pt")
+
+    shutil.rmtree(temp_dir)
+    print("League management completed.")
+
+
+def run_step(module_name, args=None):
+    print(f"\n================ LAUNCHING {module_name.upper()} ================")
+    curr_dir = os.path.dirname(os.path.abspath(__file__))
+    backend_dir = os.path.dirname(curr_dir)
+    folder_name = os.path.basename(curr_dir)
+    module_path = f"{folder_name}.{module_name}"
+
+    cmd = [sys.executable, "-m", module_path]
+    if args:
+        cmd.extend(args)
+
+    result = subprocess.run(cmd, capture_output=False, text=True, cwd=backend_dir)
+    if result.returncode != 0:
+        print(f"Error: {module_name} failed with return code {result.returncode}.")
+        return False
+    return True
+
+
+def get_resume_cycle(snapshot_dir):
+    resume_path = f"{snapshot_dir}/latest_model.pt"
+    if os.path.exists(resume_path):
+        try:
+            checkpoint = torch.load(resume_path, map_location=torch.device("cpu"))
+            batch_idx = checkpoint.get("batch_idx", 0)
+            return (batch_idx // 2000) + 1
+        except Exception as e:
+            print(f"Error loading checkpoint from {resume_path}: {e}")
+    return 1
+
+
+def run_orchestrator(snapshot_dir, train_script, evaluate_script):
+    gen_cycle = get_resume_cycle(snapshot_dir)
+    while True:
+        print(f"\n=== STARTING LEAGUE GENERATION CYCLE {gen_cycle} ===")
+        if not run_step(train_script):
+            break
+        if not run_step(evaluate_script, [str(gen_cycle)]):
+            break
+
+        manage_league_files(snapshot_dir, gen_cycle)
+        gen_cycle += 1
+        time.sleep(5)
