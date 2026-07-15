@@ -36,7 +36,7 @@ STATE_DIM = (
 MOVE_DIM = NUM_RANKS + COUNT_BUCKETS + COUNT_BUCKETS + 1
 INPUT_DIM = STATE_DIM + MOVE_DIM
 
-MASTER_OPP_DIM = (MAX_PLAYERS - 1) * NUM_RANKS
+MASTER_OPP_DIM = (MAX_PLAYERS - 1) * HAND_DIM
 MASTER_VEC_DIM = STATE_DIM + MASTER_OPP_DIM
 MASTER_INPUT_DIM = MASTER_VEC_DIM + MOVE_DIM
 
@@ -174,17 +174,20 @@ def vectorize_master_state(state, env: President, num_players=4):
     student_vec = vectorize_state(state, num_players)
     my_id = [p for p in range(num_players) if p not in state["opp_hand_counts"]][0]
     MAX_PLAYERS = 7
-    opp_hands_matrix = np.full((MAX_PLAYERS - 1, NUM_RANKS), -1.0, dtype=np.float32)
+    opp_hands_matrix = np.full((MAX_PLAYERS - 1, HAND_DIM), -1.0, dtype=np.float32)
 
     for i in range(1, MAX_PLAYERS):
         slot = i - 1
         if i < num_players:
             opp_id = (my_id + i) % num_players
-            opp_hands_matrix[slot, :] = 0.0
-            for card in env.hands[opp_id]:
-                opp_hands_matrix[slot, card - 3] += 1.0 / COUNT_BUCKETS
+            opp_counts = np.zeros(NUM_RANKS, dtype=np.int32)
 
-    opp_hands_vec = opp_hands_matrix.flatten()  # 78
+            for card in env.hands[opp_id]:
+                opp_counts[card - 3] += 1
+            opp_hand_vector = to_thermometer(opp_counts)
+            opp_hands_matrix[slot, :] = opp_hand_vector
+
+    opp_hands_vec = opp_hands_matrix.flatten()  # 312
     return np.concatenate([student_vec, opp_hands_vec])
 
 
@@ -230,9 +233,9 @@ class MasterValueNet(nn.Module):
             nn.Linear(1024, 512),
             nn.LayerNorm(512),
             nn.LeakyReLU(0.1),
-            nn.Linear(512, 256),
+            nn.Linear(512, 512),
             nn.LeakyReLU(0.1),
-            nn.Linear(256, 1),
+            nn.Linear(512, 1),
         )
 
     def forward(self, x):
