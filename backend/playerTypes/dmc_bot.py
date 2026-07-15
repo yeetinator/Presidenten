@@ -384,3 +384,42 @@ class MasterDMCBot(PresidentDMCBot):
             num_players = len(state["opp_hand_counts"]) + 1
             return vectorize_state(state, num_players)
         return vectorize_master_state(state, env, env.players)
+
+
+class StudentDMCBot(PresidentDMCBot):
+    def __init__(
+        self,
+        player_id,
+        model,
+        device,
+        training=False,
+        epsilon=0.2,
+        profile=None,
+        master_model=None,
+    ):
+        super().__init__(player_id, model, device, training, epsilon, profile)
+        self.master_model = master_model
+        self.master_trajectory = []
+
+    def get_move(self, state, env=None, *args, **kwargs) -> tuple[int, int, int]:
+        traj_len_before = len(self.trajectory)
+        chosen_move = super().get_move(state)
+
+        if (
+            self.training
+            and self.master_model is not None
+            and env is not None
+            and len(self.trajectory) > traj_len_before
+        ):
+            master_state_vec = vectorize_master_state(state, env, env.players)
+            master_feat = np.concatenate(
+                [master_state_vec, vectorize_move(chosen_move)]
+            )
+
+            with torch.no_grad():
+                master_q = self.master_model(
+                    torch.FloatTensor(master_feat).unsqueeze(0)
+                ).item()
+            master_q = max(-1.0, min(1.0, master_q))
+            self.master_trajectory.append(master_q)
+        return chosen_move
