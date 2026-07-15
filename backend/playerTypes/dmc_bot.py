@@ -4,8 +4,8 @@ import numpy as np
 import random
 import itertools
 from collections import Counter
-from player import Player
-from baseline_bot import PresidentBaselineBot
+from .player import Player
+from .baseline_bot import PresidentBaselineBot
 from game import President
 
 NUM_RANKS = 13

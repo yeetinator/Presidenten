@@ -3,8 +3,8 @@ import random
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from game import President
-from player import Player
-from baseline_bot import PresidentBaselineBot
+from .player import Player
+from .baseline_bot import PresidentBaselineBot
 
 
 class ISMCTSNode:

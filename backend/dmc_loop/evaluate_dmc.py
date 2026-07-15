@@ -7,9 +7,8 @@ import sys
 from playerTypes.player import Player
 from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentValueNet, PresidentDMCBot
-from utils import get_cached_model, eval_game_loop, run_elo_tournament
+from utils import get_cached_model, eval_game_loop, run_elo_tournament, get_num_matches
 
-NUM_MATCHES = 300
 BASELINE_KEY = "BASELINE_BOT"
 
 
@@ -57,16 +56,17 @@ def run_evaluation(snapshot_dir="snapshots", gen_cycle=None):
         return
 
     active_pool = [BASELINE_KEY] + all_snapshot_files
+    num_matches = get_num_matches(len(active_pool))
 
     print(
-        f"Starting Elo Tournament ({NUM_MATCHES} Duplicate Matches across 4-7 Players)..."
+        f"Starting Elo Tournament ({num_matches} Duplicate Matches across 4-7 Players)..."
     )
     print(f"Found {len(all_snapshot_files)} snapshots")
 
     base_entropy = random.randint(1_000_000, 99_000_000)
     match_tasks = []
 
-    for match_idx in range(NUM_MATCHES):
+    for match_idx in range(num_matches):
         num_players = 4 + (match_idx % 4)
         match_seed = base_entropy + (gen_cycle * 10000) + match_idx
 

@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 from torch.distributions import Categorical
 import numpy as np
-from player import Player
+from .player import Player
 from .baseline_bot import PresidentBaselineBot
-from dmc_bot import vectorize_state, STATE_DIM, MASTER_VEC_DIM
+from .dmc_bot import vectorize_state, STATE_DIM, MASTER_VEC_DIM
 
 
 def generate_action_space():

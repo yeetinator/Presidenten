@@ -12,9 +12,8 @@ from playerTypes.dmc_bot import (
     MasterDMCBot,
     MasterValueNet,
 )
-from utils import get_cached_model, eval_game_loop, run_elo_tournament
+from utils import get_cached_model, eval_game_loop, run_elo_tournament, get_num_matches
 
-NUM_MATCHES = 300
 BASELINE_KEY = "BASELINE_BOT"
 
 
@@ -69,17 +68,18 @@ def run_evaluation(
         print("No Master snapshot files found.")
         return
 
-    active_pool = [BASELINE_KEY] + master_snapshot_files + basic_elites
     master_keys_set = set(master_snapshot_files)
+    active_pool = [BASELINE_KEY] + master_snapshot_files + basic_elites
+    num_matches = get_num_matches(len(active_pool))
 
     print(
-        f"Starting Master Elo Tournament ({NUM_MATCHES} Matches across mixed pool)..."
+        f"Starting Master Elo Tournament ({num_matches} Matches across mixed pool)..."
     )
 
     base_entropy = random.randint(1_000_000, 99_000_000)
     match_tasks = []
 
-    for match_idx in range(NUM_MATCHES):
+    for match_idx in range(num_matches):
         num_players = 4 + (match_idx % 4)
         match_seed = base_entropy + (gen_cycle * 10000) + match_idx
         sampled_master = random.choice(master_snapshot_files)

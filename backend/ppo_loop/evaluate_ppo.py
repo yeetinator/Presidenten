@@ -4,13 +4,12 @@ import random
 import torch
 import os
 import json
-from utils import run_elo_tournament, get_cached_model, eval_game_loop
+from utils import run_elo_tournament, get_cached_model, eval_game_loop, get_num_matches
 from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentValueNet, PresidentDMCBot
 from playerTypes.ppo_bot import PresidentActorCritic, PresidentPPOBot
 
 BASELINE_KEY = "BASELINE_BOT"
-NUM_MATCHES = 300
 
 
 def run_duplicate_match(match_args):
@@ -65,15 +64,16 @@ def run_evaluation(
         print("No PPO snapshot files found.")
         return
 
-    active_pool = [BASELINE_KEY] + all_snapshot_files + basic_elites
     ppo_keys_set = set(all_snapshot_files)
+    active_pool = [BASELINE_KEY] + all_snapshot_files + basic_elites
+    num_matches = get_num_matches(len(active_pool))
 
-    print(f"Starting PPO Elo Tournament ({NUM_MATCHES} Matches across mixed pool)...")
+    print(f"Starting PPO Elo Tournament ({num_matches} Matches across mixed pool)...")
 
     base_entropy = random.randint(1_000_000, 99_000_000)
     match_tasks = []
 
-    for match_idx in range(NUM_MATCHES):
+    for match_idx in range(num_matches):
         num_players = 4 + (match_idx % 4)
         match_seed = base_entropy + (gen_cycle * 10000) + match_idx
         sampled_ppo = random.choice(all_snapshot_files)
