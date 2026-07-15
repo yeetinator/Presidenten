@@ -288,3 +288,7 @@ def run_elo_tournament(
         )
     results.sort(key=lambda x: x["elo"], reverse=True)
     return ratings, results
+
+
+def get_num_matches(pool_len: int):
+    return ((pool_len * 60 + NUM_WORKERS - 1) // NUM_WORKERS) * NUM_WORKERS
