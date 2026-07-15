@@ -11,9 +11,9 @@ from playerTypes.dmc_bot import (
     MasterDMCBot,
     MasterValueNet,
 )
+from utils import NUM_ROUNDS
 
 TOTAL_GAMES = 792
-NUM_ROUNDS = 10
 NUM_WORKERS = 12
 
 MASTER_CHECKPOINT = "playerTypes/best_master_dmc_25500.pt"
