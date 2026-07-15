@@ -1,4 +1,4 @@
-from player import Player
+from .player import Player
 from game import President, get_val_input
 from collections import Counter
 
