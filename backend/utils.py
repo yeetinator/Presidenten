@@ -40,6 +40,39 @@ def prune_cache(active_paths, max_size=200):
         }
 
 
+def play_round(env: President, bot_instances: dict[int, Player], round_idx: int):
+    state = env.full_reset(round_idx > 0)
+    if round_idx > 0:
+        cards_to_pass = {}
+        for p_id, role in env.roles.items():
+            if role != "Citizen":
+                cards_to_pass[p_id] = bot_instances[p_id].choose_cards_to_pass(
+                    env._get_state(p_id)
+                )
+
+        for pair in env.role_pairs:
+            env.exchange_cards(pair, cards_to_pass)
+        state = env._get_state(env.curr_turn)
+
+    move_count = 0
+    while not env.game_over:
+        move_count += 1
+        if move_count > 500:
+            return False
+
+        curr_player = env.curr_turn
+        if curr_player is None:
+            break
+
+        chosen_move = bot_instances[curr_player].get_move(state, env)
+        state, _ = env.step(curr_player, chosen_move)
+
+        if env.was_pile_reset:
+            env.clear_pile()
+    env.assign_roles()
+    return True
+
+
 def game_loop(
     num_players,
     bot_instances: dict[int, Player],
@@ -51,40 +84,13 @@ def game_loop(
     game_x, game_y = [], []
 
     for round_idx in range(NUM_ROUNDS):
-        state = env.full_reset(round_idx > 0)
-        if round_idx > 0:
-            cards_to_pass = {}
-            for p_id, role in env.roles.items():
-                if role != "Citizen":
-                    cards_to_pass[p_id] = bot_instances[p_id].choose_cards_to_pass(
-                        env._get_state(p_id)
-                    )
-
-            for pair in env.role_pairs:
-                env.exchange_cards(pair, cards_to_pass)
-            state = env._get_state(env.curr_turn)
-
-        move_count = 0
-        while not env.game_over:
-            move_count += 1
-            if move_count > 500:
-                for bot in bot_instances.values():
-                    if isinstance(bot, PresidentDMCBot):
-                        bot.trajectory.clear()
-                return np.empty((0, input_dim), dtype=np.float32), np.empty(
-                    (0, 1), dtype=np.float32
-                )
-
-            curr_player = env.curr_turn
-            if curr_player is None:
-                break
-
-            chosen_move = bot_instances[curr_player].get_move(state, env)
-            state, _ = env.step(curr_player, chosen_move)
-
-            if env.was_pile_reset:
-                env.clear_pile()
-        env.assign_roles()
+        if not play_round(env, bot_instances, round_idx):
+            for bot in bot_instances.values():
+                if isinstance(bot, PresidentDMCBot):
+                    bot.trajectory.clear()
+            return np.empty((0, input_dim), dtype=np.float32), np.empty(
+                (0, 1), dtype=np.float32
+            )
 
         max_possible_score = env.players - 1
         gamma = 1.0
