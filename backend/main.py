@@ -6,6 +6,7 @@ import torch
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from game import President, PlayerType
+from playerTypes.player import Player
 from playerTypes.random_bot import PresidentRandomBot
 from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
@@ -19,7 +20,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BotPlayer = PresidentRandomBot | PresidentBaselineBot | PresidentDMCBot
 
 MESSAGE_DELAY = 1.5
 EXCHANGE_DELAY = 1.2
@@ -64,7 +64,7 @@ class GameTimings:
 @dataclass
 class GameSession:
     env: President | None = None
-    assigned_players: dict[int, BotPlayer] = field(default_factory=dict)
+    assigned_players: dict[int, Player] = field(default_factory=dict)
     assign_p: dict[int, PlayerType] = field(default_factory=dict)
     human_id: int = 0
     timings: GameTimings = field(default_factory=GameTimings)
@@ -302,8 +302,8 @@ async def wait_for_event(event: asyncio.Event, disconnect_event: asyncio.Event):
 
 def build_assigned_players(
     assign_p: dict[int, PlayerType], device: torch.device
-) -> tuple[dict[int, BotPlayer], int]:
-    assigned_players: dict[int, BotPlayer] = {}
+) -> tuple[dict[int, Player], int]:
+    assigned_players: dict[int, Player] = {}
     human_id = 0
 
     model_path = Path(__file__).resolve().parent / "playerTypes" / "model_gen_48250.pt"
@@ -352,7 +352,7 @@ async def wait_for_exchange_cards(
 
 async def run_exchange_phase(
     env: President,
-    assigned_players: dict[int, BotPlayer],
+    assigned_players: dict[int, Player],
     websocket: WebSocket,
     human_id: int,
     assign_p: dict[int, PlayerType],
@@ -406,7 +406,7 @@ async def run_exchange_phase(
 
 async def run(
     env: President,
-    assigned_players: dict[int, BotPlayer],
+    assigned_players: dict[int, Player],
     assign_p: dict,
     websocket: WebSocket,
     human_id,

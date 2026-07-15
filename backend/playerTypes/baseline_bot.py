@@ -1,12 +1,10 @@
+import math
 from collections import Counter
 from itertools import combinations
-import math
+from .player import Player
 
 
-class PresidentBaselineBot:
-    def __init__(self, player_id):
-        self.player_id = player_id
-
+class PresidentBaselineBot(Player):
     def get_ranked_moves(self, state: dict):
         hand = state["hand"]
         legal_moves = state["legal_moves"]
@@ -93,7 +91,7 @@ class PresidentBaselineBot:
             if not (count == len(hand) and twos > 0)
         ] or [legal_moves[0]]
 
-    def get_move(self, state: dict, *args, **kwargs):
+    def get_move(self, state: dict, *args, **kwargs) -> tuple[int, int, int]:
         legal_moves = state["legal_moves"]
 
         if len(legal_moves) == 1:
@@ -127,7 +125,7 @@ class PresidentBaselineBot:
             return (0, 0, 0)
         return best_move
 
-    def choose_cards_to_pass(self, state: dict, *args):
+    def choose_cards_to_pass(self, state: dict) -> list[int]:
         if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
             return []
 

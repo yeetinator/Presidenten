@@ -4,9 +4,10 @@ import random
 import os
 import numpy as np
 import torch.multiprocessing as mp
+from playerTypes.player import Player
 from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
-from backend.utils import (
+from utils import (
     init_worker,
     get_cached_model,
     prune_cache,
@@ -33,8 +34,9 @@ def parallel_worker(shared_model, epsilon, elite_snapshots=None):
 
 def run_single_game(live_model, device, epsilon, elite_snapshots=None):
     num_players = random.randint(4, 7)
-    bot_instances: dict[int, PresidentDMCBot | PresidentBaselineBot] = {}
-    bot_instances[0] = PresidentDMCBot(0, live_model, device, True, epsilon)
+    bot_instances: dict[int, Player] = {
+        0: PresidentDMCBot(0, live_model, device, True, epsilon)
+    }
 
     for seat in range(1, num_players):
         roll = random.random()

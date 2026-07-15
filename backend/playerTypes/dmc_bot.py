@@ -4,7 +4,8 @@ import numpy as np
 import random
 import itertools
 from collections import Counter
-from playerTypes.baseline_bot import PresidentBaselineBot
+from player import Player
+from baseline_bot import PresidentBaselineBot
 from game import President
 
 NUM_RANKS = 13
@@ -238,7 +239,7 @@ class MasterValueNet(nn.Module):
         return self.net(x)
 
 
-class PresidentDMCBot:
+class PresidentDMCBot(Player):
     def __init__(
         self,
         player_id,
@@ -256,13 +257,10 @@ class PresidentDMCBot:
         self.epsilon = epsilon
         self.profile = profile
 
-    def vectorize_state(self, state: dict, env: President | None = None):
-        num_players = (
-            env.players if env is not None else len(state["opp_hand_counts"]) + 1
-        )
-        return vectorize_state(state, num_players)
+    def vectorize_state(self, state: dict):
+        return vectorize_state(state, len(state["opp_hand_counts"]) + 1)
 
-    def get_move(self, state: dict, env: President | None = None, *args, **kwargs):
+    def get_move(self, state: dict, *args, **kwargs) -> tuple[int, int, int]:
         legal_moves = state["legal_moves"]
         if not legal_moves:
             return (0, 0, 0)
@@ -270,7 +268,7 @@ class PresidentDMCBot:
         if len(legal_moves) == 1:
             return legal_moves[0]
         else:
-            state_vec = self.vectorize_state(state, env)
+            state_vec = self.vectorize_state(state)
             features = [
                 np.concatenate([state_vec, vectorize_move(move)])
                 for move in legal_moves
@@ -299,7 +297,7 @@ class PresidentDMCBot:
                 self.trajectory.append(features[best_idx])
             return chosen_move
 
-    def choose_cards_to_pass(self, state: dict, env: President | None = None):
+    def choose_cards_to_pass(self, state: dict) -> list[int]:
         if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
             return []
 
@@ -315,9 +313,7 @@ class PresidentDMCBot:
         possible_passes = sorted(list(set(itertools.combinations(hand, count))))
         all_hypo_features = []
         combo_map = []
-        num_players = (
-            env.players if env is not None else len(state["opp_hand_counts"]) + 1
-        )
+        num_players = len(state["opp_hand_counts"]) + 1
         inv = vectorize_invariant_state(state, num_players)
         hypo_hand_count_norm = float(len(hand) - count) / 13.0
         opp_vec = np.concatenate([[hypo_hand_count_norm], inv["opp_vector"]])

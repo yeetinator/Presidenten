@@ -6,21 +6,23 @@ import torch.nn as nn
 import numpy as np
 import torch.multiprocessing as mp
 from game import President
+from playerTypes.player import Player
 from playerTypes.ppo_bot import (
     PresidentActorCritic,
     PresidentPPOBot,
     MOVE_TO_IDX,
     IDX_TO_MOVE,
     ACTION_DIM,
+    get_action_mask,
 )
+from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import (
     vectorize_state,
     vectorize_master_state,
-    PresidentBaselineBot,
     PresidentValueNet,
     PresidentDMCBot,
 )
-from backend.utils import (
+from utils import (
     init_worker,
     get_cached_model,
     prune_cache,
@@ -59,8 +61,7 @@ def collect_single_game_rollout(
     env = President(num_players)
 
     ppo_seats = {0}
-    bot_instances = {}
-    bot_instances[0] = PresidentPPOBot(0, shared_model, device)
+    bot_instances: dict[int, Player] = {0: PresidentPPOBot(0, shared_model, device)}
 
     for seat in range(1, env.players):
         roll = random.random()
@@ -100,27 +101,22 @@ def collect_single_game_rollout(
         state = env.full_reset(round_idx > 0)
         if round_idx > 0:
             cards_to_pass = {}
-            for p in range(env.players):
-                if env.roles[p] != "Citizen":
-                    cards_to_pass[p] = PresidentBaselineBot(p).choose_cards_to_pass(
-                        env._get_state(p)
+            for p_id, role in env.roles.items():
+                if role != "Citizen":
+                    cards_to_pass[p_id] = bot_instances[p_id].choose_cards_to_pass(
+                        env._get_state(p_id)
                     )
 
             for pair in env.role_pairs:
                 env.exchange_cards(pair, cards_to_pass)
+            state = env._get_state(env.curr_turn)
 
         while not env.game_over:
             curr_player = env.curr_turn
             if curr_player is None:
                 break
 
-            legal_moves = state["legal_moves"]
-            mask_np = np.zeros(ACTION_DIM, dtype=bool)
-
-            for m in legal_moves:
-                if m in MOVE_TO_IDX:
-                    mask_np[MOVE_TO_IDX[m]] = True
-
+            mask_np = get_action_mask(state["legal_moves"])
             if curr_player in ppo_seats:
                 obs_v = vectorize_state(state, env.players)
                 priv_v = vectorize_master_state(state, env, env.players)
@@ -141,11 +137,9 @@ def collect_single_game_rollout(
                 trajectories[curr_player]["log_probs"].append(log_prob.item())
                 trajectories[curr_player]["masks"].append(mask_np)
                 trajectories[curr_player]["rewards"].append(0.0)
-
-                state, _ = env.step(curr_player, move)
             else:
-                move = bot_instances[curr_player].get_move(state, mask_np)
-                state, _ = env.step(curr_player, move)
+                move = bot_instances[curr_player].get_move(state, env)
+            state, _ = env.step(curr_player, move)
 
             if env.was_pile_reset:
                 env.clear_pile()

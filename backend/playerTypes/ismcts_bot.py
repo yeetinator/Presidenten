@@ -3,11 +3,14 @@ import random
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from game import President
-from playerTypes.baseline_bot import PresidentBaselineBot
+from player import Player
+from baseline_bot import PresidentBaselineBot
 
 
 class ISMCTSNode:
-    def __init__(self, move=None, parent=None, player_id=None):
+    def __init__(
+        self, move: tuple[int, int, int] | None = None, parent=None, player_id=None
+    ):
         self.move = move
         self.parent = parent
         self.player_id = player_id
@@ -45,7 +48,7 @@ def _execute_mcts_batch(player_id, iterations, real_env: President):
     return bot.run_search_batch(real_env)
 
 
-class PresidentISMCTSBot:
+class PresidentISMCTSBot(Player):
     def __init__(self, player_id, iterations=200):
         self.player_id = player_id
         self.iterations = iterations
@@ -57,7 +60,7 @@ class PresidentISMCTSBot:
         executor: ProcessPoolExecutor | None = None,
         parallelism="g",
         num_workers=10,
-    ):
+    ) -> tuple[int, int, int]:
         legal_moves = state["legal_moves"]
         opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
         total_stats = {}
@@ -126,7 +129,9 @@ class PresidentISMCTSBot:
             key=lambda move: legal_root_moves[move]["visits"],
         )
 
-    def run_search_batch(self, real_env: President):
+    def run_search_batch(
+        self, real_env: President
+    ) -> dict[tuple[int, int, int], dict[str, int | float]]:
         root = ISMCTSNode()
         rollout_bots = {
             p: PresidentBaselineBot(player_id=p) for p in range(real_env.players)
@@ -297,6 +302,7 @@ class PresidentISMCTSBot:
                 "score": child.score,
             }
             for child in root.children
+            if child.move is not None
         }
 
     def _deal_hidden_cards(
@@ -512,7 +518,7 @@ class PresidentISMCTSBot:
             sim_env.hands[p] = hand
         return sim_env
 
-    def choose_cards_to_pass(self, state: dict):
+    def choose_cards_to_pass(self, state: dict) -> list[int]:
         if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
             return []
 

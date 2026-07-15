@@ -5,6 +5,7 @@ import random
 import concurrent.futures
 import numpy as np
 from game import President
+from playerTypes.player import Player
 from playerTypes.dmc_bot import PresidentDMCBot, INPUT_DIM
 
 NUM_ROUNDS = 10
@@ -41,7 +42,7 @@ def prune_cache(active_paths, max_size=200):
 
 def game_loop(
     num_players,
-    bot_instances,
+    bot_instances: dict[int, Player],
     live_model,
     input_dim=INPUT_DIM,
     bot_class=PresidentDMCBot,
@@ -56,7 +57,7 @@ def game_loop(
             for p_id, role in env.roles.items():
                 if role != "Citizen":
                     cards_to_pass[p_id] = bot_instances[p_id].choose_cards_to_pass(
-                        env._get_state(p_id), env
+                        env._get_state(p_id)
                     )
 
             for pair in env.role_pairs:
@@ -106,7 +107,7 @@ def game_loop(
 def eval_game_loop(
     num_players,
     match_seed,
-    bot_instances,
+    bot_instances: dict[int, Player],
     seat_assignments,
     rotation,
     slot_norm_scores,
@@ -123,7 +124,7 @@ def eval_game_loop(
             for p_id, role in env.roles.items():
                 if role != "Citizen":
                     cards_to_pass[p_id] = bot_instances[p_id].choose_cards_to_pass(
-                        env._get_state(p_id), env
+                        env._get_state(p_id)
                     )
 
             for pair in env.role_pairs:

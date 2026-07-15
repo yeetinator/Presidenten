@@ -4,8 +4,10 @@ import os
 import json
 import random
 import sys
-from playerTypes.dmc_bot import PresidentValueNet, PresidentDMCBot, PresidentBaselineBot
-from backend.utils import get_cached_model, eval_game_loop, run_elo_tournament
+from playerTypes.player import Player
+from playerTypes.baseline_bot import PresidentBaselineBot
+from playerTypes.dmc_bot import PresidentValueNet, PresidentDMCBot
+from utils import get_cached_model, eval_game_loop, run_elo_tournament
 
 NUM_MATCHES = 300
 BASELINE_KEY = "BASELINE_BOT"
@@ -20,7 +22,7 @@ def run_duplicate_match(match_args):
         seat_assignments = [
             sampled_keys[(i + rotation) % num_players] for i in range(num_players)
         ]
-        bot_instances: dict[int, PresidentDMCBot | PresidentBaselineBot] = {}
+        bot_instances: dict[int, Player] = {}
 
         for seat, key in enumerate(seat_assignments):
             if key == BASELINE_KEY:

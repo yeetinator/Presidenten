@@ -1,4 +1,4 @@
-from backend.dmc_loop.orchestrate_dmc import run_orchestrator
+from .orchestrate_dmc import run_orchestrator
 
 
 def main():

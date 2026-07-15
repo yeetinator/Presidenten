@@ -1,12 +1,10 @@
+from player import Player
 from game import President, get_val_input
 from collections import Counter
 
 
-class HumanPlayer:
-    def __init__(self, player_id):
-        self.player_id = player_id
-
-    def get_move(self, state: dict, *args, **kwargs):
+class HumanPlayer(Player):
+    def get_move(self, state: dict, *args, **kwargs) -> tuple[int, int, int]:
         legal_moves = state["legal_moves"]
         if not legal_moves:
             return (0, 0, 0)
@@ -26,7 +24,7 @@ class HumanPlayer:
 
         return chosen_move
 
-    def choose_cards_to_pass(self, state: dict):
+    def choose_cards_to_pass(self, state: dict) -> list[int]:
         my_role: str = state["my_role"]
         hr, _, count = next(
             (

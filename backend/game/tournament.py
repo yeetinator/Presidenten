@@ -1,55 +1,41 @@
 from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
-from typing import TYPE_CHECKING
 
 import torch
 
 from .engine import President
 from .types import PlayerType
-
-if TYPE_CHECKING:
-    from playerTypes.human import HumanPlayer
-    from playerTypes.random_bot import PresidentRandomBot
-    from playerTypes.baseline_bot import PresidentBaselineBot
-    from playerTypes.ismcts_bot import PresidentISMCTSBot
-    from playerTypes.dmc_bot import PresidentDMCBot
+from playerTypes.player import Player
+from playerTypes.human import HumanPlayer
+from playerTypes.random_bot import PresidentRandomBot
+from playerTypes.baseline_bot import PresidentBaselineBot
+from playerTypes.ismcts_bot import PresidentISMCTSBot
+from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
 
 
 def create_players(assign_p: dict[int, PlayerType], iterations=400, dmc_paths=None):
-    from playerTypes.human import HumanPlayer
-    from playerTypes.random_bot import PresidentRandomBot
-    from playerTypes.baseline_bot import PresidentBaselineBot
-    from playerTypes.ismcts_bot import PresidentISMCTSBot
-    from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
-
-    assigned_players: dict[
-        int,
-        HumanPlayer
-        | PresidentRandomBot
-        | PresidentBaselineBot
-        | PresidentISMCTSBot
-        | PresidentDMCBot,
-    ] = {}
+    assigned_players: dict[int, Player] = {}
     for p_id, p_type in assign_p.items():
-        if p_type == PlayerType.HUMAN:
-            assigned_players[p_id] = HumanPlayer(p_id)
-        elif p_type == PlayerType.RANDOM:
-            assigned_players[p_id] = PresidentRandomBot(p_id)
-        elif p_type == PlayerType.BASELINE:
-            assigned_players[p_id] = PresidentBaselineBot(p_id)
-        elif p_type == PlayerType.ISMCTS:
-            assigned_players[p_id] = PresidentISMCTSBot(p_id, iterations)
-        elif p_type == PlayerType.DMC:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            dmc_model = PresidentValueNet().to(device)
+        match p_type:
+            case PlayerType.HUMAN:
+                assigned_players[p_id] = HumanPlayer(p_id)
+            case PlayerType.RANDOM:
+                assigned_players[p_id] = PresidentRandomBot(p_id)
+            case PlayerType.BASELINE:
+                assigned_players[p_id] = PresidentBaselineBot(p_id)
+            case PlayerType.ISMCTS:
+                assigned_players[p_id] = PresidentISMCTSBot(p_id, iterations)
+            case PlayerType.DMC:
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                dmc_model = PresidentValueNet().to(device)
 
-            if dmc_paths and p_id in dmc_paths:
-                snap = torch.load(dmc_paths[p_id], map_location=device)
-                dmc_model.load_state_dict(snap["model_state_dict"])
+                if dmc_paths and p_id in dmc_paths:
+                    snap = torch.load(dmc_paths[p_id], map_location=device)
+                    dmc_model.load_state_dict(snap["model_state_dict"])
 
-            dmc_model.eval()
-            assigned_players[p_id] = PresidentDMCBot(p_id, dmc_model, device)
+                dmc_model.eval()
+                assigned_players[p_id] = PresidentDMCBot(p_id, dmc_model, device)
     return assigned_players
 
 
@@ -57,14 +43,7 @@ def play_president_game(
     game_id,
     num_players,
     num_rounds,
-    assigned_players: dict[
-        int,
-        HumanPlayer
-        | PresidentRandomBot
-        | PresidentBaselineBot
-        | PresidentISMCTSBot
-        | PresidentDMCBot,
-    ],
+    assigned_players: dict[int, Player],
     assign_p: dict[int, PlayerType],
     parallelism="g",
     has_human=False,
@@ -115,13 +94,8 @@ def play_president_game(
             curr_p_type = assigned_players[curr_p_id]
 
             if curr_p_id in ismcts_ids:
-                assert curr_p_type.__class__.__name__ == "PresidentISMCTSBot"
-                chosen_move = curr_p_type.get_move(
-                    state,
-                    env,
-                    executor,
-                    parallelism,
-                )
+                assert isinstance(curr_p_type, PresidentISMCTSBot)
+                chosen_move = curr_p_type.get_move(state, env, executor, parallelism)
             else:
                 chosen_move = curr_p_type.get_move(state, env)
 
@@ -131,7 +105,8 @@ def play_president_game(
                     f"\nPlayer {curr_p_id} ({state['my_role']}, {p_name}) chose: "
                     f"{President.visualize_move(chosen_move)}\n"
                 )
-                if curr_p_type.__class__.__name__ != "HumanPlayer":
+
+                if not isinstance(curr_p_type, HumanPlayer):
                     input("Press Enter to continue...\n")
 
             state, _ = env.step(curr_p_id, chosen_move)
@@ -148,17 +123,7 @@ def play_president_game(
     return env.scores
 
 
-worker_players: (
-    dict[
-        int,
-        HumanPlayer
-        | PresidentRandomBot
-        | PresidentBaselineBot
-        | PresidentISMCTSBot
-        | PresidentDMCBot,
-    ]
-    | None
-) = None
+worker_players: dict[int, Player] | None = None
 
 
 def init_worker(assign_p, iterations, dmc_paths):
@@ -170,12 +135,7 @@ def worker_game_task(game_id, num_players, num_rounds, assign_p):
     global worker_players
     assert worker_players is not None, "Worker players not initialized"
     return play_president_game(
-        game_id,
-        num_players,
-        num_rounds,
-        worker_players,
-        assign_p,
-        "g",
+        game_id, num_players, num_rounds, worker_players, assign_p, "g"
     )
 
 
@@ -189,12 +149,7 @@ def update_final_scores(master_scores, round_scores):
 
 
 def game_parallelism(
-    assign_p,
-    num_players,
-    num_rounds,
-    dmc_paths,
-    total_games,
-    num_workers,
+    assign_p, num_players, num_rounds, dmc_paths, total_games, num_workers
 ):
     print(f"Starting Tournament: {total_games} games, {num_rounds} rounds each.")
     print(f"Deploying across {num_workers} parallel game workers...\n")
@@ -206,13 +161,7 @@ def game_parallelism(
         num_workers, initializer=init_worker, initargs=(assign_p, iters, dmc_paths)
     ) as executor:
         futures = [
-            executor.submit(
-                worker_game_task,
-                idx,
-                num_players,
-                num_rounds,
-                assign_p,
-            )
+            executor.submit(worker_game_task, idx, num_players, num_rounds, assign_p)
             for idx in range(total_games)
         ]
         for i, f in enumerate(futures):
@@ -222,13 +171,7 @@ def game_parallelism(
 
 
 def search_parallelism(
-    assign_p,
-    has_human,
-    num_players,
-    num_rounds,
-    dmc_paths,
-    total_games,
-    num_workers,
+    assign_p, has_human, num_players, num_rounds, dmc_paths, total_games, num_workers
 ):
     master_scores = {p_id: (0, 0) for p_id in range(num_players)}
     iters = 1200 + 200 * (num_players - 4)

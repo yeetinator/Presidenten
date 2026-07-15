@@ -2,7 +2,9 @@ import torch
 import torch.nn as nn
 from torch.distributions import Categorical
 import numpy as np
-from playerTypes.dmc_bot import vectorize_state, STATE_DIM, MASTER_VEC_DIM
+from player import Player
+from .baseline_bot import PresidentBaselineBot
+from dmc_bot import vectorize_state, STATE_DIM, MASTER_VEC_DIM
 
 
 def generate_action_space():
@@ -22,6 +24,14 @@ def generate_action_space():
 
 
 MOVE_TO_IDX, IDX_TO_MOVE, ACTION_DIM = generate_action_space()
+
+
+def get_action_mask(legal_moves):
+    mask = np.zeros(ACTION_DIM, dtype=bool)
+    for move in legal_moves:
+        if move in MOVE_TO_IDX:
+            mask[MOVE_TO_IDX[move]] = True
+    return mask
 
 
 class PresidentActorCritic(nn.Module):
@@ -58,7 +68,7 @@ class PresidentActorCritic(nn.Module):
         return self.critic(privileged_state)
 
 
-class PresidentPPOBot:
+class PresidentPPOBot(Player):
     def __init__(
         self,
         player_id,
@@ -71,16 +81,8 @@ class PresidentPPOBot:
         self.device = device
         self.deterministic = deterministic
 
-    def get_action_mask(self, legal_moves):
-        mask = np.zeros(ACTION_DIM, dtype=bool)
-        for move in legal_moves:
-            if move in MOVE_TO_IDX:
-                mask[MOVE_TO_IDX[move]] = True
-        return mask
-
-    def get_move(self, state: dict, mask_np: np.ndarray | None = None, *args, **kwargs):
-        if mask_np is None:
-            mask_np = self.get_action_mask(state["legal_moves"])
+    def get_move(self, state: dict, *args, **kwargs) -> tuple[int, int, int]:
+        mask_np = get_action_mask(state["legal_moves"])
 
         obs = (
             torch.FloatTensor(vectorize_state(state, len(state["opp_hand_counts"]) + 1))
@@ -96,3 +98,11 @@ class PresidentPPOBot:
             else:
                 action_idx = dist.sample().item()
         return IDX_TO_MOVE[int(action_idx)]
+
+    def choose_cards_to_pass(self, state: dict) -> list[int]:
+        if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
+            return []
+
+        return PresidentBaselineBot(player_id=self.player_id).choose_cards_to_pass(
+            state
+        )

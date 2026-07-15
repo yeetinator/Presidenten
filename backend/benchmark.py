@@ -48,7 +48,7 @@ def run_benchmark_game(game_args):
                 for p_id, role in env.roles.items():
                     if role != "Citizen":
                         cards_to_pass[p_id] = bot_instances[p_id].choose_cards_to_pass(
-                            env._get_state(p_id), env
+                            env._get_state(p_id)
                         )
 
                 for pair in env.role_pairs:
