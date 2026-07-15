@@ -60,6 +60,8 @@ def run_single_game(live_model, device, epsilon, basic_elites, master_elites):
             bot_instances[seat] = PresidentDMCBot(
                 seat, model, device, profile="aggressive"
             )
+        elif roll < 0.85:
+            bot_instances[seat] = MasterDMCBot(seat, live_model, device, True, epsilon)
         elif roll < 0.90 and master_elites:
             snap_path = random.choice(master_elites)
             model = get_cached_model(snap_path, MasterValueNet)
