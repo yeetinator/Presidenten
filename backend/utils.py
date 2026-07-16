@@ -452,18 +452,18 @@ def load_best_elo_history(snapshot_dir, up_to_cycle):
 
 def should_stop_training(snapshot_dir, gen_cycle):
     elo_history = load_best_elo_history(snapshot_dir, gen_cycle)
-    if len(elo_history) < PLATEAU_WINDOW * PLATEAU_PATIENCE:
+    if len(elo_history) < PLATEAU_WINDOW * (PLATEAU_PATIENCE + 1):
         return False
 
-    windows = [
-        np.mean(elo_history[i : i + PLATEAU_WINDOW])
-        for i in range(0, len(elo_history) - PLATEAU_WINDOW + 1, PLATEAU_WINDOW)
+    rolling = [
+        np.mean(elo_history[max(0, i - PLATEAU_WINDOW + 1) : i + 1])
+        for i in range(len(elo_history))
     ]
-    recent = windows[-(PLATEAU_PATIENCE + 1) :]
+    recent = rolling[-(PLATEAU_PATIENCE + 1) :]
     gains = [recent[i + 1] - recent[i] for i in range(len(recent) - 1)]
 
     print(
-        f"  [early-stop check] last {len(recent)} smoothed elo windows: "
+        f"  [early-stop check] last {len(recent)} rolling elo avgs: "
         f"{[round(w, 1) for w in recent]} | gains: {[round(g, 1) for g in gains]}"
     )
     return all(g < MIN_ELO_GAIN for g in gains)
