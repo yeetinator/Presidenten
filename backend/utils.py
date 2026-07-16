@@ -517,9 +517,8 @@ def manage_league_files(snapshot_dir, gen_cycle=None):
 
 def run_step(module_name, args=None, dir_name=None):
     print(f"\n================ LAUNCHING {module_name.upper()} ================")
-    curr_dir = os.path.dirname(os.path.abspath(__file__))
-    backend_dir = os.path.dirname(curr_dir)
-    folder_name = os.path.basename(curr_dir) if not dir_name else dir_name
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    folder_name = dir_name if dir_name else os.path.basename(backend_dir)
     module_path = f"{folder_name}.{module_name}"
 
     cmd = [sys.executable, "-m", module_path]
