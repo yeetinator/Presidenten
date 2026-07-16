@@ -20,6 +20,9 @@ GRADIENT_CLIP = 1.0
 NUM_WORKERS = 12
 K_FACTOR = 16.0
 BASELINE_KEY = "BASELINE_BOT"
+PLATEAU_WINDOW = 4
+PLATEAU_PATIENCE = 3
+MIN_ELO_GAIN = 5.0
 
 _SNAPSHOT_CACHE = {}
 
@@ -432,6 +435,40 @@ def get_num_matches(pool_len: int):
     return ((pool_len * 60 + NUM_WORKERS - 1) // NUM_WORKERS) * NUM_WORKERS
 
 
+def load_best_elo_history(snapshot_dir, up_to_cycle):
+    history = []
+    for cycle in range(1, up_to_cycle + 1):
+        json_path = f"{snapshot_dir}/evals/evaluation_results_{cycle}.json"
+        if not os.path.exists(json_path):
+            continue
+
+        with open(json_path) as f:
+            results = json.load(f)
+
+        if results:
+            history.append(results[0]["elo"])
+    return history
+
+
+def should_stop_training(snapshot_dir, gen_cycle):
+    elo_history = load_best_elo_history(snapshot_dir, gen_cycle)
+    if len(elo_history) < PLATEAU_WINDOW * PLATEAU_PATIENCE:
+        return False
+
+    windows = [
+        np.mean(elo_history[i : i + PLATEAU_WINDOW])
+        for i in range(0, len(elo_history) - PLATEAU_WINDOW + 1, PLATEAU_WINDOW)
+    ]
+    recent = windows[-(PLATEAU_PATIENCE + 1) :]
+    gains = [recent[i + 1] - recent[i] for i in range(len(recent) - 1)]
+
+    print(
+        f"  [early-stop check] last {len(recent)} smoothed elo windows: "
+        f"{[round(w, 1) for w in recent]} | gains: {[round(g, 1) for g in gains]}"
+    )
+    return all(g < MIN_ELO_GAIN for g in gains)
+
+
 def manage_league_files(snapshot_dir, gen_cycle=None):
     print("\n================ MANAGING LEAGUE POOL ================")
 
@@ -518,5 +555,13 @@ def run_orchestrator(snapshot_dir, train_script, evaluate_script):
             break
 
         manage_league_files(snapshot_dir, gen_cycle)
+
+        if should_stop_training(snapshot_dir, gen_cycle):
+            print(
+                f"\n=== NO SUSTAINED ELO GAIN ACROSS {PLATEAU_PATIENCE} WINDOWS "
+                f"OF {PLATEAU_WINDOW} CYCLES EACH -- STOPPING AT CYCLE {gen_cycle} ==="
+            )
+            break
+
         gen_cycle += 1
         time.sleep(5)
