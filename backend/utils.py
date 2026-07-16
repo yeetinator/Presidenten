@@ -451,6 +451,9 @@ def load_best_elo_history(snapshot_dir, up_to_cycle):
 
 
 def should_stop_training(snapshot_dir, gen_cycle):
+    if gen_cycle < PLATEAU_WINDOW * (PLATEAU_PATIENCE + 1):
+        return False
+
     elo_history = load_best_elo_history(snapshot_dir, gen_cycle)
     if len(elo_history) < PLATEAU_WINDOW * (PLATEAU_PATIENCE + 1):
         return False
