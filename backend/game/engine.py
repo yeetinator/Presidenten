@@ -29,6 +29,7 @@ class President:
         self.ended_2 = []  # Track players who finished with a 2 for role assignment
 
         self.history = []  # [(P_id, move), ...]
+        self._history_flat_counts = Counter()  # {card_value: count, ...}
         self.last_move = (0, 0, 0)  # (card_value, count, twos_used)
         self.suit_last_move = []
         self.pile = []  # Cards currently on the pile
@@ -259,6 +260,7 @@ class President:
         self.suited_hands = self.gen_suited_hands()
 
         self.history = []
+        self._history_flat_counts = Counter()
         self.last_move = (0, 0, 0)
         self.suit_last_move = []
         self.pile = []
@@ -274,6 +276,13 @@ class President:
 
         return self._get_state(self.curr_turn)
 
+    def _record_history_move(self, p_id, move):
+        self.history.append((p_id, move))
+        if move != (0, 0, 0):
+            card_val, count, twos = move
+            self._history_flat_counts[card_val] += count - twos
+            self._history_flat_counts[15] += twos
+
     def _get_state(self, p_id, *, reset_view=False, only_finish=True):
         last_move = (0, 0, 0) if reset_view else self.last_move
         suit_last_move = [] if reset_view else self.suit_last_move
@@ -281,13 +290,7 @@ class President:
         passed = set() if reset_view else self.passed
         pile_leader = None if reset_view else self.pile_leader
 
-        flat_history_cards = []
-        for _, move in self.history:
-            if move != (0, 0, 0):
-                card_val, count, twos = move
-                flat_history_cards.extend([card_val] * (count - twos))
-                flat_history_cards.extend([15] * twos)
-        history_counts = Counter(flat_history_cards)
+        history_counts = self._history_flat_counts
 
         return {
             "hand": self.hands[p_id].copy(),
@@ -420,7 +423,7 @@ class President:
                 self.suit_last_move.extend(suits)
 
             self._remove_cards(p_id, card_val, count, suits)
-            self.history.append((p_id, move))
+            self._record_history_move(p_id, move)
             self.last_move = move
 
             if not self.hands[p_id] and p_id not in self.out_order:
@@ -513,7 +516,7 @@ class President:
         if card_val == 15:
             pile_reset = True
 
-        self.history.append((p_id, move))
+        self._record_history_move(p_id, move)
         self.pile.extend([card_val] * (count - twos))
         self.pile.extend([15] * twos)
         self.first_turn = False
