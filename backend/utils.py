@@ -20,9 +20,6 @@ GRADIENT_CLIP = 1.0
 NUM_WORKERS = 12
 K_FACTOR = 16.0
 BASELINE_KEY = "BASELINE_BOT"
-PLATEAU_WINDOW = 4
-PLATEAU_PATIENCE = 3
-MIN_ELO_GAIN = 5.0
 
 _SNAPSHOT_CACHE = {}
 
@@ -211,7 +208,14 @@ def train_on_batch(
 
 
 def save_snapshot(
-    snapshot_dir, batch_idx, live_model, optimizer, scheduler, epsilon, resume_path
+    snapshot_dir,
+    batch_idx,
+    live_model,
+    optimizer,
+    scheduler,
+    epsilon,
+    resume_path,
+    milestone: int | None = None,
 ):
     snapshot_path = os.path.join(snapshot_dir, f"model_gen_{batch_idx}.pt")
     checkpoint = {
@@ -223,6 +227,14 @@ def save_snapshot(
     }
     torch.save(checkpoint, snapshot_path)
     torch.save(checkpoint, resume_path)
+
+    if milestone is not None and batch_idx % milestone == 0:
+        os.makedirs(os.path.join(snapshot_dir, "milestones"), exist_ok=True)
+        milestone_path = os.path.join(
+            snapshot_dir, f"milestones/model_gen_{batch_idx}.pt"
+        )
+        torch.save(checkpoint, milestone_path)
+        print(f"Saved milestone snapshot to {milestone_path}.")
 
     return snapshot_path
 
@@ -287,6 +299,8 @@ def run_evaluation(
     elites = glob.glob(f"{snapshot_dir}/elites/model_gen_*.pt")
     snapshot_files = list(set(candidates + elites))
 
+    milestones = get_stratified_milestones(snapshot_dir, max_milestones=5)
+
     basic_elites = (
         glob.glob(f"{basic_snapshot_dir}/elites/model_gen_*.pt")
         + glob.glob(f"{basic_snapshot_dir}/model_gen_*.pt")
@@ -297,8 +311,8 @@ def run_evaluation(
         print(f"No {name} snapshot files found.")
         return
 
-    keys_set = set(snapshot_files)
-    active_pool = [BASELINE_KEY] + snapshot_files + basic_elites
+    active_pool = list(set([BASELINE_KEY] + snapshot_files + basic_elites + milestones))
+    keys_set = set(snapshot_files + milestones)
     num_matches = get_num_matches(len(active_pool))
 
     print(
@@ -450,26 +464,52 @@ def load_best_elo_history(snapshot_dir, up_to_cycle):
     return history
 
 
-def should_stop_training(snapshot_dir, gen_cycle):
-    if gen_cycle < PLATEAU_WINDOW * (PLATEAU_PATIENCE + 1):
+def get_stratified_milestones(snapshot_dir, max_milestones=5):
+    all_milestones = sorted(
+        glob.glob(f"{snapshot_dir}/milestones/model_gen_*.pt"), key=parse_batch_num
+    )
+    if len(all_milestones) <= max_milestones:
+        return all_milestones
+
+    indices = np.linspace(0, len(all_milestones) - 1, max_milestones, dtype=int)
+    return [all_milestones[i] for i in set(indices)]
+
+
+def should_stop_training(
+    snapshot_dir,
+    gen_cycle,
+    patience=8,
+    min_delta=3.0,
+    smoothing_window=3,
+    min_cycles=12,
+):
+    if gen_cycle < min_cycles:
         return False
 
     elo_history = load_best_elo_history(snapshot_dir, gen_cycle)
-    if len(elo_history) < PLATEAU_WINDOW * (PLATEAU_PATIENCE + 1):
+    if len(elo_history) < patience + smoothing_window:
         return False
 
-    rolling = [
-        np.mean(elo_history[max(0, i - PLATEAU_WINDOW + 1) : i + 1])
+    smoothed = [
+        float(np.mean(elo_history[max(0, i - smoothing_window + 1) : i + 1]))
         for i in range(len(elo_history))
     ]
-    recent = rolling[-(PLATEAU_PATIENCE + 1) :]
-    gains = [recent[i + 1] - recent[i] for i in range(len(recent) - 1)]
+    best_elo = -float("inf")
+    stagnant_cycles = 0
+
+    for score in smoothed:
+        if score > best_elo + min_delta:
+            best_elo = score
+            stagnant_cycles = 0
+        else:
+            stagnant_cycles += 1
 
     print(
-        f"  [early-stop check] last {len(recent)} rolling elo avgs: "
-        f"{[round(w, 1) for w in recent]} | gains: {[round(g, 1) for g in gains]}"
+        f"  [early-stop check] Best Smoothed Elo: {best_elo:.1f} | "
+        f"Current: {smoothed[-1]:.1f} | "
+        f"Stagnancy: {stagnant_cycles}/{patience} cycles"
     )
-    return all(g < MIN_ELO_GAIN for g in gains)
+    return stagnant_cycles >= patience
 
 
 def manage_league_files(snapshot_dir, gen_cycle=None):
@@ -559,10 +599,7 @@ def run_orchestrator(snapshot_dir, train_script, evaluate_script, dir_name):
         manage_league_files(snapshot_dir, gen_cycle)
 
         if should_stop_training(snapshot_dir, gen_cycle):
-            print(
-                f"\n=== NO SUSTAINED ELO GAIN ACROSS {PLATEAU_PATIENCE} WINDOWS "
-                f"OF {PLATEAU_WINDOW} CYCLES EACH -- STOPPING AT CYCLE {gen_cycle} ==="
-            )
+            print("Training has plateaued.")
             break
 
         gen_cycle += 1

@@ -19,6 +19,7 @@ from utils import (
 
 BATCH_GAMES = 52
 SAVE_SNAPSHOT_EVERY = 250
+MILESTONE_SNAPSHOT_EVERY = 5000
 LEARNING_RATE = 1e-4
 NUM_WORKERS = 13
 
@@ -150,6 +151,7 @@ def run_training_loop(snapshot_dir="snapshots"):
                         scheduler,
                         epsilon,
                         resume_path,
+                        MILESTONE_SNAPSHOT_EVERY,
                     )
                     print(
                         f"Saved model snapshot to {snapshot_path} and updated latest_model.pt."
