@@ -170,7 +170,7 @@ def vectorize_state(state, num_players=4):
     )
 
 
-def vectorize_master_state(state, env: President, num_players=4):
+def vectorize_master_state(state, num_players, env: President):
     student_vec = vectorize_state(state, num_players)
     my_id = [p for p in range(num_players) if p not in state["opp_hand_counts"]][0]
     MAX_PLAYERS = 7
@@ -260,7 +260,7 @@ class PresidentDMCBot(Player):
         self.epsilon = epsilon
         self.profile = profile
 
-    def vectorize_state(self, state: dict):
+    def vectorize_state(self, state: dict, *args, **kwargs):
         return vectorize_state(state, len(state["opp_hand_counts"]) + 1)
 
     def get_move(self, state: dict, *args, **kwargs) -> tuple[int, int, int]:
@@ -271,7 +271,7 @@ class PresidentDMCBot(Player):
         if len(legal_moves) == 1:
             return legal_moves[0]
         else:
-            state_vec = self.vectorize_state(state)
+            state_vec = self.vectorize_state(state, env=kwargs.get("env", None))
             features = [
                 np.concatenate([state_vec, vectorize_move(move)])
                 for move in legal_moves
@@ -386,7 +386,7 @@ class MasterDMCBot(PresidentDMCBot):
         if env is None:
             num_players = len(state["opp_hand_counts"]) + 1
             return vectorize_state(state, num_players)
-        return vectorize_master_state(state, env, env.players)
+        return vectorize_master_state(state, env.players, env)
 
 
 class StudentDMCBot(PresidentDMCBot):
@@ -414,7 +414,7 @@ class StudentDMCBot(PresidentDMCBot):
             and env is not None
             and len(self.trajectory) > traj_len_before
         ):
-            master_state_vec = vectorize_master_state(state, env, env.players)
+            master_state_vec = vectorize_master_state(state, env.players, env)
             master_feat = np.concatenate(
                 [master_state_vec, vectorize_move(chosen_move)]
             )
