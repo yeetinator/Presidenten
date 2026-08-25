@@ -119,7 +119,7 @@ def collect_single_game_rollout(
             mask_np = get_action_mask(state["legal_moves"])
             if curr_player in ppo_seats:
                 obs_v = vectorize_state(state, env.players)
-                priv_v = vectorize_master_state(state, env, env.players)
+                priv_v = vectorize_master_state(state, env.players, env)
                 obs_t = torch.FloatTensor(obs_v).unsqueeze(0).to(device)
                 mask_t = torch.BoolTensor(mask_np).unsqueeze(0).to(device)
 
