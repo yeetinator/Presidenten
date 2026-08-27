@@ -297,9 +297,13 @@ def run_evaluation(
 
     candidates = glob.glob(f"{snapshot_dir}/model_gen_*.pt")
     elites = glob.glob(f"{snapshot_dir}/elites/model_gen_*.pt")
-    snapshot_files = list(set(candidates + elites))
+    snapshot_files = candidates + elites
 
-    milestones = get_stratified_milestones(snapshot_dir, max_milestones=5)
+    milestones_raw = get_stratified_milestones(snapshot_dir, max_milestones=5)
+    existing_batches = {parse_batch_num(path) for path in snapshot_files}
+    milestones = [
+        path for path in milestones_raw if parse_batch_num(path) not in existing_batches
+    ]
 
     basic_elites = (
         glob.glob(f"{basic_snapshot_dir}/elites/model_gen_*.pt")
@@ -311,7 +315,7 @@ def run_evaluation(
         print(f"No {name} snapshot files found.")
         return
 
-    active_pool = list(set([BASELINE_KEY] + snapshot_files + basic_elites + milestones))
+    active_pool = [BASELINE_KEY] + snapshot_files + basic_elites + milestones
     keys_set = set(snapshot_files + milestones)
     num_matches = get_num_matches(len(active_pool))
 
