@@ -188,7 +188,7 @@ def train_on_batch(
     epoch_losses = []
 
     for epoch in range(epochs):
-        perm = torch.randperm(dataset_size)
+        perm = torch.randperm(dataset_size, device=device)
         for i in range(0, dataset_size, mini_batch_size):
             indices = perm[i : i + mini_batch_size]
             batch_x, batch_y = x_tensor[indices], y_tensor[indices]
