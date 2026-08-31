@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 import random
 import itertools
-from collections import Counter
+import math
 from .player import Player
 from .baseline_bot import PresidentBaselineBot
 from game import President
@@ -313,46 +313,79 @@ class PresidentDMCBot(Player):
             (None, None, 0),
         )
         hand = state["hand"]
-        possible_passes = sorted(list(set(itertools.combinations(hand, count))))
-        all_hypo_features = []
-        combo_map = []
+        no_15 = [c for c in hand if c != 15]
+        total_combos = math.comb(len(no_15), count)
+
+        if total_combos <= 35:
+            possible_passes = sorted(list(set(itertools.combinations(no_15, count))))
+        else:
+            low_cards = [c for c in no_15 if c <= 10]
+            low_high_cards = [c for c in no_15 if 10 < c <= 12]
+            high_cards = [c for c in no_15 if 12 < c]
+
+            if len(low_cards) >= count:
+                forced = []
+                pool = low_cards
+                needed = count
+            elif len(low_cards) + len(low_high_cards) >= count:
+                forced = low_cards
+                pool = low_high_cards
+                needed = count - len(forced)
+            else:
+                forced = low_cards + low_high_cards
+                pool = high_cards
+                needed = count - len(forced)
+
+            unique_combos = set(itertools.combinations(pool, needed))
+            possible_passes = [sorted(forced + list(c)) for c in unique_combos]
+
+        base_counts = np.zeros(NUM_RANKS, dtype=np.int32)
+        for c in hand:
+            base_counts[c - 3] += 1
+
+        history_counts = np.array(state["history_vector"], dtype=np.int32)
         num_players = len(state["opp_hand_counts"]) + 1
         inv = vectorize_invariant_state(state, num_players)
         hypo_hand_count_norm = float(len(hand) - count) / 13.0
         opp_vec = np.concatenate([[hypo_hand_count_norm], inv["opp_vector"]])
 
-        for combo_idx, pass_combo in enumerate(possible_passes):
-            hypo_hand = list(hand)
-            for c in pass_combo:
-                hypo_hand.remove(c)
+        inv_tail = np.concatenate(
+            [
+                inv["last_move_vector"],
+                opp_vec,
+                inv["role_vector"],
+                inv["status_vector"],
+                inv["pile_vector"],
+                inv["misc_vector"],
+            ]
+        )
+        hist_vec = inv["history_vector"]
 
-            hand_counts = Counter(hypo_hand)
-            if not hand_counts:
+        all_hypo_features = []
+        combo_map = []
+
+        for combo_idx, pass_combo in enumerate(possible_passes):
+            counts = base_counts.copy()
+            for c in pass_combo:
+                counts[c - 3] -= 1
+            if not np.any(counts):
                 continue
 
-            hand_vec, unseen_vec = vectorize_hand_state(
-                hypo_hand, state["history_vector"]
-            )
-            hypo_state_vec = np.concatenate(
-                [
-                    hand_vec,
-                    inv["history_vector"],
-                    unseen_vec,
-                    inv["last_move_vector"],
-                    opp_vec,
-                    inv["role_vector"],
-                    inv["status_vector"],
-                    inv["pile_vector"],
-                    inv["misc_vector"],
-                ]
-            )
+            hand_vec = to_thermometer(counts)
+            unseen_counts = np.maximum(0, COUNT_BUCKETS - (counts + history_counts))
+            unseen_vec = to_thermometer(unseen_counts)
+            hypo_state_vec = np.concatenate([hand_vec, hist_vec, unseen_vec, inv_tail])
 
-            for card, count_held in hand_counts.items():
-                for play_count in range(1, count_held + 1):
-                    move = (card, play_count, 0)
-                    features = np.concatenate([hypo_state_vec, vectorize_move(move)])
-                    all_hypo_features.append(features)
-                    combo_map.append(combo_idx)
+            for rank_idx, count_held in enumerate(counts):
+                if count_held > 0:
+                    card = rank_idx + 3
+                    for play_count in range(1, count_held + 1):
+                        move = (card, play_count, 0)
+                        features = np.concatenate(
+                            [hypo_state_vec, vectorize_move(move)]
+                        )
+                        all_hypo_features.append(features)
+                        combo_map.append(combo_idx)
 
         if not all_hypo_features:
             return (
@@ -371,12 +404,14 @@ class PresidentDMCBot(Player):
 
         best_pass = None
         best_value = -float("inf")
+        K = 3
 
         for combo_idx, scores in combo_scores.items():
             if scores:
-                avg_value = np.mean(scores)
-                if avg_value > best_value:
-                    best_value = avg_value
+                sorted_scores = sorted(scores, reverse=True)
+                top_k_avg = np.mean(sorted_scores[: min(K, len(sorted_scores))])
+                if top_k_avg > best_value:
+                    best_value = top_k_avg
                     best_pass = possible_passes[combo_idx]
         return list(best_pass) if best_pass else []
 
