@@ -1,6 +1,5 @@
 import math
 import random
-from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from game import President
 from .player import Player
@@ -143,7 +142,9 @@ class PresidentISMCTSBot(Player):
                 known_cards.extend([card_val] * (count - twos))
                 known_cards.extend([15] * twos)
 
-        known_counts = Counter(known_cards)
+        known_counts = [0] * 16
+        for card in known_cards:
+            known_counts[card] += 1
         base_hidden_pool = []
 
         for card_val in range(3, 16):
@@ -178,7 +179,7 @@ class PresidentISMCTSBot(Player):
                 if cards_received:
                     min_received = min(cards_received)
 
-            played_counts = Counter()
+            played_counts = [0] * 16
             for p_id, move in real_env.history:
                 if p_id == pair_id and move != (0, 0, 0):
                     card_val, count, twos = move
@@ -405,8 +406,11 @@ class PresidentISMCTSBot(Player):
         if p not in real_env.passed or pile_card == 0:
             return True
 
-        hand_counts = Counter(assigned_cards)
-        for card_val, count in hand_counts.items():
+        hand_counts = [0] * 16
+        for card in assigned_cards:
+            hand_counts[card] += 1
+
+        for card_val, count in enumerate(hand_counts):
             if card_val <= pile_card or count < pile_count:
                 continue
 

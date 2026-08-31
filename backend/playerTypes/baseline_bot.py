@@ -1,5 +1,4 @@
 import math
-from collections import Counter
 from itertools import combinations
 from .player import Player
 
@@ -29,7 +28,9 @@ class PresidentBaselineBot(Player):
                 return [chosen_jump]  # Jump in with 2s only if you can win immediately
             return [(0, 0, 0)]
 
-        hand_counts = Counter(hand)
+        hand_counts = [0] * 16
+        for c in hand:
+            hand_counts[c] += 1
 
         playable_moves = [m for m in legal_moves if m != (0, 0, 0)]
         if not playable_moves:
@@ -52,8 +53,10 @@ class PresidentBaselineBot(Player):
         history_vector = state["history_vector"]
         filtered_moves = playable_moves
 
-        for card_value, count in hand_counts.items():
+        for card_value in unique_vals:
             history_index = card_value - 3
+            count = hand_counts[card_value]
+
             if (  # Preserve triplets
                 count == 3
                 and 0 <= history_index < len(history_vector)
@@ -149,11 +152,17 @@ class PresidentBaselineBot(Player):
             min_remaining_singles = float("inf")
             best_val_tuple = (float("inf"),) * needed
 
+            base_counts = [0] * 16
+            for c in pool:
+                base_counts[c] += 1
+
             for indices in combinations(range(len(pool)), needed):
                 selection = [pool[i] for i in indices]
-                remaining = [pool[i] for i in range(len(pool)) if i not in indices]
-                rem_counts = Counter(remaining)
-                singles_count = sum(1 for c in rem_counts.values() if c == 1)
+                rem_counts = list(base_counts)
+                for c in selection:
+                    rem_counts[c] -= 1
+
+                singles_count = sum(1 for c in rem_counts if c == 1)
                 selected_sorted = tuple(sorted(selection))
 
                 if singles_count < min_remaining_singles:

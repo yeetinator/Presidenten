@@ -57,7 +57,9 @@ class HumanPlayer(Player):
                 return False
 
             chosen_counts = Counter(chosen)
-            hand_counts = Counter(state["hand"])
+            hand_counts = [0] * 16
+            for card in state["hand"]:
+                hand_counts[card] += 1
 
             for card, selected_count in chosen_counts.items():
                 if hand_counts[card] < selected_count:
