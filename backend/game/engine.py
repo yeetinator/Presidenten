@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-from collections import Counter
 
 
 class President:
@@ -29,7 +28,7 @@ class President:
         self.ended_2 = []  # Track players who finished with a 2 for role assignment
 
         self.history = []  # [(P_id, move), ...]
-        self._history_flat_counts = Counter()  # {card_value: count, ...}
+        self._history_flat_counts = [0] * 16  # Count of each card played
         self.last_move = (0, 0, 0)  # (card_value, count, twos_used)
         self.suit_last_move = []
         self.pile = []  # Cards currently on the pile
@@ -260,7 +259,7 @@ class President:
         self.suited_hands = self.gen_suited_hands()
 
         self.history = []
-        self._history_flat_counts = Counter()
+        self._history_flat_counts = [0] * 16
         self.last_move = (0, 0, 0)
         self.suit_last_move = []
         self.pile = []
@@ -290,8 +289,6 @@ class President:
         passed = set() if reset_view else self.passed
         pile_leader = None if reset_view else self.pile_leader
 
-        history_counts = self._history_flat_counts
-
         return {
             "hand": self.hands[p_id].copy(),
             "suited_hand": self.suited_hands[p_id].copy(),
@@ -311,7 +308,7 @@ class President:
             "first_turn": self.first_turn,
             "clubs_3_holder": self.clubs_3_holder,
             "player_roles": self.roles.copy(),
-            "history_vector": [history_counts[rank] for rank in range(3, 16)],
+            "history_vector": self._history_flat_counts[3:],
             "is_finish_prompt": bool(
                 self.pending_finish and self.pending_finish["queue"][0][2] == p_id
             ),
@@ -336,28 +333,42 @@ class President:
             if only_finish:
                 return finish_moves
 
-        hand = self.hands[p_id]
-        curr_last_move = self.last_move if last_move is None else last_move
-
-        # Can't pass on an empty pile
-        legal_moves = finish_moves if curr_last_move[0] != 0 else []
-        counts = Counter(hand)
+        counts = [0] * 16
+        for card in self.hands[p_id]:
+            counts[card] += 1
         num_twos = counts[15]
+
+        # First turn must play a 3
+        if self.first_turn:
+            num_threes = counts[3]
+            return [
+                (3, c + t, t)
+                for c in range(1, num_threes + 1)
+                for t in range(min(num_twos, 4 - c) + 1)
+            ]
+
+        curr_last_move = self.last_move if last_move is None else last_move
         pile_card, pile_count, _ = curr_last_move
+        # Can't pass on an empty pile
+        legal_moves = finish_moves if pile_card != 0 else []
 
-        for card, count in counts.items():
-            if self.first_turn and card != 3:
-                continue  # First turn must play a 3
+        min_card = max(3, pile_card + 1)
+        for card in range(min_card, 15):
+            count = counts[card]
+            if not count:
+                continue
 
-            if card > pile_card:
-                for c in range(1, count + 1):
-                    if card != 15:
-                        for t in range(num_twos + 1):  # Combinations with wildcard 2
-                            if 1 <= c + t <= 4 and c + t >= pile_count:
-                                legal_moves.append((card, c + t, t))
-                    else:
-                        if c >= pile_count:
-                            legal_moves.append((card, c, 0))
+            for c in range(1, count + 1):
+                t_min = max(0, pile_count - c)
+                t_max = min(num_twos, 4 - c)
+
+                for t in range(t_min, t_max + 1):  # Combinations with wildcard 2
+                    legal_moves.append((card, c + t, t))
+
+        if num_twos and pile_card < 15:
+            for c in range(max(1, pile_count), num_twos + 1):
+                legal_moves.append((15, c, 0))
+
         return legal_moves
 
     def _remove_cards(self, p_id, card_val, count, suits):
