@@ -2,6 +2,7 @@ import torch
 import glob
 import random
 import os
+import time
 import numpy as np
 import torch.multiprocessing as mp
 from playerTypes.player import Player
@@ -93,29 +94,44 @@ def run_training_loop(snapshot_dir="snapshots"):
     print("Starting training loop. Press Ctrl+C to stop and save the model.")
     max_batches = 0 if batch_idx == 0 else batch_idx % 2000
     running_losses = []
+    rollout_times = []
+    train_times = []
     elite_snapshots = glob.glob(os.path.join(snapshot_dir, "elites/model_gen_*.pt"))
 
     with ctx.Pool(processes=NUM_WORKERS, initializer=init_worker) as pool:
         try:
+            tasks = [
+                (shared_model, epsilon, elite_snapshots) for _ in range(BATCH_GAMES)
+            ]
+            pending = pool.starmap_async(parallel_worker, tasks)
+
             while max_batches < 2000:
                 batch_idx += 1
                 max_batches += 1
                 epsilon = max(0.05, epsilon * 0.9997)
-                all_x, all_y = [], []
-                tasks = [
-                    (shared_model, epsilon, elite_snapshots) for _ in range(BATCH_GAMES)
-                ]
 
                 try:
-                    results = pool.starmap_async(parallel_worker, tasks)
-                    game_data = results.get(timeout=600)
-
-                    for game_x, game_y in game_data:
-                        all_x.append(game_x)
-                        all_y.append(game_y)
+                    t0 = time.perf_counter()
+                    game_data = pending.get(timeout=600)
+                    t1 = time.perf_counter()
                 except mp.TimeoutError:
                     print(f"\nBatch {batch_idx} timed out.")
+                    tasks = [
+                        (shared_model, epsilon, elite_snapshots)
+                        for _ in range(BATCH_GAMES)
+                    ]
+                    pending = pool.starmap_async(parallel_worker, tasks)
                     continue
+
+                next_tasks = [
+                    (shared_model, epsilon, elite_snapshots) for _ in range(BATCH_GAMES)
+                ]
+                pending = pool.starmap_async(parallel_worker, next_tasks)
+
+                all_x, all_y = [], []
+                for x, y in game_data:
+                    all_x.append(x)
+                    all_y.append(y)
 
                 if all_x:
                     avg_loss = train_on_batch(
@@ -128,17 +144,28 @@ def run_training_loop(snapshot_dir="snapshots"):
                         shared_model,
                         scheduler,
                     )
+                    t2 = time.perf_counter()
                     running_losses.append(avg_loss)
+                    rollout_times.append(t1 - t0)
+                    train_times.append(t2 - t1)
 
                     if batch_idx % 25 == 0:
                         rolling_loss = np.mean(running_losses)
+                        avg_rollout = np.mean(rollout_times)
+                        avg_train = np.mean(train_times)
+                        train_share = (avg_train / (avg_rollout + avg_train)) * 100
+
                         print(
                             f"=========================================================================\n"
                             f"BATCH {batch_idx:<5} | Rolling Loss: {rolling_loss:.6f} | "
                             f"LR: {scheduler.get_last_lr()[0]:.6f} | Epsilon: {epsilon:.4f}\n"
+                            f"Rollout: {avg_rollout:.2f}s | Train: {avg_train:.2f}s | "
+                            f"Train Share: {train_share:.1f}%\n"
                             f"========================================================================="
                         )
                         running_losses.clear()
+                        rollout_times.clear()
+                        train_times.clear()
                 else:
                     print(f"Batch {batch_idx}: No training data collected.")
 
