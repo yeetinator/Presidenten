@@ -40,14 +40,27 @@ MASTER_OPP_DIM = (MAX_PLAYERS - 1) * HAND_DIM
 MASTER_VEC_DIM = STATE_DIM + MASTER_OPP_DIM
 MASTER_INPUT_DIM = MASTER_VEC_DIM + MOVE_DIM
 
+_THERM_ROWS = np.arange(COUNT_BUCKETS, dtype=np.int32).reshape(-1, 1)
+
 
 def to_thermometer(counts):
-    matrix = np.zeros((COUNT_BUCKETS, NUM_RANKS), dtype=np.float32)
-    for rank_idx, count in enumerate(counts):
-        c = min(max(int(count), 0), COUNT_BUCKETS)
-        if c > 0:
-            matrix[:c, rank_idx] = 1.0
-    return matrix.flatten()
+    c = np.asarray(counts, dtype=np.int32)
+    matrix = (_THERM_ROWS < c[None, :]).astype(np.float32)
+    return matrix.ravel()
+
+
+def vectorize_moves(moves):
+    n = len(moves)
+    M = np.zeros((n, MOVE_DIM), dtype=np.float32)
+
+    for i, (card, count, twos) in enumerate(moves):
+        if card == 0:
+            M[i, MOVE_DIM - 1] = 1.0
+        else:
+            M[i, card - 3] = 1.0
+            M[i, NUM_RANKS : NUM_RANKS + count] = 1.0
+            M[i, NUM_RANKS + COUNT_BUCKETS : NUM_RANKS + COUNT_BUCKETS + twos] = 1.0
+    return M
 
 
 def vectorize_hand_state(hand, history_vector):
@@ -271,18 +284,19 @@ class PresidentDMCBot(Player):
         if len(legal_moves) == 1:
             return legal_moves[0]
         else:
-            state_vec = self.vectorize_state(state, env=kwargs.get("env", None))
-            features = [
-                np.concatenate([state_vec, vectorize_move(move)])
-                for move in legal_moves
-            ]
+            state_vec = self.vectorize_state(state, env=kwargs.get("env", None)).astype(
+                np.float32
+            )
+            move_block = vectorize_moves(legal_moves)
+            state_block = np.broadcast_to(state_vec, (len(legal_moves), state_vec.size))
+            features = np.hstack([state_block, move_block])
+
             if self.training and random.random() < self.epsilon:
                 best_idx = random.randint(0, len(legal_moves) - 1)
             else:
-                features_tensor = torch.FloatTensor(np.array(features)).to(self.device)
+                features_tensor = torch.from_numpy(features).to(self.device)
                 with torch.no_grad():
-                    output_tensor: torch.Tensor = self.model(features_tensor)
-                    q_values = output_tensor.squeeze(-1).cpu().numpy()
+                    q_values = self.model(features_tensor).squeeze(-1).cpu().numpy()
 
                 if self.profile == "aggressive":
                     non_pass_indices = [
@@ -297,7 +311,7 @@ class PresidentDMCBot(Player):
             chosen_move = legal_moves[best_idx]
 
             if self.training:
-                self.trajectory.append(features[best_idx])
+                self.trajectory.append(features[best_idx].copy())
             return chosen_move
 
     def choose_cards_to_pass(self, state: dict) -> list[int]:
@@ -347,7 +361,9 @@ class PresidentDMCBot(Player):
         num_players = len(state["opp_hand_counts"]) + 1
         inv = vectorize_invariant_state(state, num_players)
         hypo_hand_count_norm = float(len(hand) - count) / 13.0
-        opp_vec = np.concatenate([[hypo_hand_count_norm], inv["opp_vector"]])
+        opp_vec = np.concatenate([[hypo_hand_count_norm], inv["opp_vector"]]).astype(
+            np.float32
+        )
 
         inv_tail = np.concatenate(
             [
@@ -361,8 +377,9 @@ class PresidentDMCBot(Player):
         )
         hist_vec = inv["history_vector"]
 
-        all_hypo_features = []
-        combo_map = []
+        combo_state_vecs = []
+        combo_moves_lists = []
+        combo_indices = []
 
         for combo_idx, pass_combo in enumerate(possible_passes):
             counts = base_counts.copy()
@@ -374,33 +391,47 @@ class PresidentDMCBot(Player):
             hand_vec = to_thermometer(counts)
             unseen_counts = np.maximum(0, COUNT_BUCKETS - (counts + history_counts))
             unseen_vec = to_thermometer(unseen_counts)
-            hypo_state_vec = np.concatenate([hand_vec, hist_vec, unseen_vec, inv_tail])
+            hypo_state_vec = np.concatenate(
+                [hand_vec, hist_vec, unseen_vec, inv_tail]
+            ).astype(np.float32)
 
-            for rank_idx, count_held in enumerate(counts):
-                if count_held > 0:
-                    card = rank_idx + 3
-                    for play_count in range(1, count_held + 1):
-                        move = (card, play_count, 0)
-                        features = np.concatenate(
-                            [hypo_state_vec, vectorize_move(move)]
-                        )
-                        all_hypo_features.append(features)
-                        combo_map.append(combo_idx)
+            moves_for_combo = [
+                (rank_idx + 3, play_count, 0)
+                for rank_idx, count_held in enumerate(counts)
+                if count_held > 0
+                for play_count in range(1, count_held + 1)
+            ]
+            if not moves_for_combo:
+                continue
 
-        if not all_hypo_features:
+            combo_state_vecs.append(hypo_state_vec)
+            combo_moves_lists.append(moves_for_combo)
+            combo_indices.append(combo_idx)
+
+        if not combo_state_vecs:
             return (
                 list(possible_passes[0])
                 if possible_passes
                 else PresidentBaselineBot(self.player_id).choose_cards_to_pass(state)
             )
 
-        features_tensor = torch.FloatTensor(np.array(all_hypo_features)).to(self.device)
+        all_moves = [m for moves in combo_moves_lists for m in moves]
+        move_block = vectorize_moves(all_moves)
+
+        repeats = [len(moves) for moves in combo_moves_lists]
+        state_block = np.repeat(
+            np.array(combo_state_vecs, dtype=np.float32), repeats, axis=0
+        )
+        features = np.hstack([state_block, move_block])
+        combo_map = np.repeat(combo_indices, repeats)
+
+        features_tensor = torch.from_numpy(features).to(self.device)
         with torch.no_grad():
             q_values = self.model(features_tensor).squeeze(-1).cpu().numpy()
 
-        combo_scores = {i: [] for i in range(len(possible_passes))}
+        combo_scores: dict[int, list] = {}
         for q_val, combo_idx in zip(q_values, combo_map):
-            combo_scores[combo_idx].append(q_val)
+            combo_scores.setdefault(int(combo_idx), []).append(q_val)
 
         best_pass = None
         best_value = -float("inf")
