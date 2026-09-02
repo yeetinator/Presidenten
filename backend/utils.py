@@ -22,6 +22,7 @@ K_FACTOR = 16.0
 BASELINE_KEY = "BASELINE_BOT"
 
 _SNAPSHOT_CACHE = {}
+_TRACED_CACHE = {}
 
 
 def init_worker():
@@ -40,12 +41,31 @@ def get_cached_model(path, model_cls):
     return _SNAPSHOT_CACHE[path]
 
 
+def get_cached_traced_model(path, model_cls, example_batch_size=8):
+    global _TRACED_CACHE
+
+    if path not in _TRACED_CACHE:
+        model = get_cached_model(path, model_cls)
+        first_linear = next(
+            m for m in model.modules() if isinstance(m, torch.nn.Linear)
+        )
+        input_dim = first_linear.in_features
+        example = torch.zeros(example_batch_size, input_dim, dtype=torch.float32)
+        with torch.no_grad():
+            traced = torch.jit.trace(model, example)
+            traced = torch.jit.freeze(traced)
+        _TRACED_CACHE[path] = traced
+    return _TRACED_CACHE[path]
+
+
 def prune_cache(active_paths, max_size=200):
-    global _SNAPSHOT_CACHE
+    global _SNAPSHOT_CACHE, _TRACED_CACHE
     if len(_SNAPSHOT_CACHE) > max_size:
         _SNAPSHOT_CACHE = {
             k: v for k, v in _SNAPSHOT_CACHE.items() if k in active_paths
         }
+    if len(_TRACED_CACHE) > max_size:
+        _TRACED_CACHE = {k: v for k, v in _TRACED_CACHE.items() if k in active_paths}
 
 
 def play_round(env: President, bot_instances: dict[int, Player], round_idx: int):
@@ -265,10 +285,10 @@ def run_duplicate_match(match_args):
             if key == BASELINE_KEY:
                 bot_instances[seat] = PresidentBaselineBot(seat)
             elif key in keys_set and bot_class != PresidentDMCBot:
-                model = get_cached_model(key, net_class)
+                model = get_cached_traced_model(key, net_class)
                 bot_instances[seat] = bot_class(seat, model, device)
             else:
-                model = get_cached_model(key, PresidentValueNet)
+                model = get_cached_traced_model(key, PresidentValueNet)
                 bot_instances[seat] = PresidentDMCBot(seat, model, device)
         slot_norm_scores = eval_game_loop(
             num_players,

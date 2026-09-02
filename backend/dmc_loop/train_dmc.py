@@ -10,7 +10,7 @@ from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
 from utils import (
     init_worker,
-    get_cached_model,
+    get_cached_traced_model,
     prune_cache,
     game_loop,
     train_on_batch,
@@ -18,20 +18,38 @@ from utils import (
     handle_keyboard_interrupt,
 )
 
-BATCH_GAMES = 52
+BATCH_GAMES = 48
 SAVE_SNAPSHOT_EVERY = 250
 MILESTONE_SNAPSHOT_EVERY = 5000
 LEARNING_RATE = 1e-4
-NUM_WORKERS = 13
+NUM_WORKERS = 12
+
+_TRACED_LIVE_MODEL = None
+
+
+def _get_traced_live_model(shared_model, example_batch_size=8):
+    global _TRACED_LIVE_MODEL
+    if _TRACED_LIVE_MODEL is None:
+        first_linear = next(
+            m for m in shared_model.modules() if isinstance(m, torch.nn.Linear)
+        )
+        input_dim = first_linear.in_features
+        example = torch.zeros(example_batch_size, input_dim, dtype=torch.float32)
+        with torch.no_grad():
+            _TRACED_LIVE_MODEL = torch.jit.trace(shared_model, example)
+    return _TRACED_LIVE_MODEL
 
 
 def parallel_worker(shared_model, epsilon, elite_snapshots=None):
     paths = elite_snapshots or []
     for path in paths:
-        get_cached_model(path, PresidentValueNet)
+        get_cached_traced_model(path, PresidentValueNet)
 
     prune_cache(set(paths))
-    return run_single_game(shared_model, torch.device("cpu"), epsilon, elite_snapshots)
+    traced_live_model = _get_traced_live_model(shared_model)
+    return run_single_game(
+        traced_live_model, torch.device("cpu"), epsilon, elite_snapshots
+    )
 
 
 def run_single_game(live_model, device, epsilon, elite_snapshots=None):
@@ -48,11 +66,11 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
             )
         elif roll < 0.80 and elite_snapshots:
             snap_path = random.choice(elite_snapshots)
-            snap_model = get_cached_model(snap_path, PresidentValueNet)
+            snap_model = get_cached_traced_model(snap_path, PresidentValueNet)
             bot_instances[seat] = PresidentDMCBot(seat, snap_model, device)
         elif roll < 0.90 and elite_snapshots:
             snap_path = random.choice(elite_snapshots)
-            snap_model = get_cached_model(snap_path, PresidentValueNet)
+            snap_model = get_cached_traced_model(snap_path, PresidentValueNet)
             bot_instances[seat] = PresidentDMCBot(
                 seat, snap_model, device, profile="aggressive"
             )
