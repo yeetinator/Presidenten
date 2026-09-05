@@ -30,8 +30,6 @@ def init_worker():
 
 
 def get_cached_model(path, model_cls):
-    global _SNAPSHOT_CACHE
-
     if path not in _SNAPSHOT_CACHE:
         model = model_cls().to("cpu")
         checkpoint = torch.load(path, map_location="cpu")
@@ -42,8 +40,6 @@ def get_cached_model(path, model_cls):
 
 
 def get_cached_traced_model(path, model_cls, example_batch_size=8):
-    global _TRACED_CACHE
-
     if path not in _TRACED_CACHE:
         model = get_cached_model(path, model_cls)
         first_linear = next(
@@ -55,6 +51,7 @@ def get_cached_traced_model(path, model_cls, example_batch_size=8):
             traced = torch.jit.trace(model, example)
             traced = torch.jit.freeze(traced)
         _TRACED_CACHE[path] = traced
+        _SNAPSHOT_CACHE.pop(path, None)
     return _TRACED_CACHE[path]
 
 
