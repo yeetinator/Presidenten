@@ -1,7 +1,11 @@
+import os
+
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
 import torch
 import glob
 import random
-import os
 import time
 import numpy as np
 import torch.multiprocessing as mp
@@ -76,6 +80,7 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
 
 
 def run_training_loop(snapshot_dir="snapshots"):
+    torch.set_num_threads(2)
     os.makedirs(snapshot_dir, exist_ok=True)
 
     ctx = mp.get_context("spawn")
