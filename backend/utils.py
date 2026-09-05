@@ -118,7 +118,7 @@ def game_loop(
             )
 
         max_possible_score = env.players - 1
-        gamma = 1.0
+        gamma = 0.997
 
         for rank, p_id in enumerate(env.out_order):
             bot = bot_instances[p_id]
