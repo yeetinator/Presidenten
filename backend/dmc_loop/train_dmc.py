@@ -94,7 +94,7 @@ def run_training_loop(snapshot_dir="snapshots"):
     shared_model.share_memory()
     shared_model.load_state_dict(live_model.state_dict())
 
-    optimizer = torch.optim.Adam(live_model.parameters(), lr=LEARNING_RATE)
+    optimizer = torch.optim.Adam(live_model.parameters(), lr=LEARNING_RATE, fused=True)
     loss_fn = torch.nn.MSELoss()
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, 0.99995)
 
