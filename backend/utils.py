@@ -502,7 +502,7 @@ def should_stop_training(
     patience=8,
     min_delta=3.0,
     smoothing_window=3,
-    min_cycles=12,
+    min_cycles=16,
 ):
     if gen_cycle < min_cycles:
         return False
