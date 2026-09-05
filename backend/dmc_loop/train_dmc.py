@@ -9,46 +9,42 @@ from playerTypes.player import Player
 from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
 from utils import (
-    init_worker,
     get_cached_traced_model,
-    prune_cache,
     game_loop,
     train_on_batch,
     save_snapshot,
     handle_keyboard_interrupt,
 )
 
-BATCH_GAMES = 48
+BATCH_GAMES = 60
 SAVE_SNAPSHOT_EVERY = 250
 MILESTONE_SNAPSHOT_EVERY = 5000
 LEARNING_RATE = 1e-4
 NUM_WORKERS = 12
 
 _TRACED_LIVE_MODEL = None
+_ELITE_SNAPSHOTS = []
 
 
-def _get_traced_live_model(shared_model, example_batch_size=8):
-    global _TRACED_LIVE_MODEL
-    if _TRACED_LIVE_MODEL is None:
-        first_linear = next(
-            m for m in shared_model.modules() if isinstance(m, torch.nn.Linear)
-        )
-        input_dim = first_linear.in_features
-        example = torch.zeros(example_batch_size, input_dim, dtype=torch.float32)
-        with torch.no_grad():
-            _TRACED_LIVE_MODEL = torch.jit.trace(shared_model, example)
-    return _TRACED_LIVE_MODEL
+def init_train_worker(shared_model, elite_snapshots):
+    global _TRACED_LIVE_MODEL, _ELITE_SNAPSHOTS
+    torch.set_num_threads(1)
 
-
-def parallel_worker(shared_model, epsilon, elite_snapshots=None):
-    paths = elite_snapshots or []
-    for path in paths:
+    _ELITE_SNAPSHOTS = elite_snapshots or []
+    for path in _ELITE_SNAPSHOTS:
         get_cached_traced_model(path, PresidentValueNet)
 
-    prune_cache(set(paths))
-    traced_live_model = _get_traced_live_model(shared_model)
+    first_linear = next(
+        m for m in shared_model.modules() if isinstance(m, torch.nn.Linear)
+    )
+    example = torch.zeros(8, first_linear.in_features, dtype=torch.float32)
+    with torch.no_grad():
+        _TRACED_LIVE_MODEL = torch.jit.trace(shared_model, example)
+
+
+def parallel_worker(epsilon):
     return run_single_game(
-        traced_live_model, torch.device("cpu"), epsilon, elite_snapshots
+        _TRACED_LIVE_MODEL, torch.device("cpu"), epsilon, _ELITE_SNAPSHOTS
     )
 
 
@@ -116,12 +112,14 @@ def run_training_loop(snapshot_dir="snapshots"):
     train_times = []
     elite_snapshots = glob.glob(os.path.join(snapshot_dir, "elites/model_gen_*.pt"))
 
-    with ctx.Pool(processes=NUM_WORKERS, initializer=init_worker) as pool:
+    with ctx.Pool(
+        processes=NUM_WORKERS,
+        initializer=init_train_worker,
+        initargs=(shared_model, elite_snapshots),
+    ) as pool:
         try:
-            tasks = [
-                (shared_model, epsilon, elite_snapshots) for _ in range(BATCH_GAMES)
-            ]
-            pending = pool.starmap_async(parallel_worker, tasks)
+            tasks = [(epsilon,) for _ in range(BATCH_GAMES)]
+            pending = pool.starmap_async(parallel_worker, tasks, chunksize=1)
 
             while max_batches < 2000:
                 batch_idx += 1
@@ -134,17 +132,12 @@ def run_training_loop(snapshot_dir="snapshots"):
                     t1 = time.perf_counter()
                 except mp.TimeoutError:
                     print(f"\nBatch {batch_idx} timed out.")
-                    tasks = [
-                        (shared_model, epsilon, elite_snapshots)
-                        for _ in range(BATCH_GAMES)
-                    ]
-                    pending = pool.starmap_async(parallel_worker, tasks)
+                    tasks = [(epsilon,) for _ in range(BATCH_GAMES)]
+                    pending = pool.starmap_async(parallel_worker, tasks, chunksize=1)
                     continue
 
-                next_tasks = [
-                    (shared_model, epsilon, elite_snapshots) for _ in range(BATCH_GAMES)
-                ]
-                pending = pool.starmap_async(parallel_worker, next_tasks)
+                next_tasks = [(epsilon,) for _ in range(BATCH_GAMES)]
+                pending = pool.starmap_async(parallel_worker, next_tasks, chunksize=1)
 
                 all_x, all_y = [], []
                 for x, y in game_data:
