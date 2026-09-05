@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 from game import President
+from playerTypes.player import Player
 from playerTypes.dmc_bot import (
     PresidentDMCBot,
     PresidentValueNet,
@@ -16,25 +17,51 @@ from utils import NUM_ROUNDS
 TOTAL_GAMES = 792
 NUM_WORKERS = 12
 
-MASTER_CHECKPOINT = "playerTypes/best_master_dmc_25500.pt"
-OLD_DMC_CHECKPOINT = "playerTypes/model_gen_48250.pt"
+MASTER_CHECKPOINT = "snapshots/elites/model_gen_49250.pt"
+OLD_DMC_CHECKPOINT = "snapshots/milestones/model_gen_40000.pt"
+# OLD_DMC_CHECKPOINT = "snapshots_no_stop/elites/model_gen_85750.pt"
+
+_MASTER_MODEL: PresidentValueNet | None = None
+_OLD_MODEL: PresidentValueNet | None = None
+_DEVICE: torch.device | None = None
+
+
+def _init_worker(master_checkpoint, old_checkpoint):
+    global _MASTER_MODEL, _OLD_MODEL, _DEVICE
+    torch.set_num_threads(1)
+    _DEVICE = torch.device("cpu")
+
+    # _MASTER_MODEL = MasterValueNet().to(_DEVICE)
+    _MASTER_MODEL = PresidentValueNet().to(_DEVICE)
+    master_ckpt = torch.load(master_checkpoint, map_location=_DEVICE)
+    _MASTER_MODEL.load_state_dict(master_ckpt["model_state_dict"])
+    _MASTER_MODEL.eval()
+
+    _OLD_MODEL = PresidentValueNet().to(_DEVICE)
+    old_ckpt = torch.load(old_checkpoint, map_location=_DEVICE)
+    _OLD_MODEL.load_state_dict(old_ckpt["model_state_dict"])
+    _OLD_MODEL.eval()
 
 
 def run_benchmark_game(game_args):
-    game_seed, num_players, master_model, old_dmc_model, device = game_args
-    torch.set_num_threads(1)
+    game_seed, num_players = game_args
+    master_model, old_model, device = _MASTER_MODEL, _OLD_MODEL, _DEVICE
+    assert (
+        master_model is not None and old_model is not None and device is not None
+    ), "Models or device not initialized."
+
     master_placements = [0] * num_players
     master_norm_score = 0.0
     old_dmc_avg_norm = 0.0
     master_wins = 0
 
     for rotation in range(num_players):
-        bot_instances: dict[int, PresidentDMCBot] = {}
+        bot_instances: dict[int, Player] = {}
         for seat in range(num_players):
             if seat == rotation:
-                bot_instances[seat] = MasterDMCBot(seat, master_model, device)
+                bot_instances[seat] = PresidentDMCBot(seat, master_model, device)
             else:
-                bot_instances[seat] = PresidentDMCBot(seat, old_dmc_model, device)
+                bot_instances[seat] = PresidentDMCBot(seat, old_model, device)
 
         env = President(num_players)
         for round_idx in range(NUM_ROUNDS):
@@ -110,29 +137,22 @@ def main():
     print(f" Master Bot Path : {MASTER_CHECKPOINT}")
     print(f" Old DMC Bot Path: {OLD_DMC_CHECKPOINT}\n")
 
-    device = torch.device("cpu")
-    master_model = MasterValueNet().to(device)  # PresidentValueNet().to(device)
-    master_ckpt = torch.load(MASTER_CHECKPOINT, map_location=device)
-    master_model.load_state_dict(master_ckpt["model_state_dict"])
-    master_model.eval()
-
-    old_dmc_model = PresidentValueNet().to(device)
-    old_ckpt = torch.load(OLD_DMC_CHECKPOINT, map_location=device)
-    old_dmc_model.load_state_dict(old_ckpt["model_state_dict"])
-    old_dmc_model.eval()
-
     base_entropy = random.randint(1_000_000, 99_000_000)
     game_tasks = []
 
     for game_idx in range(TOTAL_GAMES):
         num_players = 4 + (game_idx % 4)
-        game_seed = base_entropy + game_idx
-        game_tasks.append((game_seed, num_players, master_model, old_dmc_model, device))
+        game_seed = base_entropy + game_idx * NUM_ROUNDS
+        game_tasks.append((game_seed, num_players))
 
     completed = 0
     results = []
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=NUM_WORKERS,
+        initializer=_init_worker,
+        initargs=(MASTER_CHECKPOINT, OLD_DMC_CHECKPOINT),
+    ) as executor:
         futures = [executor.submit(run_benchmark_game, task) for task in game_tasks]
 
         for future in concurrent.futures.as_completed(futures):
@@ -142,8 +162,17 @@ def main():
             if completed % 100 == 0 or completed == TOTAL_GAMES:
                 print(f" Completed {completed}/{TOTAL_GAMES} games...")
 
-    avg_master_score = np.mean([r["master_norm_score"] for r in results])
-    avg_old_dmc_score = np.mean([r["old_dmc_avg_norm"] for r in results])
+    master_scores = np.array([r["master_norm_score"] for r in results])
+    old_scores = np.array([r["old_dmc_avg_norm"] for r in results])
+    avg_master_score = np.mean(master_scores)
+    avg_old_dmc_score = np.mean(old_scores)
+
+    diffs = master_scores - old_scores
+    mean_diff = np.mean(diffs)
+    se_diff = np.std(diffs, ddof=1) / np.sqrt(len(diffs))
+    t_stat = mean_diff / se_diff if se_diff > 0 else float("inf")
+
+    ci_lo, ci_hi = mean_diff - 1.96 * se_diff, mean_diff + 1.96 * se_diff
     total_master_wins = sum(r["master_wins"] for r in results)
     total_rounds = sum(r["match_rounds"] for r in results)
     win_rate = (total_master_wins / total_rounds) * 100
@@ -169,6 +198,16 @@ def main():
     print(f" Master Avg Norm Score   : {avg_master_score:+.4f}")
     print(f" Old DMC Avg Norm Score  : {avg_old_dmc_score:+.4f}")
     print(f" Score Delta (Master - Old): {avg_master_score - avg_old_dmc_score:+.4f}")
+    print(
+        f" 95% CI on delta (paired, n={len(diffs)} games): "
+        f"[{ci_lo:+.4f}, {ci_hi:+.4f}]  (t={t_stat:+.2f})"
+    )
+    if ci_lo <= 0 <= ci_hi:
+        print(
+            " -> CI includes 0: not distinguishable from no difference at this sample size."
+        )
+    else:
+        print(" -> CI excludes 0: difference looks real, not just noise.")
     print(
         f" Master Round Win Rate   : {win_rate:.2f}% ({total_master_wins}/{total_rounds})"
     )
