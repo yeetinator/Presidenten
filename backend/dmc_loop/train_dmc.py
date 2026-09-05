@@ -129,7 +129,7 @@ def run_training_loop(snapshot_dir="snapshots"):
             while max_batches < 2000:
                 batch_idx += 1
                 max_batches += 1
-                epsilon = max(0.05, epsilon * 0.9997)
+                epsilon = max(0.02, epsilon * 0.9997)
 
                 try:
                     t0 = time.perf_counter()
