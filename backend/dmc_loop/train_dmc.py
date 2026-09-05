@@ -96,7 +96,7 @@ def run_training_loop(snapshot_dir="snapshots"):
 
     optimizer = torch.optim.Adam(live_model.parameters(), lr=LEARNING_RATE, fused=True)
     loss_fn = torch.nn.MSELoss()
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, 0.99995)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, 0.999988)
 
     if os.path.exists(resume_path):
         print(f"Resuming checkpoint from {resume_path}...")
