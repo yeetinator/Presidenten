@@ -276,7 +276,7 @@ async def control_listener(
                 p_id: PlayerType(player_type)
                 for p_id, player_type in enumerate(player_config)
             }
-            session.env = President(num_players)
+            session.env = President(num_players, track_suits=True)
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             session.assigned_players, session.human_id = build_assigned_players(
                 session.assign_p, device

@@ -2,21 +2,22 @@ from __future__ import annotations
 
 import random
 
+MAPPING_VS = {10: "T", 11: "J", 12: "Q", 13: "K", 14: "A", 15: "2"}
+MAPPING_SV = {"T": 10, "J": 11, "Q": 12, "K": 13, "A": 14, "2": 15}
+
 
 class President:
-    def __init__(self, players=4, verbose=False):
+    def __init__(self, players=4, verbose=False, track_suits=False):
         if players < 4:
             raise ValueError("President requires at least 4 players.")
 
         self.players = players
         self.verbose = verbose
+        self.track_suits = track_suits
 
         # 3 to Ace (14), plus 2 (15)
         self.deck = [rank for rank in range(3, 16) for _ in range(4)]
         self.hands = {p_id: [] for p_id in range(players)}
-        self.suited_hands: dict[int, list[str]] = {
-            p_id: [] for p_id in range(players)
-        }  # For future suit-based features
 
         self.scores = {
             p_id: (0, 0) for p_id in range(players)
@@ -30,9 +31,14 @@ class President:
         self.history = []  # [(P_id, move), ...]
         self._history_flat_counts = [0] * 16  # Count of each card played
         self.last_move = (0, 0, 0)  # (card_value, count, twos_used)
-        self.suit_last_move = []
         self.pile = []  # Cards currently on the pile
         self.was_pile_reset = False
+
+        if self.track_suits:
+            self.suited_hands: dict[int, list[str]] = {
+                p_id: [] for p_id in range(players)
+            }  # For future suit-based features
+            self.suit_last_move = []
 
         self.pile_leader = None  # P_id of the player who last played to the pile
         self.passed = set()  # Players who have passed in the current pile
@@ -97,14 +103,9 @@ class President:
                 self.scores[p_id][1] + (1 if rank == 0 else 0),
             )
 
-    def _get_suit_prefix(self, card_val):
-        mapping = {10: "T", 11: "J", 12: "Q", 13: "K", 14: "A", 15: "2"}
-        return mapping.get(card_val, str(card_val))
-
     def _get_card_value(self, suit_str):
-        mapping = {"T": 10, "J": 11, "Q": 12, "K": 13, "A": 14, "2": 15}
         r = suit_str[:-1]
-        return mapping[r] if r in mapping else int(r)
+        return MAPPING_SV.get(r, int(r))
 
     def exchange_cards(
         self,
@@ -115,7 +116,8 @@ class President:
 
         # Makes sure no cards are exchanged back and forth in the same round
         staged_outgoing = {p_id: [] for p_id in range(self.players)}
-        staged_suits = {p_id: [] for p_id in range(self.players)}
+        if self.track_suits:
+            staged_suits = {p_id: [] for p_id in range(self.players)}
 
         if not hasattr(self, "exchange_log") or self.exchange_log is None:
             self.exchange_log = {}
@@ -139,7 +141,7 @@ class President:
 
         def suit_exchange(player, cards):
             for card_val in cards:
-                prefix = self._get_suit_prefix(card_val)
+                prefix = MAPPING_VS.get(card_val, str(card_val))
                 suit_card = next(
                     (sc for sc in self.suited_hands[player] if sc.startswith(prefix)),
                     None,
@@ -159,8 +161,9 @@ class President:
             staged_outgoing[high_player].extend(high_cards)
             staged_outgoing[low_player].extend(low_cards)
 
-            suit_exchange(high_player, high_cards)
-            suit_exchange(low_player, low_cards)
+            if self.track_suits:
+                suit_exchange(high_player, high_cards)
+                suit_exchange(low_player, low_cards)
 
             self.exchange_log[high_player] = {
                 "pair": low_player,
@@ -183,8 +186,9 @@ class President:
             self.hands[high_player].extend(staged_outgoing[low_player])
             self.hands[low_player].extend(staged_outgoing[high_player])
 
-            self.suited_hands[high_player].extend(staged_suits[low_player])
-            self.suited_hands[low_player].extend(staged_suits[high_player])
+            if self.track_suits:
+                self.suited_hands[high_player].extend(staged_suits[low_player])
+                self.suited_hands[low_player].extend(staged_suits[high_player])
 
             if self.verbose:
                 print(
@@ -193,7 +197,8 @@ class President:
 
         for p_id in range(self.players):
             self.hands[p_id].sort()
-            self.suited_hands[p_id].sort(key=self._get_card_value)
+            if self.track_suits:
+                self.suited_hands[p_id].sort(key=self._get_card_value)
 
     def gen_suited_hands(self):
         suited_hands = {p_id: [] for p_id in range(self.players)}
@@ -256,12 +261,9 @@ class President:
             self.clubs_3_holder = self.curr_turn
             self.first_turn = True
 
-        self.suited_hands = self.gen_suited_hands()
-
         self.history = []
         self._history_flat_counts = [0] * 16
         self.last_move = (0, 0, 0)
-        self.suit_last_move = []
         self.pile = []
         self.was_pile_reset = False
         self.pile_leader = None
@@ -272,6 +274,10 @@ class President:
         self.ended_2 = []
         self.pending_finish = None
         self.exchange_log = {}
+
+        if self.track_suits:
+            self.suited_hands = self.gen_suited_hands()
+            self.suit_last_move = []
 
         return self._get_state(self.curr_turn)
 
@@ -284,21 +290,18 @@ class President:
 
     def _get_state(self, p_id, *, reset_view=False, only_finish=True):
         last_move = (0, 0, 0) if reset_view else self.last_move
-        suit_last_move = [] if reset_view else self.suit_last_move
+        if self.track_suits:
+            suit_last_move = [] if reset_view else self.suit_last_move
+
         cards_in_pile = [] if reset_view else self.pile
         passed = set() if reset_view else self.passed
         pile_leader = None if reset_view else self.pile_leader
 
-        return {
+        state = {
             "hand": self.hands[p_id].copy(),
-            "suited_hand": self.suited_hands[p_id].copy(),
-            "opp_suited_hands": {
-                p: self.suited_hands[p].copy() for p in range(self.players) if p != p_id
-            },
             "legal_moves": self.get_legal_moves(p_id, last_move, only_finish),
             "my_role": self.roles[p_id],
             "last_move": last_move,
-            "suit_last_move": suit_last_move.copy(),
             "curr_turn": self.curr_turn,
             "opp_hand_counts": {
                 p: len(self.hands[p]) for p in range(self.players) if p != p_id
@@ -321,6 +324,13 @@ class President:
             "cards_in_pile": cards_in_pile.copy(),
             "pile_leader": pile_leader,
         }
+        if self.track_suits:
+            state["suited_hand"] = self.suited_hands[p_id].copy()
+            state["opp_suited_hands"] = {
+                p: self.suited_hands[p].copy() for p in range(self.players) if p != p_id
+            }
+            state["suit_last_move"] = suit_last_move.copy()
+        return state
 
     def get_legal_moves(self, p_id, last_move=None, only_finish=True):
         finish_moves = [(0, 0, 0)]
@@ -375,20 +385,21 @@ class President:
         for _ in range(count):
             self.hands[p_id].remove(card_val)
 
-        prefix = self._get_suit_prefix(card_val)
-        if suits:
-            for suit in suits:
-                if suit.startswith(prefix) and suit in self.suited_hands[p_id]:
-                    self.suited_hands[p_id].remove(suit)
-        else:
-            for _ in range(count):
-                card = next(
-                    (sc for sc in self.suited_hands[p_id] if sc.startswith(prefix)),
-                    None,
-                )
-                if card:
-                    self.suited_hands[p_id].remove(card)
-                    self.suit_last_move.append(card)
+        if self.track_suits:
+            prefix = MAPPING_VS.get(card_val, str(card_val))
+            if suits:
+                for suit in suits:
+                    if suit.startswith(prefix) and suit in self.suited_hands[p_id]:
+                        self.suited_hands[p_id].remove(suit)
+            else:
+                for _ in range(count):
+                    card = next(
+                        (sc for sc in self.suited_hands[p_id] if sc.startswith(prefix)),
+                        None,
+                    )
+                    if card:
+                        self.suited_hands[p_id].remove(card)
+                        self.suit_last_move.append(card)
 
     def _finishing_option(self, card, played_count, p_id):
         if played_count >= 4 or any(item[1][0] == card for item in self.history[:-1]):
@@ -430,7 +441,7 @@ class President:
                     f"\nJUMP IN! Player {p_id} finishes the last move with [{self.visualize_move(move)}]"
                 )
 
-            if suits:
+            if self.track_suits and suits:
                 self.suit_last_move.extend(suits)
 
             self._remove_cards(p_id, card_val, count, suits)
@@ -476,7 +487,9 @@ class President:
         return True
 
     def clear_pile(self):
-        self.suit_last_move = []
+        if self.track_suits:
+            self.suit_last_move = []
+
         self.last_move = (0, 0, 0)
         self.passed = set()
         self.pile = []
@@ -512,7 +525,9 @@ class President:
             self.passed.add(p_id)
         else:
             self.last_move = move
-            self.suit_last_move = suits if suits else []
+            if self.track_suits:
+                self.suit_last_move = suits if suits else []
+
             self.pile_leader = p_id
             rcount = count - twos
 
