@@ -115,6 +115,7 @@ def run_training_loop(snapshot_dir="snapshots"):
     running_losses = []
     rollout_times = []
     train_times = []
+    iter_times = []
     elite_snapshots = glob.glob(os.path.join(snapshot_dir, "elites/model_gen_*.pt"))
 
     with ctx.Pool(
@@ -127,6 +128,7 @@ def run_training_loop(snapshot_dir="snapshots"):
             pending = pool.starmap_async(parallel_worker, tasks, chunksize=1)
 
             while max_batches < 2000:
+                t_iter_start = time.perf_counter()
                 batch_idx += 1
                 max_batches += 1
                 epsilon = max(0.02, epsilon * 0.9997)
@@ -169,6 +171,7 @@ def run_training_loop(snapshot_dir="snapshots"):
                         rolling_loss = np.mean(running_losses)
                         avg_rollout = np.mean(rollout_times)
                         avg_train = np.mean(train_times)
+                        avg_iter = np.mean(iter_times) if iter_times else 0.0
                         train_share = (avg_train / (avg_rollout + avg_train)) * 100
 
                         print(
@@ -176,12 +179,13 @@ def run_training_loop(snapshot_dir="snapshots"):
                             f"BATCH {batch_idx:<5} | Rolling Loss: {rolling_loss:.6f} | "
                             f"LR: {scheduler.get_last_lr()[0]:.6f} | Epsilon: {epsilon:.4f}\n"
                             f"Rollout: {avg_rollout:.2f}s | Train: {avg_train:.2f}s | "
-                            f"Train Share: {train_share:.1f}%\n"
+                            f"Train Share: {train_share:.1f}% | Iter: {avg_iter:.2f}s\n"
                             f"========================================================================="
                         )
                         running_losses.clear()
                         rollout_times.clear()
                         train_times.clear()
+                        iter_times.clear()
                 else:
                     print(f"Batch {batch_idx}: No training data collected.")
 
@@ -199,6 +203,7 @@ def run_training_loop(snapshot_dir="snapshots"):
                     print(
                         f"Saved model snapshot to {snapshot_path} and updated latest_model.pt."
                     )
+                iter_times.append(time.perf_counter() - t_iter_start)
         except KeyboardInterrupt:
             handle_keyboard_interrupt(pool)
 
