@@ -11,6 +11,15 @@ from game import President
 NUM_RANKS = 13
 COUNT_BUCKETS = 4
 MAX_PLAYERS = 7
+ROLE_MAP = {
+    "President": 1.0,
+    "Vice-President": 0.8,
+    "Secretary": 0.6,
+    "Citizen": 0.5,
+    "Clerk": 0.4,
+    "High-Scum": 0.2,
+    "Scum": 0.0,
+}
 
 HAND_DIM = NUM_RANKS * COUNT_BUCKETS
 HISTORY_DIM = NUM_RANKS
@@ -41,6 +50,19 @@ MASTER_VEC_DIM = STATE_DIM + MASTER_OPP_DIM
 MASTER_INPUT_DIM = MASTER_VEC_DIM + MOVE_DIM
 
 _THERM_ROWS = np.arange(COUNT_BUCKETS, dtype=np.int32).reshape(-1, 1)
+_FEAT_BUF = np.empty((64, INPUT_DIM), dtype=np.float32)
+
+_MOVE_TABLE = np.zeros((16 * 25, MOVE_DIM), dtype=np.float32)
+for card in [0] + list(range(3, 16)):
+    for count in range(5):
+        for twos in range(5):
+            v = _MOVE_TABLE[card * 25 + count * 5 + twos]
+            if card == 0:
+                v[MOVE_DIM - 1] = 1.0
+            else:
+                v[card - 3] = 1.0
+                v[NUM_RANKS : NUM_RANKS + count] = 1.0
+                v[NUM_RANKS + COUNT_BUCKETS : NUM_RANKS + COUNT_BUCKETS + twos] = 1.0
 
 
 def to_thermometer(counts):
@@ -50,17 +72,7 @@ def to_thermometer(counts):
 
 
 def vectorize_moves(moves):
-    n = len(moves)
-    M = np.zeros((n, MOVE_DIM), dtype=np.float32)
-
-    for i, (card, count, twos) in enumerate(moves):
-        if card == 0:
-            M[i, MOVE_DIM - 1] = 1.0
-        else:
-            M[i, card - 3] = 1.0
-            M[i, NUM_RANKS : NUM_RANKS + count] = 1.0
-            M[i, NUM_RANKS + COUNT_BUCKETS : NUM_RANKS + COUNT_BUCKETS + twos] = 1.0
-    return M
+    return _MOVE_TABLE[[c * 25 + n * 5 + t for c, n, t in moves]]
 
 
 def vectorize_hand_state(hand, history_vector):
@@ -76,32 +88,15 @@ def vectorize_hand_state(hand, history_vector):
     return hand_vector, unseen_vector
 
 
-def vectorize_invariant_state(state, num_players=4):
-    ROLE_MAP = {
-        "President": 1.0,
-        "Vice-President": 0.8,
-        "Secretary": 0.6,
-        "Citizen": 0.5,
-        "Clerk": 0.4,
-        "High-Scum": 0.2,
-        "Scum": 0.0,
-    }
-
+def vectorize_invariant_state(state, num_players=4, my_id=0):
     opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
     state_player_roles: dict[int, str] = state["player_roles"]
 
     history_vector = np.array(state["history_vector"], dtype=np.float32) / COUNT_BUCKETS
 
-    last_move_vector = np.zeros(LAST_MOVE_DIM, dtype=np.float32)
     p_card, p_count, p_twos = state["last_move"]
-    if p_card != 0:
-        last_move_vector[p_card - 3] = 1.0
-        last_move_vector[NUM_RANKS : NUM_RANKS + p_count] = 1.0
-        last_move_vector[
-            NUM_RANKS + COUNT_BUCKETS : NUM_RANKS + COUNT_BUCKETS + p_twos
-        ] = 1.0
+    last_move_vector = _MOVE_TABLE[p_card * 25 + p_count * 5 + p_twos, :LAST_MOVE_DIM]
 
-    my_id = [p for p in range(num_players) if p not in opp_hand_counts][0]
     opp_counts = []
     player_roles = []
     pile_status = []
@@ -161,9 +156,9 @@ def vectorize_invariant_state(state, num_players=4):
     }
 
 
-def vectorize_state(state, num_players=4):
+def vectorize_state(state, num_players=4, my_id=0):
     hand_vec, unseen_vec = vectorize_hand_state(state["hand"], state["history_vector"])
-    inv = vectorize_invariant_state(state, num_players)
+    inv = vectorize_invariant_state(state, num_players, my_id)
     opp_vec = np.concatenate(
         [[float(len(state["hand"])) / NUM_RANKS], inv["opp_vector"]]
     )
@@ -274,22 +269,29 @@ class PresidentDMCBot(Player):
         self.profile = profile
 
     def vectorize_state(self, state: dict, *args, **kwargs):
-        return vectorize_state(state, len(state["opp_hand_counts"]) + 1)
+        return vectorize_state(state, len(state["opp_hand_counts"]) + 1, self.player_id)
 
     def get_move(self, state: dict, *args, **kwargs) -> tuple[int, int, int]:
+        global _FEAT_BUF
+
         legal_moves = state["legal_moves"]
+        n = len(legal_moves)
+
         if not legal_moves:
             return (0, 0, 0)
 
-        if len(legal_moves) == 1:
+        if n == 1:
             return legal_moves[0]
         else:
             state_vec = self.vectorize_state(state, env=kwargs.get("env", None)).astype(
                 np.float32
             )
-            move_block = vectorize_moves(legal_moves)
-            state_block = np.broadcast_to(state_vec, (len(legal_moves), state_vec.size))
-            features = np.hstack([state_block, move_block])
+            if n > _FEAT_BUF.shape[0]:
+                _FEAT_BUF = np.empty((n * 2, INPUT_DIM), dtype=np.float32)
+
+            features = _FEAT_BUF[:n]
+            features[:, :STATE_DIM] = state_vec
+            features[:, STATE_DIM:] = vectorize_moves(legal_moves)
 
             if self.training and random.random() < self.epsilon:
                 best_idx = random.randint(0, len(legal_moves) - 1)
@@ -359,7 +361,7 @@ class PresidentDMCBot(Player):
 
         history_counts = np.array(state["history_vector"], dtype=np.int32)
         num_players = len(state["opp_hand_counts"]) + 1
-        inv = vectorize_invariant_state(state, num_players)
+        inv = vectorize_invariant_state(state, num_players, self.player_id)
         hypo_hand_count_norm = float(len(hand) - count) / 13.0
         opp_vec = np.concatenate([[hypo_hand_count_norm], inv["opp_vector"]]).astype(
             np.float32
