@@ -198,30 +198,34 @@ def train_on_batch(
     y_tensor = torch.from_numpy(merged_y).to(device)
 
     dataset_size = x_tensor.size(0)
-    mini_batch_size = 512
-    epochs = 4
+    mini_batch_size = 2048
+    epochs = 2
 
     live_model.train()
-    epoch_losses = []
+    loss_sum = torch.zeros((), device=device)
+    n_steps = 0
 
     for epoch in range(epochs):
         perm = torch.randperm(dataset_size, device=device)
-        for i in range(0, dataset_size, mini_batch_size):
-            indices = perm[i : i + mini_batch_size]
-            batch_x, batch_y = x_tensor[indices], y_tensor[indices]
+        x_shuf, y_shuf = x_tensor[perm], y_tensor[perm]
 
-            optimizer.zero_grad()
+        for i in range(0, dataset_size, mini_batch_size):
+            batch_x = x_shuf[i : i + mini_batch_size]
+            batch_y = y_shuf[i : i + mini_batch_size]
+
+            optimizer.zero_grad(set_to_none=True)
             predictions = live_model(batch_x)
             loss = loss_fn(predictions, batch_y)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(live_model.parameters(), GRADIENT_CLIP)
             optimizer.step()
-            epoch_losses.append(loss.item())
+            loss_sum += loss.detach()
+            n_steps += 1
 
     shared_model.load_state_dict(live_model.state_dict())
     scheduler.step()
 
-    return np.mean(epoch_losses)
+    return (loss_sum / max(n_steps, 1)).item()
 
 
 def save_snapshot(
