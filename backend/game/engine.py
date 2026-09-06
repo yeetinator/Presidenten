@@ -104,8 +104,9 @@ class President:
             )
 
     def _get_card_value(self, suit_str):
+        # Can't use .get(r, int(r)) because int(r) will be evaluated even if r is in MAPPING_SV which will cause an error if r is not a valid integer string.
         r = suit_str[:-1]
-        return MAPPING_SV.get(r, int(r))
+        return MAPPING_SV[r] if r in MAPPING_SV else int(r)
 
     def exchange_cards(
         self,

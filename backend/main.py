@@ -390,7 +390,6 @@ async def run_exchange_phase(
         can_choose,
     )
 
-    print(f"Cards to pass: {cards_to_pass}")
     env.exchange_log = {}
     for pair in env.role_pairs:
         high_role, low_role, count = pair
