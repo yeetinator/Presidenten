@@ -402,7 +402,9 @@ class President:
                         self.suit_last_move.append(card)
 
     def _finishing_option(self, card, played_count, p_id):
-        if played_count >= 4 or any(item[1][0] == card for item in self.history[:-1]):
+        if played_count >= 4 or any(
+            self.history[i][1][0] == card for i in range(len(self.history) - 1)
+        ):
             return None
 
         players_with_card = {
