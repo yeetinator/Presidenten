@@ -6,7 +6,6 @@
   export let isSelected: boolean = false;
   export let isBlinking: boolean = false;
   export let disabled: boolean = false;
-  export let exchange: boolean = false;
   export let className: string = "";
   export let onClick: ((event: MouseEvent) => void) | undefined = undefined;
 
@@ -19,10 +18,10 @@
 <button
   type="button"
   class={`relative h-28 w-20 select-none rounded-md bg-white shadow-md outline-none transition-all duration-200 ease-out md:h-36 md:w-24 ${className} ${
-    disabled && !exchange
-      ? ""
-      : isSelected
-        ? "-translate-y-6 scale-105 shadow-xl ring-4"
+    isSelected
+      ? "-translate-y-6 scale-105 shadow-xl ring-4"
+      : disabled
+        ? ""
         : "hover:-translate-y-2 hover:shadow-lg"
   } border ${isBlinking && !disabled ? "animate-jump-ready" : "border-slate-200"}`}
   style={`${isSelected ? `ring-color: ${$currTheme?.cardRing ?? "#34d399"}; --tw-ring-color: ${$currTheme?.cardRing ?? "#34d399"};` : ""} --jump-color: ${jumpColor};`}
@@ -31,7 +30,7 @@
 >
   <img
     src={imgSrc}
-    alt="Playing Card"
+    alt={isFaceUp ? suitCard : "Face-down Card"}
     class="h-full w-full object-fill rounded-md pointer-events-none"
   />
 </button>

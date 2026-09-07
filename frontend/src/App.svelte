@@ -16,12 +16,30 @@
     isDealing,
     state as gameState,
     currTheme,
+    type GameStateUpdate,
   } from "./stores/gameStore";
-  import { send, receive } from "./lib/transitions";
+  import {
+    send,
+    receive,
+    NORMAL_DURATION_MS,
+    FAST_FORWARD_DURATION_MS,
+  } from "./lib/transitions";
   import { fade } from "svelte/transition";
+  import type { OpponentView } from "./lib/types";
 
   const websocketUrl =
     import.meta.env.VITE_WS_URL ?? "ws://localhost:8000/ws/game";
+
+  type MoveLabelTone = "waiting" | "prompt" | "ready" | "invalid" | "exchange";
+  type MoveLabel = { text: string; tone: MoveLabelTone };
+
+  const MOVE_LABEL_TONES: Record<MoveLabelTone, string> = {
+    waiting: "text-[0.65rem] font-semibold tracking-[0.22em] text-white/35",
+    prompt: "text-[0.7rem] font-bold tracking-[0.16em] text-white/85",
+    ready: "text-[0.75rem] font-black tracking-[0.16em] animate-label-in",
+    invalid: "text-[0.75rem] font-black tracking-[0.16em] text-red-400",
+    exchange: "text-[0.75rem] font-black tracking-[0.16em] text-amber-300",
+  };
 
   let gameStarted = false;
   let deck: string[] = [];
@@ -35,7 +53,6 @@
   $: suitedHand = $isDealing
     ? (visibleCardsPerSeat[0] ?? [])
     : ($gameState?.suited_hand ?? []);
-  $: totalPlayers = Object.keys($gameState?.player_roles ?? {}).length || 4;
   $: exchangeRequiredCards = $exchangePrompt?.requiredCards ?? 0;
   $: exchangeCanChoose = $exchangePrompt?.canChoose ?? false;
   $: isMyTurn = $gameState?.curr_turn === 0;
@@ -43,18 +60,17 @@
   $: jumpInVisible = !!$jumpInPrompt && !!$gameState?.is_finish_prompt;
   $: jumpInAutoMove =
     jumpInVisible && $gameState ? gameStore.getAutoFinishMove() : null;
-  $: selectedMoveValues = $selectedCards.map(stripSuitCard);
+  $: selectedMoveValues = $selectedCards.map(gameStore.stripSuitCard);
   $: isSelectionLegal = (() => {
     if (
       !$gameState?.legal_moves_suits ||
       $exchangePrompt ||
-      !$selectedCards.length ||
-      $selectedCards.length === 0
+      !$selectedCards.length
     )
       return false;
     const sortedSelection = [...selectedMoveValues].sort();
     return $gameState.legal_moves_suits.some((legalMove) =>
-      arraysEqual([...legalMove].sort(), sortedSelection),
+      gameStore.arraysEqual([...legalMove].sort(), sortedSelection),
     );
   })();
 
@@ -71,11 +87,10 @@
   $: opponentViews = Object.entries($gameState?.player_roles ?? {})
     .map(([seatStr, role]) => {
       const seat = Number(seatStr);
-      const relativeOffset = (seat + totalPlayers) % totalPlayers;
-      return { seat, role, relativeOffset };
+      return { seat, role };
     })
     .filter((opponent) => opponent.seat !== 0)
-    .sort((a, b) => a.relativeOffset - b.relativeOffset)
+    .sort((a, b) => a.seat - b.seat)
     .map((opponent, index, arr) => ({
       ...opponent,
       suitedHand: $isDealing
@@ -88,90 +103,68 @@
         $gameState?.resume_turn === opponent.seat ||
         ($gameState?.curr_turn === opponent.seat && !$gameState?.resume_turn),
       has_passed: $gameState?.passed?.includes(opponent.seat) ?? false,
-    }));
+    })) as OpponentView[];
 
   $: topOpponents = opponentViews.filter((o) => o.position === "top");
   $: leftOpponent = opponentViews.find((o) => o.position === "left");
   $: rightOpponent = opponentViews.find((o) => o.position === "right");
-  $: selectedMoveLabel = getMoveLabel(
-    $selectedCards,
-    !!$exchangePrompt,
-    isMyTurn,
-    isSelectionLegal,
-    exchangeRequiredCards,
-    exchangeCanChoose,
-    !!$gameState?.can_pass,
-    $gameState?.legal_moves_suits,
-  );
+  $: selectedMoveLabel = getMoveLabel({
+    state: $gameState,
+    selected: $selectedCards,
+    isExchange: !!$exchangePrompt,
+    myTurn: isMyTurn,
+    legal: isSelectionLegal,
+    reqCards: exchangeRequiredCards,
+    canChoose: exchangeCanChoose,
+  });
 
-  let visualPile: string[][] = [];
-  let cardRotations: Record<string, number> = {};
+  type PileCard = { suitCard: string; rotation: number };
+  let visualPile: PileCard[][] = [];
   $: {
     const currSuits = $gameState?.suit_last_move ?? [];
-    if (currSuits.length === 0) {
-      visualPile = [];
-      cardRotations = {};
-    } else {
-      const lastPlay = visualPile[visualPile.length - 1];
+    if (currSuits.length === 0) visualPile = [];
+    else {
+      const lastPlay = visualPile[visualPile.length - 1] ?? [];
       const isAlreadyAdded =
-        lastPlay &&
         lastPlay.length === currSuits.length &&
-        currSuits.every((card, idx) => card === lastPlay[idx]);
+        currSuits.every((suitCard, idx) => suitCard === lastPlay[idx].suitCard);
       const isExtension =
-        lastPlay &&
+        !isAlreadyAdded &&
+        lastPlay.length > 0 &&
         currSuits.length > lastPlay.length &&
-        lastPlay.every((card, idx) => card === currSuits[idx]);
+        lastPlay.every((card, idx) => card.suitCard === currSuits[idx]);
 
       if (!isAlreadyAdded) {
-        if (isExtension) {
-          visualPile[visualPile.length - 1] = currSuits;
-          visualPile = [...visualPile];
-        } else visualPile = [...visualPile, currSuits];
-
-        const leaderSeat = $gameState?.pile_leader ?? 0;
-        let baseAngle = 0;
-
-        if (leaderSeat !== 0 && opponentViews) {
-          const throwingOpponent = opponentViews.find(
-            (o) => o.seat === leaderSeat,
-          );
-          if (throwingOpponent) {
-            if (throwingOpponent.position === "left") baseAngle = 90;
-            else if (throwingOpponent.position === "top") baseAngle = 180;
-            else if (throwingOpponent.position === "right") baseAngle = 270;
-          }
-        }
-        const groupPlayJitter = Math.random() * 70 - 35;
-        currSuits.forEach((suitCard) => {
-          if (cardRotations[suitCard] === undefined) {
-            const microJitter = Math.random() * 10 - 5;
-            cardRotations[suitCard] = baseAngle + groupPlayJitter + microJitter;
-          }
-        });
+        const play = buildPilePlay(
+          currSuits,
+          isExtension ? lastPlay : [],
+          $gameState?.pile_leader ?? 0,
+          opponentViews,
+        );
+        visualPile = isExtension
+          ? [...visualPile.slice(0, -1), play]
+          : [...visualPile, play];
       }
     }
   }
   $: flatVisualPile = visualPile.flatMap((play, playIndex) =>
-    play.map((suitCard, cardIndex) => ({ suitCard, playIndex, cardIndex })),
+    play.map((card, cardIndex) => ({
+      ...card,
+      playIndex,
+      cardIndex,
+      playLength: play.length,
+    })),
   );
+  $: isPileClearing =
+    isMyTurn &&
+    $gameState?.pile_leader === 0 &&
+    ($gameState?.legal_moves_suits?.length ?? 0) === 0;
 
   let lastStateRef: typeof $gameState = null;
   $: if ($gameState && !$exchangePrompt) {
     if ($gameState !== lastStateRef) {
       lastStateRef = $gameState;
       gameStore.clearSelectedCards();
-    }
-  }
-
-  let lastExchangeActive = false;
-  $: if (!!$exchangePrompt !== lastExchangeActive) {
-    lastExchangeActive = !!$exchangePrompt;
-    if ($exchangePrompt) {
-      if (exchangeCanChoose) gameStore.clearSelectedCards();
-      else if (exchangeRequiredCards > 0 && $gameState)
-        gameStore.selectedCards.set(
-          $gameState.suited_hand.slice(-exchangeRequiredCards),
-        );
     }
   }
 
@@ -183,33 +176,72 @@
     gameStore.disconnect();
   });
 
-  function getMoveLabel(
-    cards: string[],
-    exchange: boolean,
-    myTurn: boolean,
-    legal: boolean,
-    reqCards: number,
-    canChoose: boolean,
-    canPass: boolean,
-    legalMoves: string[][] | undefined,
-  ) {
-    if (exchange) {
-      if (cards.length > 0) return `Selected ${cards.length}/${reqCards} cards`;
-      if (reqCards === 0) return "Citizen's are exempt from exchanging";
-      return canChoose
-        ? `Select ${reqCards} cards to give away`
-        : `Highest ${reqCards} cards pre-selected`;
+  function getMoveLabel({
+    state,
+    selected,
+    isExchange,
+    myTurn,
+    legal,
+    reqCards,
+    canChoose,
+  }: {
+    state: GameStateUpdate | null;
+    selected: string[];
+    isExchange: boolean;
+    myTurn: boolean;
+    legal: boolean;
+    reqCards: number;
+    canChoose: boolean;
+  }): MoveLabel {
+    if (isExchange) {
+      if (reqCards === 0)
+        return {
+          text: "Citizens are exempt from exchanging",
+          tone: "waiting",
+        };
+
+      if (selected.length === reqCards)
+        return {
+          text: canChoose
+            ? `${reqCards} cards are ready to send`
+            : `Highest ${reqCards} card${selected.length > 1 ? "s" : ""} pre-selected`,
+          tone: "exchange",
+        };
+
+      if (selected.length > 0)
+        return {
+          text: `Selected ${selected.length}/${reqCards} cards`,
+          tone: "prompt",
+        };
+
+      return { text: `Select ${reqCards} cards to give away`, tone: "prompt" };
     }
 
-    if (!myTurn) return "Waiting for your turn";
+    if (!state) return { text: "Waiting for the deal", tone: "waiting" };
 
-    if (cards.length > 0)
-      return legal ? `Valid Move: ${cards.length} cards` : "Illegal Move";
+    if (state.suited_hand?.length === 0)
+      return { text: "You are out for this round", tone: "waiting" };
 
-    if (legalMoves && legalMoves.length === 0 && canPass)
-      return "You can only pass this turn";
+    if (!myTurn) return { text: "Waiting for your turn", tone: "waiting" };
 
-    return "Click cards from your hand to queue them for play";
+    if (state.legal_moves_suits?.length === 0 && state.pile_leader === 0)
+      return { text: "Pile clears · you lead next", tone: "waiting" };
+
+    if (state.legal_moves_suits.length === 0 && state.can_pass)
+      return { text: "No legal moves · you must pass", tone: "invalid" };
+
+    if (selected.length > 0)
+      return legal
+        ? {
+            text: `Valid Move · ${selected.length} card${selected.length > 1 ? "s" : ""}`,
+            tone: "ready",
+          }
+        : { text: "Illegal Move", tone: "invalid" };
+
+    return {
+      text: "Click cards from your hand to queue them for play",
+      tone: "prompt",
+    };
   }
 
   function displayBotType(role: string | null) {
@@ -217,17 +249,39 @@
     return role.replace(/\s*Bot$/i, "");
   }
 
+  function getPileBaseAngle(leaderSeat: number, opponents: OpponentView[]) {
+    if (leaderSeat === 0) return 0;
+
+    const position = opponents.find((o) => o.seat === leaderSeat)?.position;
+    if (position === "left") return 90;
+    if (position === "top") return 180;
+    if (position === "right") return 270;
+    return 0;
+  }
+
+  function buildPilePlay(
+    suitCards: string[],
+    previousCards: PileCard[],
+    leaderSeat: number,
+    opponents: OpponentView[],
+  ): PileCard[] {
+    const baseAngle = getPileBaseAngle(leaderSeat, opponents);
+    const groupPlayJitter = Math.random() * 70 - 35;
+
+    return suitCards.map((suitCard) => {
+      const existing = previousCards.find((c) => c.suitCard === suitCard);
+      if (existing) return existing;
+
+      const microjitter = Math.random() * 10 - 5;
+      return {
+        suitCard,
+        rotation: baseAngle + groupPlayJitter + microjitter,
+      };
+    });
+  }
+
   function getHorizontalOverlapStyle(index: number) {
     return index === 0 ? "" : "margin-left: -4rem;";
-  }
-
-  function stripSuitCard(suitCard: string) {
-    return suitCard.slice(0, -1).toUpperCase();
-  }
-
-  function arraysEqual(left: string[], right: string[]) {
-    if (left.length !== right.length) return false;
-    return left.every((value, index) => value === right[index]);
   }
 
   async function handleStartGame(config: {
@@ -314,7 +368,6 @@
 
   async function handlePlay() {
     try {
-      console.log("Playing selected cards:", $selectedCards);
       enableCards = false;
       await gameStore.playSelectedCards();
     } catch (error) {
@@ -337,6 +390,29 @@
       await gameStore.playJumpInPrompt(finishMove);
     } catch (error) {
       console.error(error);
+    }
+  }
+
+  function handleKeyDown(event: KeyboardEvent) {
+    if (!gameStarted || event.repeat || $roundSummary) return;
+
+    const target = event.target as HTMLElement | null;
+    if (
+      target?.isContentEditable ||
+      ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")
+    )
+      return;
+
+    if (event.code === "Space") {
+      if (!jumpInVisible || !jumpInAutoMove?.length) return;
+      event.preventDefault();
+      handleJumpIn(jumpInAutoMove[0]);
+      return;
+    }
+
+    if (event.code === "Enter" && isCenterClickable) {
+      event.preventDefault();
+      handleCenterAction();
     }
   }
 
@@ -366,7 +442,6 @@
 
   async function handleFastForward() {
     try {
-      fastForwardMode.set(true);
       await gameStore.fastForwardGame();
     } catch (error) {
       console.error(error);
@@ -385,7 +460,7 @@
       return;
     if (!$exchangePrompt && !isMyTurn) return;
 
-    const clickedCardValue = stripSuitCard(suitCard);
+    const clickedCardValue = gameStore.stripSuitCard(suitCard);
     const finishMove = gameStore.getAutoFinishMove(clickedCardValue);
 
     if (jumpInVisible && finishMove && clickedCardValue !== null) {
@@ -406,6 +481,8 @@
   }
 </script>
 
+<svelte:window on:keydown={handleKeyDown} />
+
 {#if !gameStarted}
   <Lobby onStartGame={handleStartGame} />
 {:else}
@@ -420,8 +497,17 @@
       --accent-text: ${$currTheme.accentText};
       --accent-shadow: ${$currTheme.accentShadow};
       --card-ring: ${$currTheme.cardRing};
+      --jump-color: ${$currTheme.jumpInColor};
     `}
   >
+    {#if jumpInVisible}
+      <div
+        aria-hidden="true"
+        transition:fade={{ duration: 150 }}
+        class="animate-jump-vignette pointer-events-none fixed inset-0 z-40"
+      ></div>
+    {/if}
+
     {#if !$roundSummary}
       <Rules className="left-4" side="left" />
       <button
@@ -432,6 +518,7 @@
       >
         QUIT
       </button>
+
       {#if suitedHand.length === 0 && opponentViews.some((o) => o.suitedHand.length !== 0) && !$exchangePrompt}
         <button
           class="fixed right-22 top-4 z-30 rounded-md border border-blue-300/30 bg-blue-500 px-3 py-1 text-[0.65rem]
@@ -459,6 +546,7 @@
         </button>
       {/if}
     {/if}
+
     <section
       class="mx-auto grid h-full max-h-full grid-rows-[1fr_auto] gap-2 max-w-screen-2xl"
     >
@@ -502,9 +590,12 @@
                   ? 'border-amber-400 bg-amber-500/5 shadow-[0_0_30px_rgba(245,158,11,0.25)] hover:bg-amber-500/10 cursor-pointer active:scale-[0.99]'
                   : isMyTurn && isSelectionLegal
                     ? 'cursor-pointer active:scale-[0.99]'
-                    : 'border-white/5 bg-white/1 cursor-default'}"
-                style={isMyTurn && isSelectionLegal
-                  ? `border-color: var(--accent-border); background-color: var(--accent-bg); box-shadow: var(--accent-shadow);`
+                    : isMyTurn && !$exchangePrompt
+                      ? 'animate-turn-glow cursor-default'
+                      : 'border-white/5 bg-white/1 cursor-default'}"
+                style={(isMyTurn && isSelectionLegal) ||
+                (isMyTurn && !$exchangePrompt)
+                  ? `border-color: var(--accent-border); background-color: var(--accent-bg); ${isSelectionLegal ? "box-shadow: var(--accent-shadow);" : ""}`
                   : ""}
                 disabled={!isCenterClickable}
                 on:click={handleCenterAction}
@@ -550,11 +641,11 @@
                         on:outrostart={gameStore.startAnimation}
                         on:outroend={gameStore.endAnimation}
                         class="absolute transition-all duration-300 flex justify-center origin-center"
-                        style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"}; z-index: ${card.playIndex * 10 + card.cardIndex}; 
-                      transform: translateX(${(card.cardIndex - (visualPile[card.playIndex].length - 1) / 2) * 1.4}rem);`}
+                        style={`transition-duration: ${$fastForwardMode ? FAST_FORWARD_DURATION_MS : NORMAL_DURATION_MS}ms; z-index: ${card.playIndex * 10 + card.cardIndex}; 
+                      transform: translateX(${(card.cardIndex - (card.playLength - 1) / 2) * 1.4}rem);`}
                       >
                         <div
-                          style={`transform: rotate(${cardRotations[card.suitCard] ?? 0}deg);`}
+                          style={`transform: rotate(${card.rotation}deg);`}
                           class="origin-center flex justify-center items-center"
                         >
                           <Card
@@ -569,9 +660,17 @@
                   </div>
                 </div>
                 <div
-                  class="w-full text-center pointer-events-none z-10 select-none text-[0.65rem] font-medium tracking-wide text-white/60 leading-normal max-w-56 mx-auto"
+                  class="w-full min-h-10 flex items-end justify-center text-center pointer-events-none z-10 select-none"
+                  aria-live="polite"
                 >
-                  {selectedMoveLabel}
+                  <span
+                    class="max-w-56 mx-auto uppercase leading-tight transition-colors duration-200 drop-shadow-[0_2px_6px_rgba(0,0,0,0.65)] {MOVE_LABEL_TONES[
+                      selectedMoveLabel.tone
+                    ]}"
+                    style={selectedMoveLabel.tone === "ready"
+                      ? "color: var(--accent-text); text-shadow: 0 0 14px var(--accent-text);"
+                      : ""}>{selectedMoveLabel.text}</span
+                  >
                 </div>
               </button>
             {:else}
@@ -584,7 +683,7 @@
                   on:outrostart={gameStore.startAnimation}
                   on:outroend={gameStore.endAnimation}
                   class="absolute transition-all duration-300 flex justify-center origin-center"
-                  style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"};`}
+                  style={`transition-duration: ${$fastForwardMode ? FAST_FORWARD_DURATION_MS : NORMAL_DURATION_MS}ms;`}
                 >
                   <Card
                     {suitCard}
@@ -607,13 +706,38 @@
             {/if}
           </aside>
         </div>
+
         <div class="w-full flex flex-col gap-1 mt-auto">
-          <div class="h-9 flex justify-center z-20 overflow-visible">
-            {#if isMyTurn && $gameState?.can_pass && !$exchangePrompt && $gameState?.pile_leader !== 0}
+          <div
+            class="h-9 flex items-center justify-center gap-2 z-20 overflow-visible"
+          >
+            {#if jumpInVisible && jumpInAutoMove?.length}
               <button
                 transition:fade={{ duration: 100 }}
                 type="button"
-                class="rounded-full border border-white/20 bg-black/50 backdrop-blur-md px-6 py-1.5 text-[0.65rem] font-black uppercase tracking-[0.2em] text-white/90 shadow-md transition-all hover:bg-white/10 hover:text-white active:scale-95"
+                class="animate-jump-cta rounded-full border-2 bg-black/60 backdrop-blur-md px-6 py-1.5
+          text-[0.7rem] font-black uppercase tracking-[0.22em] transition-transform active:scale-95"
+                style="border-color: var(--jump-color); color: var(--jump-color);"
+                on:click={() =>
+                  jumpInAutoMove && handleJumpIn(jumpInAutoMove[0])}
+              >
+                ⚡ {$jumpInPrompt?.message ?? "Jump In"}
+                <span class="opacity-70">· Space</span></button
+              >
+            {:else if isMyTurn && !$exchangePrompt && !isPileClearing && !$isDealing}
+              <span
+                transition:fade={{ duration: 100 }}
+                class="animate-turn-pill rounded-full border px-4 py-1.5 text-[0.65rem] font-black uppercase tracking-[0.22em] backdrop-blur-md"
+                style="border-color: var(--accent-border); background: var(--accent-bg); color: var(--accent-text);"
+                >Your Turn</span
+              >
+            {/if}
+            {#if isMyTurn && $gameState?.can_pass && $gameState?.pile_leader !== 0 && !isPileClearing}
+              <button
+                transition:fade={{ duration: 100 }}
+                type="button"
+                class="rounded-full border border-white/20 bg-black/50 backdrop-blur-md px-6 py-1.5 text-[0.65rem] font-black uppercase tracking-[0.2em] text-white/90
+                shadow-md transition-all hover:bg-white/10 hover:text-white active:scale-95"
                 on:click={handlePass}>Pass Turn</button
               >
             {/if}
@@ -622,10 +746,18 @@
             class="px-3 pt-6 overflow-visible relative flex items-center justify-center"
           >
             <div
+              aria-hidden="true"
+              class="pointer-events-none absolute inset-0 transition-opacity duration-500 {isMyTurn &&
+              !haveIPassed
+                ? 'opacity-100'
+                : 'opacity-0'}"
+              style="background: radial-gradient(ellipse 55% 130% at 50% 135%, var(--accent-bg), transparent 70%);"
+            ></div>
+            <div
               class="flex w-full justify-center overflow-visible h-28 md:h-36 items-center transition-all duration-300 {haveIPassed
                 ? 'opacity-40 grayscale pointer-events-none'
                 : ''}"
-              style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"};`}
+              style={`transition-duration: ${$fastForwardMode ? FAST_FORWARD_DURATION_MS : NORMAL_DURATION_MS}ms;`}
             >
               {#each suitedHand as suitCard, index (suitCard)}
                 <div
@@ -636,7 +768,7 @@
                   on:outrostart={gameStore.startAnimation}
                   on:outroend={gameStore.endAnimation}
                   class="relative pointer-events-none transition-all duration-300"
-                  style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"}; ${getHorizontalOverlapStyle(index)}`}
+                  style={`transition-duration: ${$fastForwardMode ? FAST_FORWARD_DURATION_MS : NORMAL_DURATION_MS}ms; ${getHorizontalOverlapStyle(index)}`}
                 >
                   <Card
                     {suitCard}
@@ -645,15 +777,15 @@
                     isBlinking={!!(
                       jumpInVisible &&
                       jumpInAutoMove?.some((arr) =>
-                        arr.includes(stripSuitCard(suitCard)),
+                        arr.includes(gameStore.stripSuitCard(suitCard)),
                       )
                     )}
                     disabled={haveIPassed ||
                       (!$exchangePrompt && !isMyTurn) ||
                       (!!$exchangePrompt &&
                         (!exchangeCanChoose || exchangeRequiredCards === 0)) ||
-                      !enableCards}
-                    exchange={!!$exchangePrompt}
+                      !enableCards ||
+                      isPileClearing}
                     className="shrink-0 scale-[0.75] md:scale-[0.95] pointer-events-auto"
                     onClick={() => handleToggleCard(suitCard)}
                   />
@@ -670,7 +802,7 @@
           eyebrowClass="text-amber-200/75"
           title="Play the next round or quit"
           scores={$roundSummary.scores}
-          playerTypes={$gameState?.player_types}
+          playerTypes={$gameState?.player_types ?? {}}
         >
           <div slot="actions" class="flex gap-3">
             <button
@@ -708,5 +840,90 @@
   }
   :global(.animate-arrow-pulse) {
     animation: arrow-pulse 0.6s infinite ease-in-out;
+  }
+
+  @keyframes turn-glow {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+    }
+    50% {
+      box-shadow: var(--accent-shadow);
+    }
+  }
+  :global(.animate-turn-glow) {
+    animation: turn-glow 2s infinite ease-in-out;
+  }
+
+  @keyframes turn-pill {
+    0%,
+    100% {
+      opacity: 0.75;
+      transform: scale(0.99);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.02);
+    }
+  }
+  :global(.animate-turn-pill) {
+    animation: turn-pill 1.6s infinite ease-in-out;
+  }
+
+  @keyframes jump-cta {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 var(--jump-color);
+      transform: scale(1);
+    }
+    50% {
+      box-shadow:
+        0 0 18px 2px var(--jump-color),
+        0 0 40px -8px var(--jump-color);
+      transform: scale(1.04);
+    }
+  }
+  :global(.animate-jump-cta) {
+    animation: jump-cta 0.8s infinite ease-in-out;
+  }
+
+  @keyframes jump-vignette {
+    0%,
+    100% {
+      box-shadow: inset 0 0 60px -25px var(--jump-color);
+      opacity: 0.5;
+    }
+    50% {
+      box-shadow: inset 0 0 150px 5px var(--jump-color);
+      opacity: 1;
+    }
+  }
+  :global(.animate-jump-vignette) {
+    animation: jump-vignette 0.8s infinite ease-in-out;
+  }
+
+  @keyframes label-in {
+    from {
+      opacity: 0.4;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  :global(.animate-label-in) {
+    animation: label-in 0.18s ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(.animate-turn-glow),
+    :global(.animate-turn-pill),
+    :global(.animate-jump-cta),
+    :global(.animate-jump-vignette),
+    :global(.animate-label-in),
+    :global(.animate-arrow-pulse) {
+      animation: none;
+    }
   }
 </style>

@@ -2,7 +2,7 @@
   export let eyebrow = "";
   export let eyebrowClass = "text-emerald-300/80";
   export let title = "";
-  export let scores: Record<number, [number, number]> = [];
+  export let scores: Record<number, [number, number]> = {};
   export let playerTypes: Record<number, string> = {};
 
   $: sortedScores = [...Object.entries(scores)]

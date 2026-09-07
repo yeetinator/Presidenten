@@ -1,18 +1,30 @@
 import { crossfade } from "svelte/transition";
+import type { TransitionConfig } from "svelte/transition";
 import { cubicOut } from "svelte/easing";
 import { get } from "svelte/store";
 import { fastForwardMode, state } from "../stores/gameStore";
 
-const normalDuration = 250;
+export const NORMAL_DURATION_MS = 200;
+export const FAST_FORWARD_DURATION_MS = NORMAL_DURATION_MS / 2;
 
-function getTransitionDuration() {
-    return get(fastForwardMode) ? normalDuration / 2 : normalDuration;
+export interface CardTransitionParams {
+    key: string;
+    isPile?: boolean;
 }
 
-export const [svelteSend, svelteReceive] = crossfade({
-    duration: () => getTransitionDuration(),
+type DeferredTransition = (node: Element, params: CardTransitionParams) => TransitionConfig | (() => TransitionConfig);
+
+export function getTransitionDuration() {
+    return get(fastForwardMode) ? FAST_FORWARD_DURATION_MS : NORMAL_DURATION_MS;
+}
+
+let usedFallback = false;
+
+const [svelteSend, svelteReceive] = crossfade({
+    duration: getTransitionDuration,
     easing: cubicOut,
-    fallback(node, params) {
+    fallback(): TransitionConfig {
+        usedFallback = true;
         return {
             duration: getTransitionDuration(),
             css: (t) => `opacity: ${t}; transform: scale(${0.8 + 0.2 * t});`,
@@ -20,55 +32,40 @@ export const [svelteSend, svelteReceive] = crossfade({
     }
 })
 
-export const send = (node: HTMLElement, params: any) => {
-    const result = svelteSend(node, params) as any;
-    if (typeof result === "function") return () => {
-        const obj = result();
-        if (!obj) return obj;
+function withFlightDetection(
+    transition: DeferredTransition,
+    adapt: (config: TransitionConfig, isFlight: boolean, params: CardTransitionParams) => TransitionConfig
+) {
+    return (node: Element, params: CardTransitionParams) => {
+        const result = transition(node, params);
+        if (typeof result !== "function") return adapt(result, false, params);
 
-        const sampleCss = obj.css ? obj.css(0.5, 0.5) : "";
-        const isFlight = sampleCss.includes("translate");
-
-        if (isFlight) return {
-            ...obj,
-            css: () => `opacity: 0; pointer-events: none;`,
-        };
-        else {
-            if (params && params.isPile) {
-                const currState = get(state);
-                const pileIsReset = !currState || !currState.suit_last_move || currState.suit_last_move.length === 0;
-
-                if (!pileIsReset) return {
-                    ...obj,
-                    css: () => `opacity: 1;`,
-                }
-            }
-            return obj;
+        return () => {
+            usedFallback = false;
+            const config = result();
+            return adapt(config, !usedFallback, params);
         }
     }
-    return result;
 }
 
-export const receive = (node: HTMLElement, params: any) => {
-    const result = svelteReceive(node, params) as any;
-    if (typeof result === "function") return () => {
-        const obj = result();
-        if (!obj) return obj;
-
-        const sampleCss = obj.css ? obj.css(0.5, 0.5) : "";
-        const isFlight = sampleCss.includes("translate");
-
-        if (isFlight) {
-            const originalCss = obj.css;
-            return {
-                ...obj,
-                css: (t: number, u: number) => {
-                    const res = originalCss ? originalCss(t, u) : "";
-                    return res.replace(/opacity:\s*[^;]+(;|$)/g, "") + "; opacity: 1;";
-                }
-            }
-        }
-        return obj;
-    }
-    return result;
+function pileIsReset() {
+    const currState = get(state);
+    return !currState?.suit_last_move?.length;
 }
+
+export const send = withFlightDetection(svelteSend, (config, isFlight, params) => {
+    if (isFlight) return { ...config, css: () => `opacity: 0; pointer-events: none;` };
+    if (params.isPile && !pileIsReset()) return { ...config, css: () => `opacity: 1;` };
+    return config;
+});
+
+
+export const receive = withFlightDetection(svelteReceive, (config, isFlight) => {
+    if (!isFlight) return config;
+
+    const { css } = config;
+    return {
+        ...config,
+        css: (t, u) => `${css ? css(t, u) : ""}; opacity: 1;`
+    };
+});

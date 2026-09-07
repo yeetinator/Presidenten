@@ -65,12 +65,9 @@ export interface ExchangePromptMessage {
   can_choose: boolean;
 }
 
-const initialThemeKey =
-  (localStorage.getItem("president_table_theme") as ThemeKey) || "emerald";
+const initialThemeKey = "emerald";
 export const currThemeKey = writable<ThemeKey>(initialThemeKey);
-export const currTheme = writable<TableTheme>(
-  TABLE_THEMES[initialThemeKey] || TABLE_THEMES.emerald,
-);
+export const currTheme = writable<TableTheme>(TABLE_THEMES[initialThemeKey] || TABLE_THEMES.emerald);
 export const logs = writable<string[]>([]);
 export const state = writable<GameStateUpdate | null>(null);
 export const connectionStatus = writable<ConnectionStatus>("disconnected");
@@ -91,9 +88,9 @@ type IncomingWebSocketMessage =
   | RoundOverMessage
   | DealCardsMessage
   | {
-      type: string;
-      [key: string]: unknown;
-    };
+    type: string;
+    [key: string]: unknown;
+  };
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -116,7 +113,6 @@ export function setTheme(key: ThemeKey) {
   if (TABLE_THEMES[key]) {
     currThemeKey.set(key);
     currTheme.set(TABLE_THEMES[key]);
-    localStorage.setItem("president_table_theme", key);
   }
 }
 
@@ -226,7 +222,7 @@ function buildAutoFinishMoves(suitLastMove: string[]) {
     .filter((move): move is string[] => Array.isArray(move));
 }
 
-function isSameMove(left: string[], right: string[]) {
+function arraysEqual(left: string[], right: string[]) {
   if (left.length !== right.length) return false;
   return left.every((value, index) => value === right[index]);
 }
@@ -244,15 +240,13 @@ function getAutoFinishMove(clickedCardValue: string | null = null) {
   const candidateMoves = buildAutoFinishMoves(currState.suit_last_move);
   const legalMoves = candidateMoves.filter((candidateMove) =>
     currState.legal_moves_suits.some((legalMove) =>
-      isSameMove(legalMove, candidateMove),
+      arraysEqual(legalMove, candidateMove),
     ),
   );
 
   if (legalMoves.length === 0) return null;
 
-  if (clickedCardValue !== null) {
-    return legalMoves.find((move) => move.includes(clickedCardValue)) ?? null;
-  }
+  if (clickedCardValue !== null) return legalMoves.find((move) => move.includes(clickedCardValue)) ?? null;
 
   return legalMoves;
 }
@@ -265,10 +259,119 @@ function getHighestSuitCards(suitedHand: string[], count: number) {
   return suitedHand.slice(-count);
 }
 
+function enqueue(action: () => void) {
+  if (get(isAnimating)) stateUpdateQueue.push(action);
+  else action();
+}
+
+function handleSocketMessage(event: MessageEvent<string>) {
+  let payload: IncomingWebSocketMessage;
+  try {
+    payload = JSON.parse(event.data) as IncomingWebSocketMessage;
+  } catch {
+    return;
+  }
+
+  lastMessageType.set(payload.type);
+  switch (payload.type) {
+    case "DEAL_CARDS": {
+      const msg = payload as DealCardsMessage;
+      if (!isGameStateUpdate(msg.state)) return;
+
+      const nextState = msg.state;
+      enqueue(() => {
+        isDealing.set(true);
+        state.set(nextState);
+        clearSelectedCards();
+        clearExchangePrompt();
+        clearJumpInPrompt();
+      });
+      return;
+    }
+
+    case "STATE_UPDATE": {
+      const msg = payload as StateUpdateMessage;
+      if (!isGameStateUpdate(msg.state)) return;
+
+      const nextState = msg.state;
+      const keepJumpIn = msg.clearJump === false;
+      enqueue(() => {
+        state.set(nextState);
+        clearExchangePrompt();
+        if (!keepJumpIn) clearJumpInPrompt();
+      });
+      return;
+    }
+
+    case "JUMP_IN_PROMPT": {
+      const msg = payload as JumpInPromptMessage;
+      if (!isGameStateUpdate(msg.state)) return;
+
+      const nextState = msg.state;
+      const message = typeof msg.message === "string" ? msg.message : "JUMP IN!";
+      enqueue(() => {
+        state.set(nextState);
+        clearJumpInPrompt();
+        jumpInPrompt.set({ message, state: nextState });
+      });
+      return;
+    }
+
+    case "EXCHANGE_PROMPT": {
+      const msg = payload as ExchangePromptMessage;
+      if (
+        !isGameStateUpdate(msg.state) ||
+        typeof msg.required_cards !== "number" ||
+        typeof msg.can_choose !== "boolean"
+      )
+        return;
+
+      const nextState = msg.state;
+      const requiredCards = msg.required_cards;
+      const canChoose = msg.can_choose;
+      enqueue(() => {
+        state.set(nextState);
+        if (!canChoose && requiredCards > 0) selectedCards.set(getHighestSuitCards(nextState.suited_hand, requiredCards));
+
+        exchangePrompt.set({ state: nextState, requiredCards, canChoose });
+      });
+      return;
+    }
+
+    case "ROUND_OVER": {
+      if (!isRoundOverMessage(payload)) return;
+
+      clearJumpInPrompt();
+      clearExchangePrompt();
+      clearFastForwardMode();
+      roundSummary.set({
+        scores: payload.scores,
+        roles: payload.roles,
+        out_order: payload.out_order,
+      });
+      return;
+    }
+
+    case "GAME_LOG":
+    case "LOG_ALERT": {
+      const { message } = payload as { message?: unknown };
+      if (typeof message === "string") logs.update((currLogs) => [...currLogs, message]);
+      return;
+    }
+
+    case "REVEAL_BOT": {
+      const { seat } = payload as { seat?: unknown };
+      if (typeof seat === "number") revealedBotSeat.set(seat);
+      return;
+    }
+
+    default:
+      return;
+  }
+}
+
 function attachSocketListeners(activeSocket: WebSocket) {
-  activeSocket.addEventListener("open", () =>
-    connectionStatus.set("connected"),
-  );
+  activeSocket.addEventListener("open", () => connectionStatus.set("connected"));
   activeSocket.addEventListener("error", () => connectionStatus.set("error"));
   activeSocket.addEventListener("close", () => {
     if (socket === activeSocket) {
@@ -277,105 +380,7 @@ function attachSocketListeners(activeSocket: WebSocket) {
     }
   });
 
-  activeSocket.addEventListener("message", (event: MessageEvent<string>) => {
-    try {
-      const payload = JSON.parse(event.data) as IncomingWebSocketMessage;
-      lastMessageType.set(payload.type);
-
-      if (payload.type === "DEAL_CARDS") {
-        const msg = payload as DealCardsMessage;
-        if (isGameStateUpdate(msg.state)) {
-          const action = () => {
-            isDealing.set(true);
-            state.set(msg.state);
-            clearSelectedCards();
-            clearExchangePrompt();
-            clearJumpInPrompt();
-          };
-          if (get(isAnimating)) stateUpdateQueue.push(action);
-          else action();
-        }
-      }
-
-      if (payload.type === "STATE_UPDATE") {
-        const msg = payload as StateUpdateMessage;
-        if (isGameStateUpdate(msg.state)) {
-          const action = () => {
-            state.set(msg.state);
-            clearExchangePrompt();
-
-            if (msg.clearJump !== false) clearJumpInPrompt();
-          };
-          if (get(isAnimating)) stateUpdateQueue.push(action);
-          else action();
-        }
-      }
-
-      if (payload.type === "JUMP_IN_PROMPT") {
-        const msg = payload as JumpInPromptMessage;
-        if (isGameStateUpdate(msg.state)) {
-          const action = () => {
-            state.set(msg.state);
-            clearJumpInPrompt();
-            jumpInPrompt.set({
-              message:
-                typeof msg.message === "string" ? msg.message : "JUMP IN!",
-              state: msg.state,
-            });
-          };
-          if (get(isAnimating)) stateUpdateQueue.push(action);
-          else action();
-        }
-      }
-
-      if (payload.type === "EXCHANGE_PROMPT") {
-        const msg = payload as ExchangePromptMessage;
-        if (
-          isGameStateUpdate(msg.state) &&
-          typeof msg.required_cards === "number" &&
-          typeof msg.can_choose === "boolean"
-        ) {
-          const action = () => {
-            state.set(msg.state);
-            if (!msg.can_choose && msg.required_cards > 0) {
-              selectedCards.set(
-                getHighestSuitCards(msg.state.suited_hand, msg.required_cards),
-              );
-            }
-            exchangePrompt.set({
-              state: msg.state,
-              requiredCards: msg.required_cards,
-              canChoose: msg.can_choose,
-            });
-          };
-          if (get(isAnimating)) stateUpdateQueue.push(action);
-          else action();
-        }
-      }
-
-      if (isRoundOverMessage(payload)) {
-        clearJumpInPrompt();
-        clearExchangePrompt();
-        clearFastForwardMode();
-        roundSummary.set({
-          scores: payload.scores,
-          roles: payload.roles,
-          out_order: payload.out_order,
-        });
-      }
-
-      if (
-        (payload.type === "GAME_LOG" || payload.type === "LOG_ALERT") &&
-        typeof payload.message === "string"
-      )
-        logs.update((currLogs) => [...currLogs, payload.message as string]);
-
-      if (payload.type === "REVEAL_BOT" && typeof payload.seat === "number")
-        revealedBotSeat.set(payload.seat);
-    } catch {
-      // Ignore malformed payloads; other valid messages keep flowing.
-    }
-  });
+  activeSocket.addEventListener("message", handleSocketMessage);
 }
 
 function connect(url: string) {
@@ -406,8 +411,7 @@ function waitForSocketOpen() {
   return new Promise<void>((resolve, reject) => {
     if (!socket) return reject(new Error("WebSocket is not initialized."));
     if (socket.readyState === WebSocket.OPEN) return resolve();
-    if (socket.readyState !== WebSocket.CONNECTING)
-      return reject(new Error("WebSocket is not connected."));
+    if (socket.readyState !== WebSocket.CONNECTING) return reject(new Error("WebSocket is not connected."));
 
     const handleOpen = () => {
       cleanup();
@@ -483,10 +487,7 @@ async function nextRound() {
 }
 
 async function sendExchangeCards(cards: string[]) {
-  await send({
-    type: "EXCHANGE_CARDS",
-    suits: cards,
-  });
+  await send({ type: "EXCHANGE_CARDS", suits: cards });
 }
 
 async function processQueue() {
@@ -540,4 +541,6 @@ export const gameStore = {
   endAnimation,
   setTheme,
   fastForwardGame,
+  stripSuitCard,
+  arraysEqual,
 };

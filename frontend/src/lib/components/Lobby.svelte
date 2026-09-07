@@ -1,6 +1,10 @@
 <script lang="ts">
   import Rules from "../../assets/Rules.svelte";
-  import { currTheme, setTheme } from "../../stores/gameStore";
+  import {
+    currTheme,
+    setTheme,
+    connectionStatus,
+  } from "../../stores/gameStore";
   import { TABLE_THEMES } from "../themes";
 
   type StartGameConfig = {
@@ -15,22 +19,22 @@
 
   const playerTypeOptions = [
     { value: 0, label: "Human" },
-    { value: 1, label: "Random" },
-    { value: 2, label: "Baseline" },
     { value: 4, label: "DMC" },
+    { value: 2, label: "Baseline" },
+    { value: 1, label: "Random" },
   ] as const;
 
   const defaultNumRounds = 10;
 
   let totalPlayers = 4;
-  let playerTypes: number[] = [1, 1, 1];
+  let playerTypes: number[] = [4, 4, 4];
 
   $: requiredPlayerSlots = totalPlayers - 1;
 
   $: if (playerTypes.length !== requiredPlayerSlots) {
     playerTypes = Array.from(
       { length: requiredPlayerSlots },
-      (_, index) => playerTypes[index] ?? 1,
+      (_, index) => playerTypes[index] ?? 4,
     );
   }
 
@@ -103,6 +107,7 @@
               class="mt-2 rounded-xl px-5 py-3 font-semibold transition hover:opacity-90 active:scale-[0.99]"
               style={`background-color: ${$currTheme.btnBg}; color: ${$currTheme.btnText};`}
               type="button"
+              disabled={$connectionStatus !== "connected"}
               on:click={handleStartGame}
             >
               Start Game

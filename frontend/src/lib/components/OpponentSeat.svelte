@@ -1,20 +1,12 @@
 <script lang="ts">
   import Card from "../../assets/Card.svelte";
-  import { send, receive } from "../../lib/transitions";
+  import { send, receive } from "../transitions";
   import {
     fastForwardMode,
     startAnimation,
     endAnimation,
   } from "../../stores/gameStore";
-
-  type OpponentView = {
-    seat: number;
-    role: string | null;
-    suitedHand: string[];
-    label: string;
-    is_turn: boolean;
-    has_passed: boolean;
-  };
+  import type { OpponentView } from "../types";
 
   export let opponent: OpponentView;
   export let className = "";
