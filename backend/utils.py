@@ -106,16 +106,21 @@ def game_loop(
     bot_class=PresidentDMCBot,
 ):
     env = President(num_players)
-    game_x, game_y = [], []
+    game_x, game_a, game_y = [], [], []
+
+    def _empty():
+        return (
+            np.empty((0, input_dim), dtype=np.float32),
+            np.empty((0,), dtype=np.int64),
+            np.empty((0, 1), dtype=np.float32),
+        )
 
     for round_idx in range(NUM_ROUNDS):
         if not play_round(env, bot_instances, round_idx):
             for bot in bot_instances.values():
                 if isinstance(bot, PresidentDMCBot):
                     bot.trajectory.clear()
-            return np.empty((0, input_dim), dtype=np.float32), np.empty(
-                (0, 1), dtype=np.float32
-            )
+            return _empty()
 
         max_possible_score = env.players - 1
         gamma = 0.997
@@ -127,12 +132,21 @@ def game_loop(
                     round_score = max_possible_score - rank
                     normalized_score = (round_score / max_possible_score) * 2 - 1
 
-                    for i, features in enumerate(reversed(bot.trajectory)):
+                    for i, (features, action_idx) in enumerate(
+                        reversed(bot.trajectory)
+                    ):
                         discounted_score = normalized_score * (gamma**i)
                         game_x.append(features)
+                        game_a.append(action_idx)
                         game_y.append([discounted_score])
                 bot.trajectory.clear()
-    return np.array(game_x, dtype=np.float32), np.array(game_y, dtype=np.float32)
+    if not game_x:
+        return _empty()
+    return (
+        np.array(game_x, dtype=np.float32),
+        np.array(game_a, dtype=np.int64),
+        np.array(game_y, dtype=np.float32),
+    )
 
 
 def eval_game_loop(
@@ -189,12 +203,14 @@ def eval_game_loop(
 
 
 def train_on_batch(
-    all_x, all_y, device, live_model, optimizer, loss_fn, shared_model, scheduler
+    all_x, all_a, all_y, device, live_model, optimizer, loss_fn, shared_model, scheduler
 ):
     merged_x = np.concatenate(all_x, axis=0)
+    merged_a = np.concatenate(all_a, axis=0)
     merged_y = np.concatenate(all_y, axis=0)
 
     x_tensor = torch.from_numpy(merged_x).to(device)
+    a_tensor = torch.from_numpy(merged_a).to(device).unsqueeze(1)
     y_tensor = torch.from_numpy(merged_y).to(device)
 
     dataset_size = x_tensor.size(0)
@@ -207,14 +223,15 @@ def train_on_batch(
 
     for epoch in range(epochs):
         perm = torch.randperm(dataset_size, device=device)
-        x_shuf, y_shuf = x_tensor[perm], y_tensor[perm]
+        x_shuf, a_shuf, y_shuf = x_tensor[perm], a_tensor[perm], y_tensor[perm]
 
         for i in range(0, dataset_size, mini_batch_size):
             batch_x = x_shuf[i : i + mini_batch_size]
+            batch_a = a_shuf[i : i + mini_batch_size]
             batch_y = y_shuf[i : i + mini_batch_size]
 
             optimizer.zero_grad(set_to_none=True)
-            predictions = live_model(batch_x)
+            predictions = live_model(batch_x).gather(1, batch_a)
             loss = loss_fn(predictions, batch_y)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(live_model.parameters(), GRADIENT_CLIP)

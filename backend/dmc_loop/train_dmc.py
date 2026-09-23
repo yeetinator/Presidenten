@@ -146,14 +146,18 @@ def run_training_loop(snapshot_dir="snapshots"):
                 next_tasks = [(epsilon,) for _ in range(BATCH_GAMES)]
                 pending = pool.starmap_async(parallel_worker, next_tasks, chunksize=1)
 
-                all_x, all_y = [], []
-                for x, y in game_data:
+                all_x, all_a, all_y = [], [], []
+                for x, a, y in game_data:
+                    if x.shape[0] == 0:
+                        continue
                     all_x.append(x)
+                    all_a.append(a)
                     all_y.append(y)
 
                 if all_x:
                     avg_loss = train_on_batch(
                         all_x,
+                        all_a,
                         all_y,
                         device,
                         live_model,
