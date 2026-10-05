@@ -11,6 +11,7 @@ from game import President
 NUM_RANKS = 13
 COUNT_BUCKETS = 4
 MAX_PLAYERS = 7
+PASS_CAP = 4.0  # Passes per rank
 ROLE_MAP = {
     "President": 1.0,
     "Vice-President": 0.8,
@@ -24,6 +25,7 @@ ROLE_MAP = {
 HAND_DIM = NUM_RANKS * COUNT_BUCKETS
 HISTORY_DIM = NUM_RANKS
 UNSEEN_DIM = NUM_RANKS * COUNT_BUCKETS
+PASS_PLAYER_DIM = MAX_PLAYERS * NUM_RANKS
 LAST_MOVE_DIM = NUM_RANKS + COUNT_BUCKETS + COUNT_BUCKETS
 OPP_DIM = MAX_PLAYERS
 ROLE_DIM = MAX_PLAYERS
@@ -35,6 +37,7 @@ STATE_DIM = (
     HAND_DIM
     + HISTORY_DIM
     + UNSEEN_DIM
+    + PASS_PLAYER_DIM
     + LAST_MOVE_DIM
     + OPP_DIM
     + ROLE_DIM
@@ -42,12 +45,9 @@ STATE_DIM = (
     + PILE_DIM
     + MISC_DIM
 )
-MOVE_DIM = NUM_RANKS + COUNT_BUCKETS + COUNT_BUCKETS + 1
 INPUT_DIM = STATE_DIM
 
-MASTER_OPP_DIM = (MAX_PLAYERS - 1) * HAND_DIM
-MASTER_VEC_DIM = STATE_DIM + MASTER_OPP_DIM
-MASTER_INPUT_DIM = MASTER_VEC_DIM + MOVE_DIM
+MOVE_DIM = NUM_RANKS + COUNT_BUCKETS + COUNT_BUCKETS + 1
 
 ACTION_MOVES: list[tuple[int, int, int]] = [(0, 0, 0)]
 for _card in range(3, 15):
@@ -56,14 +56,15 @@ for _card in range(3, 15):
             ACTION_MOVES.append((_card, _count, _twos))
 for _count in range(1, COUNT_BUCKETS + 1):
     ACTION_MOVES.append((15, _count, 0))
+
 NUM_ACTIONS = len(ACTION_MOVES)  # 125
 PASS_ACTION = 0
+
 _ACTION_LOOKUP = np.full(16 * 25, -1, dtype=np.int64)
 for _idx, (_c, _n, _t) in enumerate(ACTION_MOVES):
     _ACTION_LOOKUP[_c * 25 + _n * 5 + _t] = _idx
 
 _THERM_ROWS = np.arange(COUNT_BUCKETS, dtype=np.int32).reshape(-1, 1)
-_FEAT_BUF = np.empty((64, INPUT_DIM), dtype=np.float32)
 
 _MOVE_TABLE = np.zeros((16 * 25, MOVE_DIM), dtype=np.float32)
 for card in [0] + list(range(3, 16)):
@@ -78,6 +79,11 @@ for card in [0] + list(range(3, 16)):
                 v[NUM_RANKS + COUNT_BUCKETS : NUM_RANKS + COUNT_BUCKETS + twos] = 1.0
 
 
+MASTER_OPP_DIM = (MAX_PLAYERS - 1) * HAND_DIM
+MASTER_VEC_DIM = STATE_DIM + MASTER_OPP_DIM
+MASTER_INPUT_DIM = MASTER_VEC_DIM + MOVE_DIM
+
+
 def action_indices(moves) -> np.ndarray:
     return _ACTION_LOOKUP[[c * 25 + n * 5 + t for c, n, t in moves]]
 
@@ -86,10 +92,6 @@ def to_thermometer(counts):
     c = np.asarray(counts, dtype=np.int32)
     matrix = (_THERM_ROWS < c[None, :]).astype(np.float32)
     return matrix.ravel()
-
-
-def vectorize_moves(moves):
-    return _MOVE_TABLE[[c * 25 + n * 5 + t for c, n, t in moves]]
 
 
 def vectorize_hand_state(hand, history_vector):
@@ -105,11 +107,27 @@ def vectorize_hand_state(hand, history_vector):
     return hand_vector, unseen_vector
 
 
+def _seat_relative_matrix(rows, num_players, my_id, scale, cap=None):
+    matrix = np.full((MAX_PLAYERS, NUM_RANKS), -1.0, dtype=np.float32)
+    for i in range(num_players):
+        matrix[i] = rows[(my_id + i) % num_players]
+
+    live = matrix[:num_players]
+    if cap is not None:
+        np.clip(live, 0.0, cap, out=live)
+    live /= scale
+    return matrix
+
+
 def vectorize_invariant_state(state, num_players=4, my_id=0):
     opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
     state_player_roles: dict[int, str] = state["player_roles"]
 
     history_vector = np.array(state["history_vector"], dtype=np.float32) / COUNT_BUCKETS
+
+    pass_player_vector = _seat_relative_matrix(
+        state["passed_by_player"], num_players, my_id, PASS_CAP, cap=PASS_CAP
+    ).ravel()
 
     p_card, p_count, p_twos = state["last_move"]
     last_move_vector = _MOVE_TABLE[p_card * 25 + p_count * 5 + p_twos, :LAST_MOVE_DIM]
@@ -164,6 +182,7 @@ def vectorize_invariant_state(state, num_players=4, my_id=0):
 
     return {
         "history_vector": history_vector,
+        "pass_player_vector": pass_player_vector,
         "last_move_vector": last_move_vector,
         "opp_vector": opp_vector,
         "role_vector": role_vector,
@@ -176,6 +195,7 @@ def vectorize_invariant_state(state, num_players=4, my_id=0):
 def invariant_tail(inv, opp_vector):
     return np.concatenate(
         [
+            inv["pass_player_vector"],
             inv["last_move_vector"],
             opp_vector,
             inv["role_vector"],

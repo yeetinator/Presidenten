@@ -30,6 +30,9 @@ class President:
 
         self.history = []  # [(P_id, move), ...]
         self._history_flat_counts = [0] * 16  # Count of each card played
+        self._passed_by_player = [
+            [0] * 16 for _ in range(players)
+        ]  # Count of each card passed by each player
         self.last_move = (0, 0, 0)  # (card_value, count, twos_used)
         self.pile = []  # Cards currently on the pile
         self.was_pile_reset = False
@@ -264,6 +267,7 @@ class President:
 
         self.history = []
         self._history_flat_counts = [0] * 16
+        self._passed_by_player = [[0] * 16 for _ in range(self.players)]
         self.last_move = (0, 0, 0)
         self.pile = []
         self.was_pile_reset = False
@@ -284,7 +288,11 @@ class President:
 
     def _record_history_move(self, p_id, move):
         self.history.append((p_id, move))
-        if move != (0, 0, 0):
+        if move == (0, 0, 0):
+            pile_card = self.last_move[0]
+            if pile_card:
+                self._passed_by_player[p_id][pile_card] += 1
+        else:
             card_val, count, twos = move
             self._history_flat_counts[card_val] += count - twos
             self._history_flat_counts[15] += twos
@@ -313,6 +321,9 @@ class President:
             "clubs_3_holder": self.clubs_3_holder,
             "player_roles": self.roles.copy(),
             "history_vector": self._history_flat_counts[3:],
+            "passed_by_player": [
+                self._passed_by_player[p][3:] for p in range(self.players)
+            ],
             "is_finish_prompt": bool(
                 self.pending_finish and self.pending_finish["queue"][0][2] == p_id
             ),
