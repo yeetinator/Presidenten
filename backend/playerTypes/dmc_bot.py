@@ -6,7 +6,6 @@ import itertools
 import math
 from .player import Player
 from .baseline_bot import PresidentBaselineBot
-from game import President
 
 NUM_RANKS = 13
 COUNT_BUCKETS = 4
@@ -79,11 +78,6 @@ for card in [0] + list(range(3, 16)):
                 v[NUM_RANKS + COUNT_BUCKETS : NUM_RANKS + COUNT_BUCKETS + twos] = 1.0
 
 
-MASTER_OPP_DIM = (MAX_PLAYERS - 1) * HAND_DIM
-MASTER_VEC_DIM = STATE_DIM + MASTER_OPP_DIM
-MASTER_INPUT_DIM = MASTER_VEC_DIM + MOVE_DIM
-
-
 def action_indices(moves) -> np.ndarray:
     return _ACTION_LOOKUP[[c * 25 + n * 5 + t for c, n, t in moves]]
 
@@ -119,9 +113,10 @@ def _seat_relative_matrix(rows, num_players, my_id, scale, cap=None):
     return matrix
 
 
-def vectorize_invariant_state(state, num_players=4, my_id=0):
+def vectorize_invariant_state(state, my_id=0):
     opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
     state_player_roles: dict[int, str] = state["player_roles"]
+    num_players = len(opp_hand_counts) + 1
 
     history_vector = np.array(state["history_vector"], dtype=np.float32) / COUNT_BUCKETS
 
@@ -206,9 +201,9 @@ def invariant_tail(inv, opp_vector):
     ).astype(np.float32)
 
 
-def vectorize_state(state, num_players=4, my_id=0):
+def vectorize_state(state, my_id=0):
     hand_vec, unseen_vec = vectorize_hand_state(state["hand"], state["history_vector"])
-    inv = vectorize_invariant_state(state, num_players, my_id)
+    inv = vectorize_invariant_state(state, my_id)
     opp_vec = np.concatenate(
         [[float(len(state["hand"])) / NUM_RANKS], inv["opp_vector"]]
     )
@@ -266,9 +261,6 @@ class PresidentDMCBot(Player):
         self.n_explored = 0
         self.q_gap_sum = 0.0
 
-    def vectorize_state(self, state: dict, *args, **kwargs):
-        return vectorize_state(state, len(state["opp_hand_counts"]) + 1, self.player_id)
-
     def _q_values(self, state_vec: np.ndarray) -> np.ndarray:
         tensor = torch.from_numpy(state_vec).unsqueeze(0).to(self.device)
         with torch.no_grad():
@@ -281,7 +273,7 @@ class PresidentDMCBot(Player):
         if len(legal_moves) == 1:
             return legal_moves[0]
 
-        state_vec = self.vectorize_state(state, env=kwargs.get("env", None))
+        state_vec = vectorize_state(state, self.player_id)
         legal_idx = action_indices(legal_moves)
         q_legal = self._q_values(state_vec)[legal_idx]
 
@@ -295,6 +287,7 @@ class PresidentDMCBot(Player):
         if self.training and self.temperature > 0:
             choice = self._boltzmann_sample(q_legal)
             self.n_decisions += 1
+
             if choice != greedy:
                 self.n_explored += 1
                 self.q_gap_sum += float(q_legal[greedy] - q_legal[choice])
@@ -355,8 +348,7 @@ class PresidentDMCBot(Player):
             base_counts[c - 3] += 1
 
         history_counts = np.array(state["history_vector"], dtype=np.int32)
-        num_players = len(state["opp_hand_counts"]) + 1
-        inv = vectorize_invariant_state(state, num_players, self.player_id)
+        inv = vectorize_invariant_state(state, self.player_id)
 
         hypo_hand_count_norm = float(len(hand) - count) / 13.0
         opp_vec = np.concatenate([[hypo_hand_count_norm], inv["opp_vector"]])
@@ -417,104 +409,3 @@ class PresidentDMCBot(Player):
                 best_value = top_k_avg
                 best_pass = possible_passes[combo_idx]
         return list(best_pass) if best_pass else []
-
-
-def vectorize_master_state(state, num_players, env: President):
-    student_vec = vectorize_state(state, num_players)
-    my_id = [p for p in range(num_players) if p not in state["opp_hand_counts"]][0]
-    MAX_PLAYERS = 7
-    opp_hands_matrix = np.full((MAX_PLAYERS - 1, HAND_DIM), -1.0, dtype=np.float32)
-
-    for i in range(1, MAX_PLAYERS):
-        slot = i - 1
-        if i < num_players:
-            opp_id = (my_id + i) % num_players
-            opp_counts = np.zeros(NUM_RANKS, dtype=np.int32)
-
-            for card in env.hands[opp_id]:
-                opp_counts[card - 3] += 1
-            opp_hand_vector = to_thermometer(opp_counts)
-            opp_hands_matrix[slot, :] = opp_hand_vector
-
-    opp_hands_vec = opp_hands_matrix.flatten()  # 312
-    return np.concatenate([student_vec, opp_hands_vec])
-
-
-def vectorize_move(move):
-    action_vector = np.zeros(MOVE_DIM, dtype=np.float32)
-    m_card, m_count, m_twos = move
-    if m_card == 0:
-        action_vector[MOVE_DIM - 1] = 1.0
-    else:
-        action_vector[m_card - 3] = 1.0
-        action_vector[NUM_RANKS : NUM_RANKS + m_count] = 1.0
-        action_vector[
-            NUM_RANKS + COUNT_BUCKETS : NUM_RANKS + COUNT_BUCKETS + m_twos
-        ] = 1.0
-    return action_vector
-
-
-class MasterValueNet(nn.Module):
-    def __init__(self, input_dim=MASTER_INPUT_DIM):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 1024),
-            nn.LayerNorm(1024),
-            nn.LeakyReLU(0.1),
-            nn.Linear(1024, 512),
-            nn.LayerNorm(512),
-            nn.LeakyReLU(0.1),
-            nn.Linear(512, 512),
-            nn.LeakyReLU(0.1),
-            nn.Linear(512, 1),
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-
-class MasterDMCBot(PresidentDMCBot):
-    def vectorize_state(self, state: dict, env: President | None = None):
-        if env is None:
-            num_players = len(state["opp_hand_counts"]) + 1
-            return vectorize_state(state, num_players)
-        return vectorize_master_state(state, env.players, env)
-
-
-class StudentDMCBot(PresidentDMCBot):
-    def __init__(
-        self,
-        player_id,
-        model,
-        device,
-        training=False,
-        epsilon=0.2,
-        profile=None,
-        master_model=None,
-    ):
-        super().__init__(player_id, model, device, training, epsilon, profile)
-        self.master_model = master_model
-        self.master_trajectory = []
-
-    def get_move(self, state, env=None, *args, **kwargs) -> tuple[int, int, int]:
-        traj_len_before = len(self.trajectory)
-        chosen_move = super().get_move(state)
-
-        if (
-            self.training
-            and self.master_model is not None
-            and env is not None
-            and len(self.trajectory) > traj_len_before
-        ):
-            master_state_vec = vectorize_master_state(state, env.players, env)
-            master_feat = np.concatenate(
-                [master_state_vec, vectorize_move(chosen_move)]
-            )
-
-            with torch.no_grad():
-                master_q = self.master_model(
-                    torch.FloatTensor(master_feat).unsqueeze(0)
-                ).item()
-            master_q = max(-1.0, min(1.0, master_q))
-            self.master_trajectory.append(master_q)
-        return chosen_move
