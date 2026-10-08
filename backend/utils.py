@@ -251,7 +251,6 @@ def save_snapshot(
     live_model,
     optimizer,
     scheduler,
-    epsilon,
     resume_path,
     milestone: int | None = None,
 ):
@@ -261,7 +260,6 @@ def save_snapshot(
         "model_state_dict": live_model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
-        "epsilon": epsilon,
     }
     torch.save(checkpoint, snapshot_path)
     torch.save(checkpoint, resume_path)

@@ -251,7 +251,7 @@ class PresidentDMCBot(Player):
         model: PresidentValueNet,
         device,
         training=False,
-        epsilon=0.2,
+        temperature=0.05,
         profile=None,
     ):
         self.player_id = player_id
@@ -259,8 +259,12 @@ class PresidentDMCBot(Player):
         self.device = device
         self.trajectory = []
         self.training = training
-        self.epsilon = epsilon
+        self.temperature = temperature
         self.profile = profile
+
+        self.n_decisions = 0
+        self.n_explored = 0
+        self.q_gap_sum = 0.0
 
     def vectorize_state(self, state: dict, *args, **kwargs):
         return vectorize_state(state, len(state["opp_hand_counts"]) + 1, self.player_id)
@@ -279,24 +283,33 @@ class PresidentDMCBot(Player):
 
         state_vec = self.vectorize_state(state, env=kwargs.get("env", None))
         legal_idx = action_indices(legal_moves)
+        q_legal = self._q_values(state_vec)[legal_idx]
 
-        if self.training and random.random() < self.epsilon:
-            choice = random.randrange(len(legal_moves))
+        if self.profile == "aggressive":
+            non_pass = legal_idx != PASS_ACTION
+            if non_pass.any():
+                q_legal = np.where(non_pass, q_legal, -np.inf)
+
+        greedy = int(np.argmax(q_legal))
+
+        if self.training and self.temperature > 0:
+            choice = self._boltzmann_sample(q_legal)
+            self.n_decisions += 1
+            if choice != greedy:
+                self.n_explored += 1
+                self.q_gap_sum += float(q_legal[greedy] - q_legal[choice])
         else:
-            q_legal = self._q_values(state_vec)[legal_idx]
-            if self.profile == "aggressive":
-                non_pass = np.fromiter(
-                    (m != (0, 0, 0) for m in legal_moves),
-                    dtype=bool,
-                    count=len(legal_moves),
-                )
-                if non_pass.any():
-                    q_legal = np.where(non_pass, q_legal, -np.inf)
-            choice = int(np.argmax(q_legal))
+            choice = greedy
 
         if self.training:
             self.trajectory.append((state_vec, int(legal_idx[choice])))
         return legal_moves[choice]
+
+    def _boltzmann_sample(self, q_legal: np.ndarray) -> int:
+        weights = np.exp((q_legal - q_legal.max()) / self.temperature)
+        cdf = np.cumsum(weights)
+        idx = int(np.searchsorted(cdf, random.random() * cdf[-1], side="right"))
+        return min(idx, len(weights) - 1)
 
     def choose_cards_to_pass(self, state: dict) -> list[int]:
         if not state["my_role"] in {"President", "Vice-President", "Secretary"}:

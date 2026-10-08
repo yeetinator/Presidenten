@@ -26,6 +26,10 @@ MILESTONE_SNAPSHOT_EVERY = 5000
 LEARNING_RATE = 1e-4
 NUM_WORKERS = 12
 
+TEMP_START = 0.05
+TEMP_END = 0.01
+TEMP_DECAY_BATCHES = 20000
+
 _TRACED_LIVE_MODEL = None
 _ELITE_SNAPSHOTS = []
 
@@ -46,23 +50,29 @@ def init_train_worker(shared_model, elite_snapshots):
         _TRACED_LIVE_MODEL = torch.jit.trace(shared_model, example)
 
 
-def parallel_worker(epsilon):
+def get_temperature(batch_idx):
+    frac = min(batch_idx / TEMP_DECAY_BATCHES, 1.0)
+    return TEMP_START * (TEMP_END / TEMP_START) ** frac
+
+
+def parallel_worker(temperature):
+    """Run a single game in a separate process and return the training data."""
     return run_single_game(
-        _TRACED_LIVE_MODEL, torch.device("cpu"), epsilon, _ELITE_SNAPSHOTS
+        _TRACED_LIVE_MODEL, torch.device("cpu"), temperature, _ELITE_SNAPSHOTS
     )
 
 
-def run_single_game(live_model, device, epsilon, elite_snapshots=None):
+def run_single_game(live_model, device, temperature, elite_snapshots=None):
     num_players = random.randint(4, 7)
     bot_instances: dict[int, Player] = {
-        0: PresidentDMCBot(0, live_model, device, True, epsilon)
+        0: PresidentDMCBot(0, live_model, device, True, temperature)
     }
 
     for seat in range(1, num_players):
         roll = random.random()
         if roll < 0.65:
             bot_instances[seat] = PresidentDMCBot(
-                seat, live_model, device, True, epsilon
+                seat, live_model, device, True, temperature
             )
         elif roll < 0.80 and elite_snapshots:
             snap_path = random.choice(elite_snapshots)
@@ -76,7 +86,20 @@ def run_single_game(live_model, device, epsilon, elite_snapshots=None):
             )
         else:
             bot_instances[seat] = PresidentBaselineBot(seat)
-    return game_loop(num_players, bot_instances, live_model)
+
+    x, a, y = game_loop(num_players, bot_instances, live_model)
+    learners = [
+        bot
+        for bot in bot_instances.values()
+        if isinstance(bot, PresidentDMCBot) and bot.training
+    ]
+    stats = (
+        sum(b.n_decisions for b in learners),
+        sum(b.n_explored for b in learners),
+        sum(b.q_gap_sum for b in learners),
+    )
+
+    return x, a, y, stats
 
 
 def run_training_loop(snapshot_dir="snapshots"):
@@ -105,10 +128,8 @@ def run_training_loop(snapshot_dir="snapshots"):
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         batch_idx = checkpoint["batch_idx"]
-        epsilon = checkpoint["epsilon"]
     else:
         batch_idx = 0
-        epsilon = 0.2
 
     print("Starting training loop. Press Ctrl+C to stop and save the model.")
     max_batches = 0 if batch_idx == 0 else batch_idx % 2000
@@ -116,6 +137,8 @@ def run_training_loop(snapshot_dir="snapshots"):
     rollout_times = []
     train_times = []
     iter_times = []
+    n_decisions = n_explored = 0
+    q_gap_sum = 0.0
     elite_snapshots = glob.glob(os.path.join(snapshot_dir, "elites/model_gen_*.pt"))
 
     with ctx.Pool(
@@ -124,14 +147,15 @@ def run_training_loop(snapshot_dir="snapshots"):
         initargs=(shared_model, elite_snapshots),
     ) as pool:
         try:
-            tasks = [(epsilon,) for _ in range(BATCH_GAMES)]
+            temperature = get_temperature(batch_idx)
+            tasks = [(temperature,) for _ in range(BATCH_GAMES)]
             pending = pool.starmap_async(parallel_worker, tasks, chunksize=1)
 
             while max_batches < 2000:
                 t_iter_start = time.perf_counter()
                 batch_idx += 1
                 max_batches += 1
-                epsilon = max(0.02, epsilon * 0.9997)
+                temperature = get_temperature(batch_idx)
 
                 try:
                     t0 = time.perf_counter()
@@ -139,17 +163,22 @@ def run_training_loop(snapshot_dir="snapshots"):
                     t1 = time.perf_counter()
                 except mp.TimeoutError:
                     print(f"\nBatch {batch_idx} timed out.")
-                    tasks = [(epsilon,) for _ in range(BATCH_GAMES)]
+                    tasks = [(temperature,) for _ in range(BATCH_GAMES)]
                     pending = pool.starmap_async(parallel_worker, tasks, chunksize=1)
                     continue
 
-                next_tasks = [(epsilon,) for _ in range(BATCH_GAMES)]
+                next_tasks = [(temperature,) for _ in range(BATCH_GAMES)]
                 pending = pool.starmap_async(parallel_worker, next_tasks, chunksize=1)
 
                 all_x, all_a, all_y = [], [], []
-                for x, a, y in game_data:
+                for x, a, y, (dec, expl, gap) in game_data:
+                    n_decisions += dec
+                    n_explored += expl
+                    q_gap_sum += gap
+
                     if x.shape[0] == 0:
                         continue
+
                     all_x.append(x)
                     all_a.append(a)
                     all_y.append(y)
@@ -177,11 +206,15 @@ def run_training_loop(snapshot_dir="snapshots"):
                         avg_train = np.mean(train_times)
                         avg_iter = np.mean(iter_times) if iter_times else 0.0
                         train_share = (avg_train / (avg_rollout + avg_train)) * 100
+                        explore_pct = 100.0 * n_explored / max(n_decisions, 1)
+                        mean_gap = q_gap_sum / max(n_explored, 1)
 
                         print(
                             f"=========================================================================\n"
                             f"BATCH {batch_idx:<5} | Rolling Loss: {rolling_loss:.6f} | "
-                            f"LR: {scheduler.get_last_lr()[0]:.6f} | Epsilon: {epsilon:.4f}\n"
+                            f"LR: {scheduler.get_last_lr()[0]:.6f} | Temp: {temperature:.4f}\n"
+                            f"Explored: {explore_pct:.1f}% of decisions | "
+                            f"Mean Q-Gap when exploring: {mean_gap:.4f}\n"
                             f"Rollout: {avg_rollout:.2f}s | Train: {avg_train:.2f}s | "
                             f"Train Share: {train_share:.1f}% | Iter: {avg_iter:.2f}s\n"
                             f"========================================================================="
@@ -190,6 +223,8 @@ def run_training_loop(snapshot_dir="snapshots"):
                         rollout_times.clear()
                         train_times.clear()
                         iter_times.clear()
+                        n_decisions = n_explored = 0
+                        q_gap_sum = 0.0
                 else:
                     print(f"Batch {batch_idx}: No training data collected.")
 
@@ -200,7 +235,6 @@ def run_training_loop(snapshot_dir="snapshots"):
                         live_model,
                         optimizer,
                         scheduler,
-                        epsilon,
                         resume_path,
                         MILESTONE_SNAPSHOT_EVERY,
                     )
