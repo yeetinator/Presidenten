@@ -30,6 +30,8 @@ TEMP_START = 0.05
 TEMP_END = 0.01
 TEMP_DECAY_BATCHES = 20000
 
+RECORD_ELITES = True
+
 _TRACED_LIVE_MODEL = None
 _ELITE_SNAPSHOTS = []
 
@@ -65,33 +67,45 @@ def parallel_worker(temperature):
 def run_single_game(live_model, device, temperature, elite_snapshots=None):
     num_players = random.randint(4, 7)
     bot_instances: dict[int, Player] = {
-        0: PresidentDMCBot(0, live_model, device, True, temperature)
+        0: PresidentDMCBot(
+            player_id=0,
+            model=live_model,
+            device=device,
+            explore=True,
+            temperature=temperature,
+        )
     }
 
     for seat in range(1, num_players):
         roll = random.random()
         if roll < 0.65:
             bot_instances[seat] = PresidentDMCBot(
-                seat, live_model, device, True, temperature
+                player_id=seat,
+                model=live_model,
+                device=device,
+                explore=True,
+                temperature=temperature,
             )
         elif roll < 0.80 and elite_snapshots:
             snap_path = random.choice(elite_snapshots)
             snap_model = get_cached_traced_model(snap_path, PresidentValueNet)
-            bot_instances[seat] = PresidentDMCBot(seat, snap_model, device)
+            bot_instances[seat] = PresidentDMCBot(
+                player_id=seat, model=snap_model, device=device, record=RECORD_ELITES
+            )
         elif roll < 0.90 and elite_snapshots:
             snap_path = random.choice(elite_snapshots)
             snap_model = get_cached_traced_model(snap_path, PresidentValueNet)
             bot_instances[seat] = PresidentDMCBot(
-                seat, snap_model, device, profile="aggressive"
+                player_id=seat, model=snap_model, device=device, profile="aggressive"
             )
         else:
             bot_instances[seat] = PresidentBaselineBot(seat)
 
     x, a, y = game_loop(num_players, bot_instances, live_model)
     learners = [
-        bot
-        for bot in bot_instances.values()
-        if isinstance(bot, PresidentDMCBot) and bot.training
+        b
+        for b in bot_instances.values()
+        if isinstance(b, PresidentDMCBot) and b.explore
     ]
     stats = (
         sum(b.n_decisions for b in learners),

@@ -128,7 +128,7 @@ def game_loop(
         for rank, p_id in enumerate(env.out_order):
             bot = bot_instances[p_id]
             if isinstance(bot, bot_class):
-                if bot.training and len(bot.trajectory) > 0 and bot.model == live_model:
+                if bot.record and len(bot.trajectory) > 0:
                     round_score = max_possible_score - rank
                     normalized_score = (round_score / max_possible_score) * 2 - 1
 
@@ -518,7 +518,7 @@ def get_stratified_milestones(snapshot_dir, max_milestones=5):
 def should_stop_training(
     snapshot_dir,
     gen_cycle,
-    patience=8,
+    patience=6,
     min_delta=3.0,
     smoothing_window=3,
     min_cycles=16,

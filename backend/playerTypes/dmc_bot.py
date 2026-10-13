@@ -245,15 +245,24 @@ class PresidentDMCBot(Player):
         player_id,
         model: PresidentValueNet,
         device,
-        training=False,
+        explore=False,
         temperature=0.05,
         profile=None,
+        record=None,
     ):
+        if record is None:
+            record = explore
+        if record and profile is not None:
+            raise ValueError(
+                "Bots with an enabled profile must not record trajectories."
+            )
+
         self.player_id = player_id
         self.model = model.to(device)
         self.device = device
         self.trajectory = []
-        self.training = training
+        self.explore = explore
+        self.record = record
         self.temperature = temperature
         self.profile = profile
 
@@ -284,7 +293,7 @@ class PresidentDMCBot(Player):
 
         greedy = int(np.argmax(q_legal))
 
-        if self.training and self.temperature > 0:
+        if self.explore and self.temperature > 0:
             choice = self._boltzmann_sample(q_legal)
             self.n_decisions += 1
 
@@ -294,7 +303,7 @@ class PresidentDMCBot(Player):
         else:
             choice = greedy
 
-        if self.training:
+        if self.record:
             self.trajectory.append((state_vec, int(legal_idx[choice])))
         return legal_moves[choice]
 
