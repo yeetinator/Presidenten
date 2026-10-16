@@ -1,0 +1,219 @@
+import os
+import json
+import torch
+import shutil
+import glob
+import sys
+import subprocess
+import time
+from .head_to_head import run_h2h, format_h2h
+
+STOP_CHECK_EVERY = 3
+STOP_CHECK_GAMES = 1200
+STOP_PATIENCE = 2
+STOP_MIN_CYCLES = 15
+
+
+def _best_of_cycle(snapshot_dir, gen_cycle):
+    json_path = f"{snapshot_dir}/evals/evaluation_results_{gen_cycle}.json"
+    if not os.path.exists(json_path):
+        return None
+    with open(json_path) as f:
+        results = json.load(f)
+    return results[0] if results else None
+
+
+def save_benchmark_ref(snapshot_dir, gen_cycle):
+    best = _best_of_cycle(snapshot_dir, gen_cycle)
+    if best is None:
+        return None
+    src = f"{snapshot_dir}/elites/model_gen_{best['batch']}.pt"
+    if not os.path.exists(src):
+        return None
+
+    os.makedirs(f"{snapshot_dir}/bench_refs", exist_ok=True)
+    dst = f"{snapshot_dir}/bench_refs/cycle_{gen_cycle}.pt"
+    checkpoint = torch.load(src, map_location="cpu")
+    torch.save(
+        {
+            "batch_idx": checkpoint["batch_idx"],
+            "model_state_dict": checkpoint["model_state_dict"],
+        },
+        dst,
+    )
+    return dst
+
+
+def _load_stop_check(snapshot_dir, gen_cycle):
+    path = f"{snapshot_dir}/evals/stop_check_{gen_cycle}.json"
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+def should_stop_training(
+    snapshot_dir,
+    gen_cycle,
+    check_every=STOP_CHECK_EVERY,
+    games=STOP_CHECK_GAMES,
+    patience=STOP_PATIENCE,
+    min_cycles=STOP_MIN_CYCLES,
+):
+    if gen_cycle % check_every != 0:
+        return False
+
+    cur_ref = save_benchmark_ref(snapshot_dir, gen_cycle)
+    prev_cycle = gen_cycle - check_every
+    prev_ref = f"{snapshot_dir}/bench_refs/cycle_{prev_cycle}.pt"
+    if cur_ref is None or not os.path.exists(prev_ref):
+        print(f"  [stop check] Cycle {gen_cycle}: no reference pair yet, skipped.")
+        return False
+
+    cur_batch = torch.load(cur_ref, map_location="cpu")["batch_idx"]
+    prev_batch = torch.load(prev_ref, map_location="cpu")["batch_idx"]
+
+    if cur_batch == prev_batch:
+        summary = None
+        improved = False
+        report = f" Best elite unchanged since cycle {prev_cycle} (batch {cur_batch})."
+    else:
+        print(
+            f"  [stop check] Cycle {gen_cycle}: batch {cur_batch} vs batch "
+            f"{prev_batch} ({games} games)..."
+        )
+        summary = run_h2h(cur_ref, prev_ref, games, progress_every=0)
+        improved = summary["ci_lo"] > 0
+        report = format_h2h(summary)
+
+    streak = 0 if improved else 1
+    c = prev_cycle
+    while not improved:
+        record = _load_stop_check(snapshot_dir, c)
+        if record is None or record["improved"]:
+            break
+        streak += 1
+        c -= check_every
+
+    stop = gen_cycle >= min_cycles and streak >= patience
+    decision = (
+        f" Cycle {gen_cycle}: batch {cur_batch} vs {prev_batch} -> "
+        f"{'IMPROVED' if improved else 'no significant improvement'} | "
+        f"streak {streak}/{patience} | {'STOP' if stop else 'continue'}"
+    )
+
+    os.makedirs(f"{snapshot_dir}/evals", exist_ok=True)
+    with open(f"{snapshot_dir}/evals/stop_check_{gen_cycle}.json", "w") as f:
+        json.dump(
+            {
+                "cycle": gen_cycle,
+                "current_batch": cur_batch,
+                "reference_batch": prev_batch,
+                "improved": improved,
+                "streak": streak,
+                "stop": stop,
+                "summary": summary,
+            },
+            f,
+            indent=4,
+        )
+    with open(f"{snapshot_dir}/evals/stop_checks.log", "a") as f:
+        f.write(f"\n### STOP CHECK, CYCLE {gen_cycle} ###\n{report}\n{decision}\n")
+
+    print(report)
+    print(f"  [stop check]{decision}")
+    return stop
+
+
+def manage_league_files(snapshot_dir, gen_cycle=None):
+    print("\n================ MANAGING LEAGUE POOL ================")
+
+    json_path = f"{snapshot_dir}/evals/evaluation_results_{gen_cycle}.json"
+    if not os.path.exists(json_path):
+        print(f"Error: {json_path} not found. Skipping league management.")
+        return
+
+    with open(json_path, "r") as f:
+        results = json.load(f)
+
+    if not results:
+        print("Error: No evaluation results found. Skipping league management.")
+        return
+
+    os.makedirs(f"{snapshot_dir}/elites", exist_ok=True)
+    temp_dir = f"{snapshot_dir}/tmp"
+    os.makedirs(temp_dir, exist_ok=True)
+
+    top_8 = results[:8]
+    print("Staging top 8 models")
+
+    for rank, res in enumerate(top_8, start=1):
+        batch = res["batch"]
+        src_path = res["path"]
+
+        if os.path.exists(src_path):
+            shutil.copy2(src_path, f"{temp_dir}/elite_model_{batch}.pt")
+            print(f"  -> Rank {rank}: Batch {batch:<5} staged (Elo: {res['elo']:.2f})")
+
+    print(f"Purging old files")
+    for old_file in glob.glob(f"{snapshot_dir}/elites/model_gen_*.pt"):
+        os.remove(old_file)
+
+    for snap in glob.glob(f"{snapshot_dir}/model_gen_*.pt"):
+        os.remove(snap)
+
+    print("Committing staged files")
+    for staged_elite in glob.glob(f"{temp_dir}/elite_model_*.pt"):
+        batch = staged_elite.split("_")[-1].split(".")[0]
+        shutil.move(staged_elite, f"{snapshot_dir}/elites/model_gen_{batch}.pt")
+
+    shutil.rmtree(temp_dir)
+    print("League management completed.")
+
+
+def run_step(module_name, args=None, dir_name=None):
+    print(f"\n================ LAUNCHING {module_name.upper()} ================")
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    folder_name = dir_name if dir_name else os.path.basename(backend_dir)
+    module_path = f"{folder_name}.{module_name}"
+
+    cmd = [sys.executable, "-m", module_path]
+    if args:
+        cmd.extend(args)
+
+    result = subprocess.run(cmd, capture_output=False, text=True, cwd=backend_dir)
+    if result.returncode != 0:
+        print(f"Error: {module_name} failed with return code {result.returncode}.")
+        return False
+    return True
+
+
+def get_resume_cycle(snapshot_dir):
+    resume_path = f"{snapshot_dir}/latest_model.pt"
+    if os.path.exists(resume_path):
+        try:
+            checkpoint = torch.load(resume_path, map_location=torch.device("cpu"))
+            batch_idx = checkpoint.get("batch_idx", 0)
+            return (batch_idx // 2000) + 1
+        except Exception as e:
+            print(f"Error loading checkpoint from {resume_path}: {e}")
+    return 1
+
+
+def run_orchestrator(snapshot_dir, train_script, evaluate_script, dir_name):
+    gen_cycle = get_resume_cycle(snapshot_dir)
+    while True:
+        print(f"\n=== STARTING LEAGUE GENERATION CYCLE {gen_cycle} ===")
+        if not run_step(train_script, dir_name=dir_name):
+            break
+        if not run_step(evaluate_script, [str(gen_cycle)], dir_name):
+            break
+
+        manage_league_files(snapshot_dir, gen_cycle)
+
+        if should_stop_training(snapshot_dir, gen_cycle):
+            print("Training has plateaued.")
+            break
+
+        gen_cycle += 1
+        time.sleep(5)
