@@ -12,13 +12,9 @@ import torch.multiprocessing as mp
 from playerTypes.player import Player
 from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
-from utils import (
-    get_cached_traced_model,
-    game_loop,
-    train_on_batch,
-    save_snapshot,
-    handle_keyboard_interrupt,
-)
+from utils.common import get_cached_traced_model
+from utils.gameplay import game_loop
+from utils.training import train_on_batch, save_snapshot, handle_keyboard_interrupt
 
 BATCH_GAMES = 60
 SAVE_SNAPSHOT_EVERY = 250
@@ -101,7 +97,7 @@ def run_single_game(live_model, device, temperature, elite_snapshots=None):
         else:
             bot_instances[seat] = PresidentBaselineBot(seat)
 
-    x, a, y = game_loop(num_players, bot_instances, live_model)
+    x, a, y = game_loop(num_players, bot_instances)
     learners = [
         b
         for b in bot_instances.values()

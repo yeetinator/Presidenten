@@ -1,4 +1,4 @@
-from utils import run_orchestrator
+from utils.orchestrator import run_orchestrator
 
 
 def main():

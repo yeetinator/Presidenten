@@ -1,5 +1,5 @@
 from playerTypes.dmc_bot import PresidentValueNet, PresidentDMCBot
-from utils import run_evaluation
+from utils.elo import run_evaluation
 
 
 def main():
