@@ -258,7 +258,13 @@ class PresidentDMCBot(Player):
             )
 
         self.player_id = player_id
-        self.model = model.to(device)
+        # .to() walks every submodule: skip it when the
+        # weights are already on the target device
+        first_param = next(model.parameters(), None)
+        on_device = first_param is not None and first_param.device == torch.device(
+            device
+        )
+        self.model = model if on_device else model.to(device)
         self.device = device
         self.trajectory = []
         self.explore = explore
