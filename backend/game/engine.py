@@ -33,7 +33,6 @@ class President:
         self.round = 0
         self.ended_2 = []  # Track players who finished with a 2 for role assignment
 
-        self.history = []  # [(P_id, move), ...]
         self._history_flat_counts = [0] * 16  # Count of each card played
         self._passed_by_player = [
             [0] * 16 for _ in range(players)
@@ -128,9 +127,6 @@ class President:
         if self.track_suits:
             staged_suits = {p_id: [] for p_id in range(self.players)}
 
-        if not hasattr(self, "exchange_log") or self.exchange_log is None:
-            self.exchange_log = {}
-
         def pick_cards(p_id, count, highest=False, allow_custom=True):
             hand = self.hands[p_id]
             if allow_custom and cards_to_pass is not None:
@@ -173,19 +169,6 @@ class President:
             if self.track_suits:
                 suit_exchange(high_player, high_cards)
                 suit_exchange(low_player, low_cards)
-
-            self.exchange_log[high_player] = {
-                "pair": low_player,
-                "role_type": "high",
-                "gave": list(high_cards),
-                "received": list(low_cards),
-            }
-            self.exchange_log[low_player] = {
-                "pair": high_player,
-                "role_type": "low",
-                "gave": list(low_cards),
-                "received": list(high_cards),
-            }
 
             for card in staged_outgoing[high_player]:
                 self.hands[high_player].remove(card)
@@ -270,7 +253,6 @@ class President:
             self.clubs_3_holder = self.curr_turn
             self.first_turn = True
 
-        self.history = []
         self._history_flat_counts = [0] * 16
         self._passed_by_player = [[0] * 16 for _ in range(self.players)]
         self.last_move = (0, 0, 0)
@@ -283,7 +265,6 @@ class President:
         self.out_order = []
         self.ended_2 = []
         self.pending_finish = None
-        self.exchange_log = {}
 
         if self.track_suits:
             self.suited_hands = self.gen_suited_hands()
@@ -292,7 +273,6 @@ class President:
         return self._get_state(self.curr_turn)
 
     def _record_history_move(self, p_id, move):
-        self.history.append((p_id, move))
         if move == (0, 0, 0):
             pile_card = self.last_move[0]
             if pile_card:

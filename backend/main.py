@@ -390,7 +390,6 @@ async def run_exchange_phase(
         can_choose,
     )
 
-    env.exchange_log = {}
     for pair in env.role_pairs:
         high_role, low_role, count = pair
         env.exchange_cards(pair, cards_to_pass)
