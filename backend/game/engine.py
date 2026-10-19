@@ -318,7 +318,6 @@ class President:
             "passed": passed.copy(),
             "active_players": self.playing.copy(),
             "first_turn": self.first_turn,
-            "clubs_3_holder": self.clubs_3_holder,
             "player_roles": self.roles.copy(),
             "history_vector": self._history_flat_counts[3:],
             "passed_by_player": [
@@ -330,8 +329,6 @@ class President:
             "resume_turn": (
                 self.pending_finish["resume_turn"] if self.pending_finish else None
             ),
-            "round": self.round,
-            "scores": self.scores.copy(),
             "role_pairs": self.role_pairs.copy(),
             "cards_in_pile": cards_in_pile.copy(),
             "pile_leader": pile_leader,
