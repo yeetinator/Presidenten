@@ -411,25 +411,14 @@ class President:
                         self.suit_last_move.append(card)
 
     def _finishing_option(self, card, played_count, p_id):
-        if played_count >= 4 or any(
-            self.history[i][1][0] == card for i in range(len(self.history) - 1)
-        ):
+        if played_count >= 4 or self._history_flat_counts[card] != played_count:
             return None
 
-        players_with_card = {
-            p: hand
-            for p, hand in self.hands.items()
-            if p != p_id and hand.count(card) + played_count == 4
-        }
-        if len(players_with_card) != 1:
-            return None
-
-        p_id, hand = players_with_card.popitem()
-        return (
-            card,
-            hand.count(card),
-            p_id,
-        )
+        needed = 4 - played_count
+        for p, hand in self.hands.items():
+            if p != p_id and hand.count(card) == needed:
+                return (card, needed, p)
+        return None
 
     def handle_pending_finish(self, move, p_id, suits):
         if not self.pending_finish:
