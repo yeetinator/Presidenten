@@ -41,7 +41,7 @@ def save_benchmark_ref(snapshot_dir, gen_cycle):
         },
         dst,
     )
-    return dst
+    return dst, best["batch"]
 
 
 def _load_stop_check(snapshot_dir, gen_cycle):
@@ -63,15 +63,17 @@ def should_stop_training(
     if gen_cycle % check_every != 0:
         return False
 
-    cur_ref = save_benchmark_ref(snapshot_dir, gen_cycle)
+    cur = save_benchmark_ref(snapshot_dir, gen_cycle)
     prev_cycle = gen_cycle - check_every
     prev_ref = f"{snapshot_dir}/bench_refs/cycle_{prev_cycle}.pt"
-    if cur_ref is None or not os.path.exists(prev_ref):
+    prev_best = _best_of_cycle(snapshot_dir, prev_cycle)
+
+    if cur is None or prev_best is None or not os.path.exists(prev_ref):
         print(f"  [stop check] Cycle {gen_cycle}: no reference pair yet, skipped.")
         return False
 
-    cur_batch = torch.load(cur_ref, map_location="cpu")["batch_idx"]
-    prev_batch = torch.load(prev_ref, map_location="cpu")["batch_idx"]
+    cur_ref, cur_batch = cur
+    prev_batch = prev_best["batch"]
 
     if cur_batch == prev_batch:
         summary = None
