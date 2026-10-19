@@ -61,6 +61,11 @@ class PresidentISMCTSBot(Player):
         num_workers=10,
     ) -> tuple[int, int, int]:
         legal_moves = state["legal_moves"]
+        if not legal_moves:
+            return (0, 0, 0)
+        if len(legal_moves) == 1:
+            return legal_moves[0]
+
         opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
         total_stats = {}
         baseline_bot = PresidentBaselineBot(player_id=self.player_id)
@@ -69,10 +74,6 @@ class PresidentISMCTSBot(Player):
             sum(active_opp_counts) / len(active_opp_counts) if active_opp_counts else 0
         )
 
-        if not legal_moves:
-            return (0, 0, 0)
-        if len(legal_moves) == 1:
-            return legal_moves[0]
         if state["first_turn"]:
             return baseline_bot.get_ranked_moves(state)[0]
 

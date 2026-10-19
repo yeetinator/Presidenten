@@ -22,6 +22,7 @@ def play_round(env: President, bot_instances: dict[int, Player], round_idx: int)
 
     completed = True
     move_count = 0
+
     while not env.game_over:
         move_count += 1
         if move_count > 500:
@@ -46,8 +47,9 @@ def game_loop(
     bot_instances: dict[int, Player],
     input_dim=INPUT_DIM,
     bot_class=PresidentDMCBot,
+    lightweight=False,
 ):
-    env = President(num_players)
+    env = President(num_players, lightweight=lightweight)
     game_x, game_a, game_y = [], [], []
 
     def _empty():

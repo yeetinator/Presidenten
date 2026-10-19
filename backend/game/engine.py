@@ -7,13 +7,18 @@ MAPPING_SV = {"T": 10, "J": 11, "Q": 12, "K": 13, "A": 14, "2": 15}
 
 
 class President:
-    def __init__(self, players=4, verbose=False, track_suits=False):
+    def __init__(self, players=4, verbose=False, track_suits=False, lightweight=False):
         if players < 4:
             raise ValueError("President requires at least 4 players.")
 
         self.players = players
         self.verbose = verbose
-        self.track_suits = track_suits
+        self.track_suits = track_suits  # For front-end visualization
+
+        # For headless rollouts: step() returns only {"legal_moves": ...} when the
+        # next player has at most one legal move (bots return it without reading
+        # anything else). _get_state() itself always returns the full state.
+        self.lightweight = lightweight and not track_suits
 
         # 3 to Ace (14), plus 2 (15)
         self.deck = [rank for rank in range(3, 16) for _ in range(4)]
@@ -297,7 +302,17 @@ class President:
             self._history_flat_counts[card_val] += count - twos
             self._history_flat_counts[15] += twos
 
-    def _get_state(self, p_id, *, reset_view=False, only_finish=True):
+    def _get_turn_state(self, p_id, *, reset_view=False):
+        if not self.lightweight:
+            return self._get_state(p_id, reset_view=reset_view)
+
+        last_move = (0, 0, 0) if reset_view else self.last_move
+        legal_moves = self.get_legal_moves(p_id, last_move)
+        if len(legal_moves) <= 1:
+            return {"legal_moves": legal_moves}
+        return self._get_state(p_id, reset_view=reset_view, legal_moves=legal_moves)
+
+    def _get_state(self, p_id, *, reset_view=False, only_finish=True, legal_moves=None):
         last_move = (0, 0, 0) if reset_view else self.last_move
         if self.track_suits:
             suit_last_move = [] if reset_view else self.suit_last_move
@@ -308,7 +323,11 @@ class President:
 
         state = {
             "hand": self.hands[p_id].copy(),
-            "legal_moves": self.get_legal_moves(p_id, last_move, only_finish),
+            "legal_moves": (
+                legal_moves
+                if legal_moves is not None
+                else self.get_legal_moves(p_id, last_move, only_finish)
+            ),
             "my_role": self.roles[p_id],
             "last_move": last_move,
             "curr_turn": self.curr_turn,
@@ -517,7 +536,7 @@ class President:
         if self.pending_finish and self.pending_finish["queue"][0][2] == p_id:
             self.handle_pending_finish(move, p_id, suits)
             return (
-                self._get_state(self.curr_turn, reset_view=self.was_pile_reset),
+                self._get_turn_state(self.curr_turn, reset_view=self.was_pile_reset),
                 self.game_over,
             )
 
@@ -559,7 +578,7 @@ class President:
             self.curr_turn = p_id
             self.was_pile_reset = pile_reset
 
-            return self._get_state(self.curr_turn), self.game_over
+            return self._get_turn_state(self.curr_turn), self.game_over
 
         if pile_reset:
             temp_next_turn = self._get_next_active_player(
@@ -574,13 +593,13 @@ class President:
             )
             if finish:
                 self.was_pile_reset = False
-                return self._get_state(self.curr_turn), self.game_over
+                return self._get_turn_state(self.curr_turn), self.game_over
 
         self.curr_turn = temp_next_turn
         self.was_pile_reset = pile_reset
 
         return (
-            self._get_state(self.curr_turn, reset_view=self.was_pile_reset),
+            self._get_turn_state(self.curr_turn, reset_view=self.was_pile_reset),
             self.game_over,
         )
 
