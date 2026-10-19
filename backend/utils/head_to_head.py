@@ -6,7 +6,7 @@ import numpy as np
 from game import President
 from playerTypes.player import Player
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
-from .common import NUM_ROUNDS, NUM_WORKERS
+from .common import get_cached_traced_model, NUM_ROUNDS, NUM_WORKERS
 from .gameplay import play_round
 
 _H2H_SIDES = {}
@@ -18,10 +18,7 @@ def _init_h2h_worker(master_spec, old_spec):
         ("master", master_spec),
         ("old", old_spec),
     ):
-        model = net_class().to("cpu")
-        checkpoint = torch.load(path, map_location="cpu")
-        model.load_state_dict(checkpoint["model_state_dict"])
-        model.eval()
+        model = get_cached_traced_model(path, net_class)
         _H2H_SIDES[name] = (model, bot_class)
 
 
