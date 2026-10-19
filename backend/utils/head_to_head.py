@@ -11,6 +11,13 @@ from .gameplay import play_round
 
 _H2H_SIDES = {}
 
+# Early stopping (Haybittle-Peto): at each interim look, the match ends only if
+# |delta / se| > H2H_INTERIM_Z. Such a strict bound barely changes the overall
+# error rate, so the final look can keep the usual 95% interval.
+H2H_INTERIM_LOOKS = (0.25, 0.5, 0.75)  # fractions of total_games
+H2H_INTERIM_Z = 3.0
+H2H_MIN_LOOK_GAMES = 100  # below this the standard error is too noisy to trust
+
 
 def _init_h2h_worker(master_spec, old_spec):
     torch.set_num_threads(1)
@@ -69,6 +76,17 @@ def _play_h2h_game(game_args):
     }
 
 
+def _paired_delta(results):
+    diffs = np.array([r["master_norm_score"] - r["old_avg_norm"] for r in results])
+    return float(np.mean(diffs)), float(np.std(diffs, ddof=1) / np.sqrt(len(diffs)))
+
+
+def _interim_looks(total_games):
+    # Multiples of 4 so every player count (4-7) is equally represented
+    looks = {int(total_games * frac) // 4 * 4 for frac in H2H_INTERIM_LOOKS}
+    return sorted(n for n in looks if H2H_MIN_LOOK_GAMES <= n < total_games)
+
+
 def run_h2h(
     master_path,
     old_path,
@@ -77,35 +95,63 @@ def run_h2h(
     old_classes=(PresidentValueNet, PresidentDMCBot),
     num_workers=NUM_WORKERS,
     progress_every=100,
+    early_stop=True,
 ):
     base_entropy = random.randint(1_000_000, 99_000_000)
     game_tasks = [
         (base_entropy + game_idx * NUM_ROUNDS, 4 + (game_idx % 4))
         for game_idx in range(total_games)
-    ]
+    ]  # [(seed, num_players), ...]
 
-    results = []
+    looks = _interim_looks(total_games) if early_stop else []
+    results = [None] * total_games
+    finished_prefix = 0  # games [0, finished_prefix) have all finished
+    stopped_at = None
+
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=num_workers,
         mp_context=multiprocessing.get_context("spawn"),
         initializer=_init_h2h_worker,
         initargs=((master_path, *master_classes), (old_path, *old_classes)),
     ) as executor:
-        futures = [executor.submit(_play_h2h_game, task) for task in game_tasks]
+        futures = {
+            executor.submit(_play_h2h_game, task): idx
+            for idx, task in enumerate(game_tasks)
+        }
         for completed, future in enumerate(
             concurrent.futures.as_completed(futures), start=1
         ):
-            results.append(future.result())
+            results[futures[future]] = future.result()
             if progress_every and (
                 completed % progress_every == 0 or completed == total_games
             ):
                 print(f" -> Completed {completed}/{total_games} H2H games")
 
+            # Looks use the first n games in submission order, not the first n to
+            # finish (short 4-player games would otherwise be over-represented)
+            while (
+                finished_prefix < total_games and results[finished_prefix] is not None
+            ):
+                finished_prefix += 1
+            reached = [n for n in looks if n <= finished_prefix]
+            if not reached:
+                continue
+            looks = [n for n in looks if n > finished_prefix]
+
+            # se ~ 0 means the diffs are float noise (e.g. a model against itself)
+            mean_diff, se_diff = _paired_delta(results[: reached[-1]])
+            if se_diff > 1e-9 and abs(mean_diff / se_diff) > H2H_INTERIM_Z:
+                stopped_at = reached[-1]
+                executor.shutdown(wait=False, cancel_futures=True)
+                break
+
+    if stopped_at is not None:
+        results = results[:stopped_at]
+        print(f" -> H2H stopped early after {stopped_at}/{total_games} games")
+
     master_scores = np.array([r["master_norm_score"] for r in results])
     old_scores = np.array([r["old_avg_norm"] for r in results])
-    diffs = master_scores - old_scores
-    mean_diff = float(np.mean(diffs))
-    se_diff = float(np.std(diffs, ddof=1) / np.sqrt(len(diffs)))
+    mean_diff, se_diff = _paired_delta(results)
 
     max_ranks = max(r["num_players"] for r in results)
     rank_counts = [0] * max_ranks
@@ -119,7 +165,9 @@ def run_h2h(
     return {
         "master_path": master_path,
         "old_path": old_path,
-        "total_games": total_games,
+        "total_games": len(results),
+        "planned_games": total_games,
+        "stopped_early": stopped_at is not None,
         "total_rounds": sum(r["match_rounds"] for r in results),
         "master_avg": float(np.mean(master_scores)),
         "old_avg": float(np.mean(old_scores)),
@@ -155,7 +203,12 @@ def format_h2h(s):
         "=" * 65,
         f" Master Bot Path : {s['master_path']}",
         f" Old Bot Path    : {s['old_path']}",
-        f" Total Matches Evaluated : {s['total_games']} ({s['total_rounds']} rounds)",
+        f" Total Matches Evaluated : {s['total_games']} ({s['total_rounds']} rounds)"
+        + (
+            f" - stopped early (planned {s['planned_games']})"
+            if s.get("stopped_early")
+            else ""
+        ),
         f" Master Avg Norm Score   : {s['master_avg']:+.4f}",
         f" Old Avg Norm Score      : {s['old_avg']:+.4f}",
         f" Score Delta (Master - Old): {s['delta']:+.4f}",
