@@ -3,11 +3,10 @@ import random
 import multiprocessing
 import concurrent.futures
 import numpy as np
-from game import President
 from playerTypes.player import Player
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
 from .common import get_cached_traced_model, NUM_ROUNDS, NUM_WORKERS
-from .gameplay import play_round
+from .gameplay import seeded_game_gen, run_tagged_games
 
 _H2H_SIDES = {}
 
@@ -17,6 +16,7 @@ _H2H_SIDES = {}
 H2H_INTERIM_LOOKS = (0.25, 0.5, 0.75)  # fractions of total_games
 H2H_INTERIM_Z = 3.0
 H2H_MIN_LOOK_GAMES = 100  # below this the standard error is too noisy to trust
+H2H_GAMES_PER_TASK = 20
 
 
 def _init_h2h_worker(master_spec, old_spec):
@@ -29,51 +29,62 @@ def _init_h2h_worker(master_spec, old_spec):
         _H2H_SIDES[name] = (model, bot_class)
 
 
-def _play_h2h_game(game_args):
-    game_seed, num_players = game_args
+def _play_h2h_games(game_chunk):
     device = torch.device("cpu")
     master_model, master_bot = _H2H_SIDES["master"]
     old_model, old_bot = _H2H_SIDES["old"]
 
-    master_placements = [0] * num_players
-    master_norm_score = 0.0
-    old_avg_norm = 0.0
-    master_wins = 0
-    max_pos_score = (num_players - 1) * NUM_ROUNDS
-
-    for rotation in range(num_players):
-        bot_instances: dict[int, Player] = {
-            seat: (
-                master_bot(seat, master_model, device)
-                if seat == rotation
-                else old_bot(seat, old_model, device)
+    games = []
+    for g_idx, (game_seed, num_players) in enumerate(game_chunk):
+        round_seeds = [game_seed + round_idx for round_idx in range(NUM_ROUNDS)]
+        for rotation in range(num_players):
+            bot_instances: dict[int, Player] = {
+                seat: (
+                    master_bot(seat, master_model, device)
+                    if seat == rotation
+                    else old_bot(seat, old_model, device)
+                )
+                for seat in range(num_players)
+            }
+            games.append(
+                (
+                    (g_idx, rotation),
+                    seeded_game_gen(num_players, bot_instances, round_seeds),
+                )
             )
-            for seat in range(num_players)
-        }
 
-        env = President(num_players)
-        for round_idx in range(NUM_ROUNDS):
-            round_seed = game_seed + round_idx
-            random.seed(round_seed)
-            np.random.seed(round_seed)
+    finished = run_tagged_games(games)
 
-            play_round(env, bot_instances, round_idx)
-            master_placements[env.out_order.index(rotation)] += 1
+    results = []
+    for g_idx, (_, num_players) in enumerate(game_chunk):
+        master_placements = [0] * num_players
+        master_norm_score = 0.0
+        old_avg_norm = 0.0
+        master_wins = 0
+        max_pos_score = (num_players - 1) * NUM_ROUNDS
 
-        master_raw = env.scores[rotation][0]
-        master_norm_score += ((master_raw / max_pos_score) * 2 - 1) / num_players
-        master_wins += env.scores[rotation][1]
-        old_raw = [env.scores[s][0] for s in range(num_players) if s != rotation]
-        old_avg_norm += ((np.mean(old_raw) / max_pos_score) * 2 - 1) / num_players
+        for rotation in range(num_players):
+            scores, out_orders = finished[(g_idx, rotation)]
+            for out_order in out_orders:
+                master_placements[out_order.index(rotation)] += 1
 
-    return {
-        "num_players": num_players,
-        "master_norm_score": master_norm_score,
-        "old_avg_norm": old_avg_norm,
-        "master_wins": master_wins,
-        "master_placements": master_placements,
-        "match_rounds": NUM_ROUNDS * num_players,
-    }
+            master_raw = scores[rotation][0]
+            master_norm_score += ((master_raw / max_pos_score) * 2 - 1) / num_players
+            master_wins += scores[rotation][1]
+            old_raw = [scores[s][0] for s in range(num_players) if s != rotation]
+            old_avg_norm += ((np.mean(old_raw) / max_pos_score) * 2 - 1) / num_players
+
+        results.append(
+            {
+                "num_players": num_players,
+                "master_norm_score": master_norm_score,
+                "old_avg_norm": old_avg_norm,
+                "master_wins": master_wins,
+                "master_placements": master_placements,
+                "match_rounds": NUM_ROUNDS * num_players,
+            }
+        )
+    return results
 
 
 def _paired_delta(results):
@@ -115,17 +126,21 @@ def run_h2h(
         initargs=((master_path, *master_classes), (old_path, *old_classes)),
     ) as executor:
         futures = {
-            executor.submit(_play_h2h_game, task): idx
-            for idx, task in enumerate(game_tasks)
+            executor.submit(_play_h2h_games, game_tasks[start:end]): range(start, end)
+            for start in range(0, total_games, H2H_GAMES_PER_TASK)
+            for end in [min(start + H2H_GAMES_PER_TASK, total_games)]
         }
-        for completed, future in enumerate(
-            concurrent.futures.as_completed(futures), start=1
-        ):
-            results[futures[future]] = future.result()
-            if progress_every and (
-                completed % progress_every == 0 or completed == total_games
-            ):
-                print(f" -> Completed {completed}/{total_games} H2H games")
+        completed = 0
+
+        for future in concurrent.futures.as_completed(futures):
+            for idx, result in zip(futures[future], future.result()):
+                results[idx] = result
+                completed += 1
+
+                if progress_every and (
+                    completed % progress_every == 0 or completed == total_games
+                ):
+                    print(f" -> Completed {completed}/{total_games} H2H games")
 
             # Looks use the first n games in submission order, not the first n to
             # finish (short 4-player games would otherwise be over-represented)

@@ -1,6 +1,6 @@
 import torch
 import os
-import multiprocessing
+import contextlib
 import numpy as np
 
 GRADIENT_CLIP = 1.0
@@ -77,14 +77,3 @@ def save_snapshot(
         print(f"Saved milestone snapshot to {milestone_path}.")
 
     return snapshot_path
-
-
-def handle_keyboard_interrupt(pool):
-    print("Training interrupted.")
-    pool.terminate()
-    active_workers = multiprocessing.active_children()
-    for worker in active_workers:
-        worker.kill()
-    for worker in active_workers:
-        worker.join(timeout=0.1)
-    os._exit(1)

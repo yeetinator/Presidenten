@@ -9,42 +9,71 @@ import numpy as np
 from playerTypes.player import Player
 from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
-from .common import get_cached_traced_model, parse_batch_num, init_worker, NUM_WORKERS
-from .gameplay import eval_game_loop
+from .common import (
+    get_cached_traced_model,
+    parse_batch_num,
+    init_worker,
+    NUM_WORKERS,
+    NUM_ROUNDS,
+)
+from .gameplay import seeded_game_gen, run_tagged_games
 
 BASELINE_KEY = "BASELINE_BOT"
 K_FACTOR = 16.0
+MATCHES_PER_TASK = 24
 
 
-def run_duplicate_match(match_args):
-    match_seed, num_players, sampled_keys, keys_set, net_class, bot_class = match_args
+def _rotation_bots(seat_assignments, keys_set, net_class, bot_class):
     device = torch.device("cpu")
-    slot_norm_scores = [0.0] * num_players
+    bot_instances: dict[int, Player] = {}
 
-    for rotation in range(num_players):
-        seat_assignments = [
-            sampled_keys[(i + rotation) % num_players] for i in range(num_players)
-        ]
-        bot_instances: dict[int, Player] = {}
+    for seat, key in enumerate(seat_assignments):
+        if key == BASELINE_KEY:
+            bot_instances[seat] = PresidentBaselineBot(seat)
+        elif key in keys_set and bot_class != PresidentDMCBot:
+            model = get_cached_traced_model(key, net_class)
+            bot_instances[seat] = bot_class(seat, model, device)
+        else:
+            model = get_cached_traced_model(key, PresidentValueNet)
+            bot_instances[seat] = PresidentDMCBot(seat, model, device)
+    return bot_instances
 
-        for seat, key in enumerate(seat_assignments):
-            if key == BASELINE_KEY:
-                bot_instances[seat] = PresidentBaselineBot(seat)
-            elif key in keys_set and bot_class != PresidentDMCBot:
-                model = get_cached_traced_model(key, net_class)
-                bot_instances[seat] = bot_class(seat, model, device)
-            else:
-                model = get_cached_traced_model(key, PresidentValueNet)
-                bot_instances[seat] = PresidentDMCBot(seat, model, device)
-        slot_norm_scores = eval_game_loop(
-            num_players,
-            match_seed,
-            bot_instances,
-            seat_assignments,
-            rotation,
-            slot_norm_scores,
+
+def run_duplicate_matches(match_chunk):
+    games = []
+    for m_idx, match_args in enumerate(match_chunk):
+        match_seed, num_players, sampled_keys, keys_set, net_class, bot_class = (
+            match_args
         )
-    return sampled_keys, slot_norm_scores
+        round_seeds = [
+            (match_seed * 1000 + round_idx) % (2**32 - 1)
+            for round_idx in range(NUM_ROUNDS)
+        ]
+        for rotation in range(num_players):
+            seat_assignments = [
+                sampled_keys[(i + rotation) % num_players] for i in range(num_players)
+            ]
+            bots = _rotation_bots(seat_assignments, keys_set, net_class, bot_class)
+            games.append(
+                ((m_idx, rotation), seeded_game_gen(num_players, bots, round_seeds))
+            )
+
+    finished = run_tagged_games(games)
+
+    results = []
+    for m_idx, match_args in enumerate(match_chunk):
+        _, num_players, sampled_keys, *_ = match_args
+        max_pos_score = (num_players - 1) * NUM_ROUNDS
+        slot_norm_scores = [0.0] * num_players
+
+        for rotation in range(num_players):
+            scores, _ = finished[(m_idx, rotation)]
+            for seat in range(num_players):
+                norm_score = (scores[seat][0] / max_pos_score) * 2 - 1
+                original_slot = (seat + rotation) % num_players
+                slot_norm_scores[original_slot] += norm_score / num_players
+        results.append((sampled_keys, slot_norm_scores))
+    return results
 
 
 def run_evaluation(
@@ -114,7 +143,7 @@ def run_evaluation(
 
     ratings, results = run_elo_tournament(
         active_pool,
-        run_duplicate_match,
+        run_duplicate_matches,
         match_tasks,
         BASELINE_KEY,
         snapshot_files,
@@ -177,18 +206,22 @@ def run_elo_tournament(
 ):
     ratings = {key: 1000.0 for key in active_pool}
     completed = 0
+    chunks = [
+        match_tasks[i : i + MATCHES_PER_TASK]
+        for i in range(0, len(match_tasks), MATCHES_PER_TASK)
+    ]
 
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=NUM_WORKERS, initializer=init_worker
     ) as executor:
-        futures = [executor.submit(run_match_fn, task) for task in match_tasks]
+        futures = [executor.submit(run_match_fn, chunk) for chunk in chunks]
         for future in concurrent.futures.as_completed(futures):
-            completed += 1
-            sampled_keys, slot_norm_scores = future.result()
-            update_pairwise_elo(ratings, sampled_keys, slot_norm_scores)
+            for sampled_keys, slot_norm_scores in future.result():
+                completed += 1
+                update_pairwise_elo(ratings, sampled_keys, slot_norm_scores)
 
-            if completed % 50 == 0 or completed == len(match_tasks):
-                print(f" -> Completed {completed}/{len(match_tasks)} matches")
+                # if completed % 50 == 0 or completed == len(match_tasks):
+                #   print(f" -> Completed {completed}/{len(match_tasks)} matches")
 
     anchor_baseline_elo(ratings, baseline_key)
 
