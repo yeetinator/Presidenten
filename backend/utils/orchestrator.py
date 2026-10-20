@@ -10,7 +10,7 @@ from .head_to_head import run_h2h, format_h2h
 
 STOP_CHECK_EVERY = 3
 STOP_CHECK_GAMES = 1200
-STOP_PATIENCE = 2
+STOP_PATIENCE = 3
 STOP_MIN_CYCLES = 15
 
 
@@ -52,6 +52,20 @@ def _load_stop_check(snapshot_dir, gen_cycle):
         return json.load(f)
 
 
+def _anchor_after(snapshot_dir, cycle, check_every):
+    # The anchor is the last cycle that significantly beat its own anchor. A
+    # check cycle without a record (the first one) starts as the anchor.
+    while cycle > 0:
+        record = _load_stop_check(snapshot_dir, cycle)
+        if record is None or record["improved"]:
+            return cycle
+        if "anchor_cycle" in record:
+            return record["anchor_cycle"]
+        # Older records compared against the previous check, so keep walking
+        cycle -= check_every
+    return None
+
+
 def should_stop_training(
     snapshot_dir,
     gen_cycle,
@@ -63,44 +77,47 @@ def should_stop_training(
     if gen_cycle % check_every != 0:
         return False
 
+    # Compare against a fixed anchor rather than the previous check: per-check
+    # gains can be too small to detect in one H2H while still adding up
     cur = save_benchmark_ref(snapshot_dir, gen_cycle)
     prev_cycle = gen_cycle - check_every
-    prev_ref = f"{snapshot_dir}/bench_refs/cycle_{prev_cycle}.pt"
-    prev_best = _best_of_cycle(snapshot_dir, prev_cycle)
+    anchor_cycle = _anchor_after(snapshot_dir, prev_cycle, check_every)
+    anchor_ref = f"{snapshot_dir}/bench_refs/cycle_{anchor_cycle}.pt"
+    anchor_best = (
+        _best_of_cycle(snapshot_dir, anchor_cycle) if anchor_cycle else None
+    )
 
-    if cur is None or prev_best is None or not os.path.exists(prev_ref):
-        print(f"  [stop check] Cycle {gen_cycle}: no reference pair yet, skipped.")
+    if cur is None or anchor_best is None or not os.path.exists(anchor_ref):
+        print(f"  [stop check] Cycle {gen_cycle}: no anchor yet, skipped.")
         return False
 
     cur_ref, cur_batch = cur
-    prev_batch = prev_best["batch"]
+    anchor_batch = anchor_best["batch"]
 
-    if cur_batch == prev_batch:
+    if cur_batch == anchor_batch:
         summary = None
         improved = False
-        report = f" Best elite unchanged since cycle {prev_cycle} (batch {cur_batch})."
+        report = (
+            f" Best elite unchanged since anchor cycle {anchor_cycle} "
+            f"(batch {cur_batch})."
+        )
     else:
         print(
-            f"  [stop check] Cycle {gen_cycle}: batch {cur_batch} vs batch "
-            f"{prev_batch} ({games} games)..."
+            f"  [stop check] Cycle {gen_cycle}: batch {cur_batch} vs anchor "
+            f"cycle {anchor_cycle} (batch {anchor_batch}, {games} games)..."
         )
-        summary = run_h2h(cur_ref, prev_ref, games, progress_every=0)
+        summary = run_h2h(cur_ref, anchor_ref, games, progress_every=0)
         improved = summary["ci_lo"] > 0
         report = format_h2h(summary)
 
-    streak = 0 if improved else 1
-    c = prev_cycle
-    while not improved:
-        record = _load_stop_check(snapshot_dir, c)
-        if record is None or record["improved"]:
-            break
-        streak += 1
-        c -= check_every
+    prev_record = _load_stop_check(snapshot_dir, prev_cycle)
+    streak = 0 if improved else (prev_record["streak"] if prev_record else 0) + 1
 
     stop = gen_cycle >= min_cycles and streak >= patience
     decision = (
-        f" Cycle {gen_cycle}: batch {cur_batch} vs {prev_batch} -> "
-        f"{'IMPROVED' if improved else 'no significant improvement'} | "
+        f" Cycle {gen_cycle}: batch {cur_batch} vs anchor cycle {anchor_cycle} "
+        f"(batch {anchor_batch}) -> "
+        f"{'IMPROVED, new anchor' if improved else 'no significant improvement'} | "
         f"streak {streak}/{patience} | {'STOP' if stop else 'continue'}"
     )
 
@@ -110,7 +127,8 @@ def should_stop_training(
             {
                 "cycle": gen_cycle,
                 "current_batch": cur_batch,
-                "reference_batch": prev_batch,
+                "anchor_cycle": anchor_cycle,
+                "reference_batch": anchor_batch,
                 "improved": improved,
                 "streak": streak,
                 "stop": stop,
