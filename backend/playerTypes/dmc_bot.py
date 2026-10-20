@@ -63,8 +63,6 @@ _ACTION_LOOKUP = np.full(16 * 25, -1, dtype=np.int64)
 for _idx, (_c, _n, _t) in enumerate(ACTION_MOVES):
     _ACTION_LOOKUP[_c * 25 + _n * 5 + _t] = _idx
 
-_THERM_ROWS = np.arange(COUNT_BUCKETS, dtype=np.int32).reshape(-1, 1)
-
 _MOVE_TABLE = np.zeros((16 * 25, MOVE_DIM), dtype=np.float32)
 for card in [0] + list(range(3, 16)):
     for count in range(5):
@@ -77,145 +75,227 @@ for card in [0] + list(range(3, 16)):
                 v[NUM_RANKS : NUM_RANKS + count] = 1.0
                 v[NUM_RANKS + COUNT_BUCKETS : NUM_RANKS + COUNT_BUCKETS + twos] = 1.0
 
+_HIGH_ROLES = {"President", "Vice-President", "Secretary"}
+_PASS_SCALE = 1.0 / PASS_CAP
+_PASS_LUT = (np.minimum(np.arange(256), PASS_CAP) * _PASS_SCALE).astype(np.float32)
+_PAD = [[-1.0] * k for k in range(MAX_PLAYERS + 1)]
+_ROWS = np.arange(COUNT_BUCKETS).reshape(-1, 1)
+
+O_HAND = 0
+O_HIST = O_HAND + NUM_RANKS * COUNT_BUCKETS  # 52
+O_UNSEEN = O_HIST + NUM_RANKS  # 65
+O_PASS = O_UNSEEN + NUM_RANKS * COUNT_BUCKETS  # 117
+O_LAST = O_PASS + MAX_PLAYERS * NUM_RANKS  # 208
+O_OPP = O_LAST + LAST_MOVE_DIM  # 229
+O_TAIL_SMALL_END = O_OPP + 3 * MAX_PLAYERS + MAX_PLAYERS  # 257 (opp + role + status)
+O_PILE = O_TAIL_SMALL_END  # 257
+O_MISC = O_PILE + NUM_RANKS + 2  # 272
+assert O_MISC + 2 == STATE_DIM
+
+_SEAT_ORDER = {
+    n: [[(me + i) % n for i in range(n)] for me in range(n)]
+    for n in range(1, MAX_PLAYERS + 1)
+}
+
+_PLAY_IDX = np.array(
+    [
+        [_ACTION_LOOKUP[(r + 3) * 25 + k * 5] for k in range(1, COUNT_BUCKETS + 1)]
+        for r in range(NUM_RANKS)
+    ],
+    dtype=np.int64,
+)
+
+_SLOT = np.arange(COUNT_BUCKETS)
+
 
 def action_indices(moves) -> np.ndarray:
     return _ACTION_LOOKUP[[c * 25 + n * 5 + t for c, n, t in moves]]
 
 
-def to_thermometer(counts):
-    c = np.asarray(counts, dtype=np.int32)
-    matrix = (_THERM_ROWS < c[None, :]).astype(np.float32)
-    return matrix.ravel()
+def vectorize_state(state, my_id=0):
+    out = np.empty(STATE_DIM, dtype=np.float32)
+    hand = state["hand"]
+    hand_counts = _rank_counts(hand)
+    history = np.array(state["history_vector"])
+
+    out[O_HAND:O_HIST] = (_ROWS < hand_counts).ravel()
+    out[O_HIST:O_UNSEEN] = history * (1.0 / COUNT_BUCKETS)
+    unseen = np.maximum(0, COUNT_BUCKETS - (hand_counts + history))
+    out[O_UNSEEN:O_PASS] = (_ROWS < unseen).ravel()
+    _fill_tail(out, state, my_id, len(hand))
+    return out
 
 
-def vectorize_hand_state(hand, history_vector):
-    hand_counts = np.zeros(NUM_RANKS, dtype=np.int32)
-    for card in hand:
-        hand_counts[card - 3] += 1
+def possible_passes_for(state):
+    _, _, count = next(
+        ((hr, lr, c) for hr, lr, c in state["role_pairs"] if hr == state["my_role"]),
+        (None, None, 0),
+    )
+    hand = state["hand"]
+    no_15 = [c for c in hand if c != 15]
+    total_combos = math.comb(len(no_15), count)
 
-    hand_vector = to_thermometer(hand_counts)
-    history_counts = np.array(history_vector, dtype=np.int32)
-    unseen_counts = np.maximum(0, COUNT_BUCKETS - (hand_counts + history_counts))
-    unseen_vector = to_thermometer(unseen_counts)
+    if total_combos <= 35:
+        possible_passes = sorted(list(set(itertools.combinations(no_15, count))))
+    else:
+        low_cards = [c for c in no_15 if c <= 10]
+        low_high_cards = [c for c in no_15 if 10 < c <= 12]
+        high_cards = [c for c in no_15 if 12 < c]
 
-    return hand_vector, unseen_vector
+        if len(low_cards) >= count:
+            forced = []
+            pool = low_cards
+            needed = count
+        elif len(low_cards) + len(low_high_cards) >= count:
+            forced = low_cards
+            pool = low_high_cards
+            needed = count - len(forced)
+        else:
+            forced = low_cards + low_high_cards
+            pool = high_cards
+            needed = count - len(forced)
+
+        unique_combos = set(itertools.combinations(pool, needed))
+        possible_passes = [sorted(forced + list(c)) for c in unique_combos]
+    return count, possible_passes
 
 
-def _seat_relative_matrix(rows, num_players, my_id, scale, cap=None):
-    matrix = np.full((MAX_PLAYERS, NUM_RANKS), -1.0, dtype=np.float32)
-    for i in range(num_players):
-        matrix[i] = rows[(my_id + i) % num_players]
-
-    live = matrix[:num_players]
-    if cap is not None:
-        np.clip(live, 0.0, cap, out=live)
-    live /= scale
-    return matrix
+def _rank_counts(cards):
+    if not cards:
+        return np.zeros(NUM_RANKS, dtype=np.int64)
+    return np.bincount(cards, minlength=16)[3:]
 
 
-def vectorize_invariant_state(state, my_id=0):
-    opp_hand_counts: dict[int, int] = state["opp_hand_counts"]
-    state_player_roles: dict[int, str] = state["player_roles"]
-    num_players = len(opp_hand_counts) + 1
+def _fill_tail(out, state, my_id, own_hand_len):
+    opp_hand_counts = state["opp_hand_counts"]
+    n = len(opp_hand_counts) + 1
+    order = _SEAT_ORDER[n][my_id]
+    live = n * NUM_RANKS
 
-    history_vector = np.array(state["history_vector"], dtype=np.float32) / COUNT_BUCKETS
+    # Seat-relative pass matrix, clipped to [0, PASS_CAP] and scaled.
+    # Counts are small non-negative ints, so bytes() packs the rows at C speed
+    # and one table lookup gives min(k, cap) / cap.
+    pbp = state["passed_by_player"]
 
-    pass_player_vector = _seat_relative_matrix(
-        state["passed_by_player"], num_players, my_id, PASS_CAP, cap=PASS_CAP
-    ).ravel()
+    try:
+        packed = b"".join([bytes(pbp[i]) for i in order])
+        vals = _PASS_LUT[np.frombuffer(packed, dtype=np.uint8)]
+    except ValueError:  # a count > 255 cannot be packed into a byte
+        vals = np.array(pbp)[order].ravel()
+        vals = (np.minimum(vals, PASS_CAP) * _PASS_SCALE).astype(np.float32)
+
+    if n == MAX_PLAYERS:
+        out[O_PASS:O_LAST] = vals
+    else:
+        out[O_PASS : O_PASS + live] = vals
+        out[O_PASS + live : O_LAST] = -1.0
 
     p_card, p_count, p_twos = state["last_move"]
-    last_move_vector = _MOVE_TABLE[p_card * 25 + p_count * 5 + p_twos, :LAST_MOVE_DIM]
+    out[O_LAST:O_OPP] = _MOVE_TABLE[p_card * 25 + p_count * 5 + p_twos, :LAST_MOVE_DIM]
 
-    opp_counts = []
-    player_roles = []
-    pile_status = []
+    # opp counts (own hand first), roles, pile status, pile, misc: one Python
+    # list and a single slice assignment instead of several small numpy writes
+    roles = state["player_roles"]
+    active = state["active_players"]
+    passed = state["passed"]
+    pad = _PAD[MAX_PLAYERS - n]
+    tail = [own_hand_len / NUM_RANKS]
+    tail += [opp_hand_counts[pid] / NUM_RANKS for pid in order[1:]]
+    tail += pad
+    tail += [ROLE_MAP.get(roles[pid], 0.5) for pid in order]
+    tail += pad
 
-    for i in range(MAX_PLAYERS):
-        if i < num_players:
-            opp_id = (my_id + i) % num_players
-            if i > 0:
-                opp_counts.append(float(opp_hand_counts[opp_id]) / NUM_RANKS)
+    for pid in order:
+        tail.append(1.0 if pid in active else 0.0)
+        tail.append(1.0 if pid in passed else 0.0)
 
-            role_str = state_player_roles[opp_id]
-            player_roles.append(ROLE_MAP.get(role_str, 0.5))
+    tail += pad
+    tail += pad
 
-            is_active = 1.0 if opp_id in state["active_players"] else 0.0
-            has_passed = 1.0 if opp_id in state["passed"] else 0.0
-            pile_status.extend([is_active, has_passed])
-        else:
-            if i > 0:
-                opp_counts.append(-1.0)
-            player_roles.append(-1.0)
-            pile_status.extend([-1.0, -1.0])
+    pile = state["cards_in_pile"]
+    pile_counts = [0.0] * NUM_RANKS
 
-    opp_vector = np.array(opp_counts, dtype=np.float32)
-    role_vector = np.array(player_roles, dtype=np.float32)
-    status_vector = np.array(pile_status, dtype=np.float32)
+    for card in pile:
+        pile_counts[card - 3] += 1.0 / COUNT_BUCKETS
 
-    pile_vector = np.zeros(PILE_DIM, dtype=np.float32)
-    if state["pile_leader"] is not None:
-        rel_leader_pos = float((state["pile_leader"] - my_id) % num_players) / float(
-            num_players
-        )
+    tail += pile_counts
+    tail.append(len(pile) / COUNT_BUCKETS)
+    leader = state["pile_leader"]
+    tail.append(float((leader - my_id) % n) / float(n) if leader is not None else -1.0)
+    tail.append(1.0 if state["is_finish_prompt"] else 0.0)
+    tail.append(1.0 if state["first_turn"] else 0.0)
+    out[O_OPP:] = tail
+
+
+def pass_candidates(state, my_id, count, possible_passes):
+    hand = state["hand"]
+    base_counts = _rank_counts(hand)
+    history = np.array(state["history_vector"])
+
+    m = len(possible_passes)
+    if m == 0:
+        return None
+
+    combo_counts = np.zeros((m, 16), dtype=np.int64)
+    for row, combo in enumerate(possible_passes):
+        for c in combo:
+            combo_counts[row, c] += 1
+
+    counts = base_counts[None, :] - combo_counts[:, 3:]  # [M, 13]
+    keep = counts.any(axis=1)
+
+    if not keep.all():
+        counts = counts[keep]
+
+    combo_indices = np.flatnonzero(keep)
+    if combo_indices.size == 0:
+        return None
+
+    k = counts.shape[0]
+    x = np.empty((k, STATE_DIM), dtype=np.float32)
+    x[:, O_HAND:O_HIST] = (_ROWS[None, :, :] < counts[:, None, :]).reshape(k, -1)
+    unseen = np.maximum(0, COUNT_BUCKETS - (counts + history[None, :]))
+    x[:, O_UNSEEN:O_PASS] = (_ROWS[None, :, :] < unseen[:, None, :]).reshape(k, -1)
+
+    # Shared part (history + tail) computed once and broadcast
+    proto = np.empty(STATE_DIM, dtype=np.float32)
+    proto[O_HIST:O_UNSEEN] = history * (1.0 / COUNT_BUCKETS)
+    _fill_tail(proto, state, my_id, len(hand) - count)
+    x[:, O_HIST:O_UNSEEN] = proto[O_HIST:O_UNSEEN]
+    x[:, O_PASS:] = proto[O_PASS:]
+    return x, counts, combo_indices
+
+
+def pick_best_pass(q_values, counts, combo_indices, possible_passes, top_k=3):
+    rows = counts.shape[0]
+    scores = q_values[:, _PLAY_IDX]  # [rows, 13, 4]
+    valid = _SLOT[None, None, :] < counts[:, :, None]
+    scores = np.where(valid, scores, np.float32(-np.inf)).reshape(rows, -1)
+    top = -np.sort(-scores, axis=1)[:, :top_k]
+    n_valid = counts.sum(axis=1)
+
+    if (n_valid >= top_k).all():
+        avgs = np.mean(top, axis=1)
     else:
-        rel_leader_pos = -1.0
+        avgs = np.empty(rows, dtype=np.float32)
+        for row in range(rows):
+            k = min(top_k, int(n_valid[row]))
+            avgs[row] = np.mean(top[row, :k])
 
-    for card in state["cards_in_pile"]:
-        pile_vector[card - 3] += 1.0 / COUNT_BUCKETS
-
-    pile_vector[NUM_RANKS] = len(state["cards_in_pile"]) / COUNT_BUCKETS
-    pile_vector[NUM_RANKS + 1] = rel_leader_pos
-
-    misc_vector = np.array(
-        [
-            1.0 if state["is_finish_prompt"] else 0.0,
-            1.0 if state["first_turn"] else 0.0,
-        ],
-        dtype=np.float32,
-    )
-
-    return {
-        "history_vector": history_vector,
-        "pass_player_vector": pass_player_vector,
-        "last_move_vector": last_move_vector,
-        "opp_vector": opp_vector,
-        "role_vector": role_vector,
-        "status_vector": status_vector,
-        "pile_vector": pile_vector,
-        "misc_vector": misc_vector,
-    }
+    best_pass = possible_passes[combo_indices[int(np.argmax(avgs))]]
+    return list(best_pass) if best_pass else []
 
 
-def invariant_tail(inv, opp_vector):
-    return np.concatenate(
-        [
-            inv["pass_player_vector"],
-            inv["last_move_vector"],
-            opp_vector,
-            inv["role_vector"],
-            inv["status_vector"],
-            inv["pile_vector"],
-            inv["misc_vector"],
-        ]
-    ).astype(np.float32)
-
-
-def vectorize_state(state, my_id=0):
-    hand_vec, unseen_vec = vectorize_hand_state(state["hand"], state["history_vector"])
-    inv = vectorize_invariant_state(state, my_id)
-    opp_vec = np.concatenate(
-        [[float(len(state["hand"])) / NUM_RANKS], inv["opp_vector"]]
-    )
-
-    return np.concatenate(
-        [
-            hand_vec,  # 52
-            inv["history_vector"],  # 13
-            unseen_vec,  # 52
-            invariant_tail(inv, opp_vec),
-        ]
-    ).astype(np.float32)
+def run_sync(gen, device):
+    """Drive a request generator to the end with unbatched forwards."""
+    try:
+        model, x = next(gen)
+        while True:
+            with torch.inference_mode():
+                q = model(torch.from_numpy(x).to(device)).cpu().numpy()
+            model, x = gen.send(q)
+    except StopIteration as stop:
+        return stop.value
 
 
 class PresidentValueNet(nn.Module):
@@ -276,12 +356,7 @@ class PresidentDMCBot(Player):
         self.n_explored = 0
         self.q_gap_sum = 0.0
 
-    def _q_values(self, state_vec: np.ndarray) -> np.ndarray:
-        tensor = torch.from_numpy(state_vec).unsqueeze(0).to(self.device)
-        with torch.no_grad():
-            return self.model(tensor).squeeze(0).cpu().numpy()
-
-    def get_move(self, state: dict, *args, **kwargs) -> tuple[int, int, int]:
+    def get_move_gen(self, state: dict):
         legal_moves = state["legal_moves"]
         if not legal_moves:
             return (0, 0, 0)
@@ -290,7 +365,8 @@ class PresidentDMCBot(Player):
 
         state_vec = vectorize_state(state, self.player_id)
         legal_idx = action_indices(legal_moves)
-        q_legal = self._q_values(state_vec)[legal_idx]
+        q = yield (self.model, state_vec[None, :])
+        q_legal = q[0][legal_idx]
 
         if self.profile == "aggressive":
             non_pass = legal_idx != PASS_ACTION
@@ -319,108 +395,26 @@ class PresidentDMCBot(Player):
         idx = int(np.searchsorted(cdf, random.random() * cdf[-1], side="right"))
         return min(idx, len(weights) - 1)
 
-    def choose_cards_to_pass(self, state: dict) -> list[int]:
-        if not state["my_role"] in {"President", "Vice-President", "Secretary"}:
+    def choose_cards_to_pass_gen(self, state: dict):
+        if state["my_role"] not in _HIGH_ROLES:
             return []
 
-        _, _, count = next(
-            (
-                (hr, lr, c)
-                for hr, lr, c in state["role_pairs"]
-                if hr == state["my_role"]
-            ),
-            (None, None, 0),
-        )
-        hand = state["hand"]
-        no_15 = [c for c in hand if c != 15]
-        total_combos = math.comb(len(no_15), count)
+        count, possible_passes = possible_passes_for(state)
+        built = pass_candidates(state, self.player_id, count, possible_passes)
 
-        if total_combos <= 35:
-            possible_passes = sorted(list(set(itertools.combinations(no_15, count))))
-        else:
-            low_cards = [c for c in no_15 if c <= 10]
-            low_high_cards = [c for c in no_15 if 10 < c <= 12]
-            high_cards = [c for c in no_15 if 12 < c]
-
-            if len(low_cards) >= count:
-                forced = []
-                pool = low_cards
-                needed = count
-            elif len(low_cards) + len(low_high_cards) >= count:
-                forced = low_cards
-                pool = low_high_cards
-                needed = count - len(forced)
-            else:
-                forced = low_cards + low_high_cards
-                pool = high_cards
-                needed = count - len(forced)
-
-            unique_combos = set(itertools.combinations(pool, needed))
-            possible_passes = [sorted(forced + list(c)) for c in unique_combos]
-
-        base_counts = np.zeros(NUM_RANKS, dtype=np.int32)
-        for c in hand:
-            base_counts[c - 3] += 1
-
-        history_counts = np.array(state["history_vector"], dtype=np.int32)
-        inv = vectorize_invariant_state(state, self.player_id)
-
-        hypo_hand_count_norm = float(len(hand) - count) / 13.0
-        opp_vec = np.concatenate([[hypo_hand_count_norm], inv["opp_vector"]])
-        inv_tail = invariant_tail(inv, opp_vec)
-        hist_vec = inv["history_vector"]
-
-        combo_state_vecs = []
-        combo_action_idx = []
-        combo_indices = []
-
-        for combo_idx, pass_combo in enumerate(possible_passes):
-            counts = base_counts.copy()
-            for c in pass_combo:
-                counts[c - 3] -= 1
-            if not np.any(counts):
-                continue
-
-            moves_for_combo = [
-                (rank_idx + 3, play_count, 0)
-                for rank_idx, count_held in enumerate(counts)
-                if count_held > 0
-                for play_count in range(1, count_held + 1)
-            ]
-            if not moves_for_combo:
-                continue
-
-            hand_vec = to_thermometer(counts)
-            unseen_counts = np.maximum(0, COUNT_BUCKETS - (counts + history_counts))
-            unseen_vec = to_thermometer(unseen_counts)
-            hypo_state_vec = np.concatenate(
-                [hand_vec, hist_vec, unseen_vec, inv_tail]
-            ).astype(np.float32)
-
-            combo_state_vecs.append(hypo_state_vec)
-            combo_action_idx.append(action_indices(moves_for_combo))
-            combo_indices.append(combo_idx)
-
-        if not combo_state_vecs:
+        if built is None:
             return (
                 list(possible_passes[0])
                 if possible_passes
                 else PresidentBaselineBot(self.player_id).choose_cards_to_pass(state)
             )
 
-        batch = torch.from_numpy(np.stack(combo_state_vecs)).to(self.device)
-        with torch.no_grad():
-            q_values = self.model(batch).cpu().numpy()
+        x, counts, combo_indices = built
+        q = yield (self.model, x)
+        return pick_best_pass(q, counts, combo_indices, possible_passes)
 
-        best_pass = None
-        best_value = -float("inf")
-        K = 3
+    def get_move(self, state: dict, *args, **kwargs):
+        return run_sync(self.get_move_gen(state), self.device)
 
-        for row, (combo_idx, idxs) in enumerate(zip(combo_indices, combo_action_idx)):
-            scores = q_values[row, idxs]
-            k = min(K, scores.shape[0])
-            top_k_avg = float(np.mean(-np.sort(-scores)[:k]))
-            if top_k_avg > best_value:
-                best_value = top_k_avg
-                best_pass = possible_passes[combo_idx]
-        return list(best_pass) if best_pass else []
+    def choose_cards_to_pass(self, state: dict, *args, **kwargs):
+        return run_sync(self.choose_cards_to_pass_gen(state), self.device)
