@@ -157,7 +157,8 @@ def run_h2h(
             mean_diff, se_diff = _paired_delta(results[: reached[-1]])
             if se_diff > 1e-9 and abs(mean_diff / se_diff) > H2H_INTERIM_Z:
                 stopped_at = reached[-1]
-                executor.shutdown(wait=False, cancel_futures=True)
+                for pending in futures:
+                    pending.cancel()
                 break
 
     if stopped_at is not None:
