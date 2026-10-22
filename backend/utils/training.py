@@ -87,19 +87,30 @@ def train_on_batch(
     return (loss_sum / max(n_steps, 1)).item()
 
 
+@torch.no_grad()
+def update_ema(ema_model, live_model, decay):
+    for ema_p, live_p in zip(ema_model.parameters(), live_model.parameters()):
+        ema_p.lerp_(live_p, 1.0 - decay)
+
+
 def save_snapshot(
     snapshot_dir,
     batch_idx,
     live_model,
+    ema_model,
     optimizer,
     scheduler,
     resume_path,
     milestone: int | None = None,
 ):
     snapshot_path = os.path.join(snapshot_dir, f"model_gen_{batch_idx}.pt")
+    # Everything that plays from a snapshot (evaluation, elites, stop checks,
+    # benchmarks) reads "model_state_dict", so that holds the EMA weights. The
+    # live weights are only needed to resume training.
     checkpoint = {
         "batch_idx": batch_idx,
-        "model_state_dict": live_model.state_dict(),
+        "model_state_dict": ema_model.state_dict(),
+        "live_model_state_dict": live_model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
     }

@@ -4,6 +4,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 import torch
+import copy
 import glob
 import random
 import time
@@ -16,12 +17,13 @@ from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet, STATE_DIM
 from utils.common import get_cached_traced_model
 from utils.gameplay import game_loop_gen, iter_batched
-from utils.training import train_on_batch, save_snapshot
+from utils.training import train_on_batch, save_snapshot, update_ema
 
 BATCH_GAMES = 60
 SAVE_SNAPSHOT_EVERY = 250
 MILESTONE_SNAPSHOT_EVERY = 5000
 LEARNING_RATE = 1e-4
+EMA_DECAY = 0.998  # Per batch, so snapshots average roughly the last 500 batches
 NUM_WORKERS = 12
 
 TEMP_START = 0.05
@@ -193,12 +195,20 @@ def run_training_loop(
     if os.path.exists(resume_path):
         print(f"Resuming checkpoint from {resume_path}...")
         checkpoint = torch.load(resume_path, map_location=device)
-        live_model.load_state_dict(checkpoint["model_state_dict"])
+        # Checkpoints from before EMA only hold the live weights
+        live_model.load_state_dict(
+            checkpoint.get("live_model_state_dict", checkpoint["model_state_dict"])
+        )
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         batch_idx = checkpoint["batch_idx"]
     else:
+        checkpoint = None
         batch_idx = 0
+
+    ema_model = copy.deepcopy(live_model).requires_grad_(False)
+    if checkpoint is not None:
+        ema_model.load_state_dict(checkpoint["model_state_dict"])
 
     shared_model.load_state_dict(live_model.state_dict())
 
@@ -277,6 +287,9 @@ def run_training_loop(
                     shared_model,
                     scheduler,
                 )
+                # Warm up the decay so the random init washes out quickly
+                ema_decay = min(EMA_DECAY, (1 + batch_idx) / (10 + batch_idx))
+                update_ema(ema_model, live_model, ema_decay)
                 t2 = time.perf_counter()
                 running_losses.append(avg_loss)
                 rollout_times.append(t1 - t0)
@@ -315,6 +328,7 @@ def run_training_loop(
                     snapshot_dir,
                     batch_idx,
                     live_model,
+                    ema_model,
                     optimizer,
                     scheduler,
                     resume_path,
