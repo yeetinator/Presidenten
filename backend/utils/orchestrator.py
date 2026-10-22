@@ -5,7 +5,6 @@ import shutil
 import glob
 import sys
 import subprocess
-import time
 from .head_to_head import run_h2h, format_h2h
 
 STOP_CHECK_EVERY = 3
@@ -83,9 +82,7 @@ def should_stop_training(
     prev_cycle = gen_cycle - check_every
     anchor_cycle = _anchor_after(snapshot_dir, prev_cycle, check_every)
     anchor_ref = f"{snapshot_dir}/bench_refs/cycle_{anchor_cycle}.pt"
-    anchor_best = (
-        _best_of_cycle(snapshot_dir, anchor_cycle) if anchor_cycle else None
-    )
+    anchor_best = _best_of_cycle(snapshot_dir, anchor_cycle) if anchor_cycle else None
 
     if cur is None or anchor_best is None or not os.path.exists(anchor_ref):
         print(f"  [stop check] Cycle {gen_cycle}: no anchor yet, skipped.")
@@ -236,4 +233,3 @@ def run_orchestrator(snapshot_dir, train_script, evaluate_script, dir_name):
             break
 
         gen_cycle += 1
-        time.sleep(5)
