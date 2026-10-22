@@ -25,6 +25,7 @@ HAND_DIM = NUM_RANKS * COUNT_BUCKETS
 HISTORY_DIM = NUM_RANKS
 UNSEEN_DIM = NUM_RANKS * COUNT_BUCKETS
 PASS_PLAYER_DIM = MAX_PLAYERS * NUM_RANKS
+PASS_MULTI_DIM = MAX_PLAYERS * NUM_RANKS
 LAST_MOVE_DIM = NUM_RANKS + COUNT_BUCKETS + COUNT_BUCKETS
 OPP_DIM = MAX_PLAYERS
 ROLE_DIM = MAX_PLAYERS
@@ -37,6 +38,7 @@ STATE_DIM = (
     + HISTORY_DIM
     + UNSEEN_DIM
     + PASS_PLAYER_DIM
+    + PASS_MULTI_DIM
     + LAST_MOVE_DIM
     + OPP_DIM
     + ROLE_DIM
@@ -85,11 +87,12 @@ O_HAND = 0
 O_HIST = O_HAND + NUM_RANKS * COUNT_BUCKETS  # 52
 O_UNSEEN = O_HIST + NUM_RANKS  # 65
 O_PASS = O_UNSEEN + NUM_RANKS * COUNT_BUCKETS  # 117
-O_LAST = O_PASS + MAX_PLAYERS * NUM_RANKS  # 208
-O_OPP = O_LAST + LAST_MOVE_DIM  # 229
-O_TAIL_SMALL_END = O_OPP + 3 * MAX_PLAYERS + MAX_PLAYERS  # 257 (opp + role + status)
-O_PILE = O_TAIL_SMALL_END  # 257
-O_MISC = O_PILE + NUM_RANKS + 2  # 272
+O_PASS_MULTI = O_PASS + MAX_PLAYERS * NUM_RANKS  # 208
+O_LAST = O_PASS_MULTI + MAX_PLAYERS * NUM_RANKS  # 299
+O_OPP = O_LAST + LAST_MOVE_DIM  # 320
+O_TAIL_SMALL_END = O_OPP + 3 * MAX_PLAYERS + MAX_PLAYERS  # 348 (opp + role + status)
+O_PILE = O_TAIL_SMALL_END  # 348
+O_MISC = O_PILE + NUM_RANKS + 2  # 363
 assert O_MISC + 2 == STATE_DIM
 
 _SEAT_ORDER = {
@@ -172,23 +175,30 @@ def _fill_tail(out, state, my_id, own_hand_len):
     order = _SEAT_ORDER[n][my_id]
     live = n * NUM_RANKS
 
-    # Seat-relative pass matrix, clipped to [0, PASS_CAP] and scaled.
+    # Seat-relative pass matrices, clipped to [0, PASS_CAP] and scaled.
     # Counts are small non-negative ints, so bytes() packs the rows at C speed
     # and one table lookup gives min(k, cap) / cap.
     pbp = state["passed_by_player"]
+    pbm = state["passed_multi_by_player"]
 
     try:
-        packed = b"".join([bytes(pbp[i]) for i in order])
+        packed = b"".join(
+            [bytes(pbp[i]) for i in order] + [bytes(pbm[i]) for i in order]
+        )
         vals = _PASS_LUT[np.frombuffer(packed, dtype=np.uint8)]
     except ValueError:  # a count > 255 cannot be packed into a byte
-        vals = np.array(pbp)[order].ravel()
+        vals = np.concatenate(
+            [np.array(pbp)[order].ravel(), np.array(pbm)[order].ravel()]
+        )
         vals = (np.minimum(vals, PASS_CAP) * _PASS_SCALE).astype(np.float32)
 
     if n == MAX_PLAYERS:
         out[O_PASS:O_LAST] = vals
     else:
-        out[O_PASS : O_PASS + live] = vals
-        out[O_PASS + live : O_LAST] = -1.0
+        out[O_PASS : O_PASS + live] = vals[:live]
+        out[O_PASS + live : O_PASS_MULTI] = -1.0
+        out[O_PASS_MULTI : O_PASS_MULTI + live] = vals[live:]
+        out[O_PASS_MULTI + live : O_LAST] = -1.0
 
     p_card, p_count, p_twos = state["last_move"]
     out[O_LAST:O_OPP] = _MOVE_TABLE[p_card * 25 + p_count * 5 + p_twos, :LAST_MOVE_DIM]
