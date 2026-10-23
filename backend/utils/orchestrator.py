@@ -9,8 +9,11 @@ from .head_to_head import run_h2h, format_h2h
 
 STOP_CHECK_EVERY = 3
 STOP_CHECK_GAMES = 1200
-STOP_PATIENCE = 3
+STOP_PATIENCE = 2
+STOP_PATIENCE_AFTER_CUT = 3
 STOP_MIN_CYCLES = 15
+LR_CUT_FACTOR = 3.0
+LR_MIN_SCALE = 0.1  # Cuts that would go below this are skipped: 1 -> 1/3 -> 1/9
 
 
 def _best_of_cycle(snapshot_dir, gen_cycle):
@@ -51,6 +54,16 @@ def _load_stop_check(snapshot_dir, gen_cycle):
         return json.load(f)
 
 
+def current_lr_scale(snapshot_dir):
+    """LR multiplier set by the latest stop check, 1.0 before any cut."""
+    paths = glob.glob(f"{snapshot_dir}/evals/stop_check_*.json")
+    if not paths:
+        return 1.0
+    latest = max(paths, key=lambda p: int(p.rsplit("_", 1)[1].split(".")[0]))
+    with open(latest) as f:
+        return json.load(f).get("lr_scale", 1.0)
+
+
 def _anchor_after(snapshot_dir, cycle, check_every):
     # The anchor is the last cycle that significantly beat its own anchor. A
     # check cycle without a record (the first one) starts as the anchor.
@@ -70,7 +83,6 @@ def should_stop_training(
     gen_cycle,
     check_every=STOP_CHECK_EVERY,
     games=STOP_CHECK_GAMES,
-    patience=STOP_PATIENCE,
     min_cycles=STOP_MIN_CYCLES,
 ):
     if gen_cycle % check_every != 0:
@@ -110,12 +122,25 @@ def should_stop_training(
     prev_record = _load_stop_check(snapshot_dir, prev_cycle)
     streak = 0 if improved else (prev_record["streak"] if prev_record else 0) + 1
 
-    stop = gen_cycle >= min_cycles and streak >= patience
+    # A stall first lowers the LR, since smaller steps average out more of the
+    # noise in the targets. Only stop once the LR has reached its floor.
+    lr_scale = current_lr_scale(snapshot_dir)
+    patience = STOP_PATIENCE if lr_scale >= 1.0 else STOP_PATIENCE_AFTER_CUT
+    stalled = gen_cycle >= min_cycles and streak >= patience
+    lr_cut = stalled and lr_scale / LR_CUT_FACTOR >= LR_MIN_SCALE
+
+    if lr_cut:
+        lr_scale /= LR_CUT_FACTOR
+        streak = 0
+        patience = STOP_PATIENCE_AFTER_CUT
+    stop = stalled and not lr_cut
+
+    action = f"LR CUT to {lr_scale:.3g}x" if lr_cut else "STOP" if stop else "continue"
     decision = (
         f" Cycle {gen_cycle}: batch {cur_batch} vs anchor cycle {anchor_cycle} "
         f"(batch {anchor_batch}) -> "
         f"{'IMPROVED, new anchor' if improved else 'no significant improvement'} | "
-        f"streak {streak}/{patience} | {'STOP' if stop else 'continue'}"
+        f"streak {streak}/{patience} | {action}"
     )
 
     os.makedirs(f"{snapshot_dir}/evals", exist_ok=True)
@@ -128,6 +153,8 @@ def should_stop_training(
                 "reference_batch": anchor_batch,
                 "improved": improved,
                 "streak": streak,
+                "lr_scale": lr_scale,
+                "lr_cut": lr_cut,
                 "stop": stop,
                 "summary": summary,
             },

@@ -36,7 +36,6 @@ def train_on_batch(
     optimizer,
     loss_fn,
     shared_model,
-    scheduler,
     tf32=True,
     amp=True,
     mini_batch_size=2048,
@@ -82,7 +81,6 @@ def train_on_batch(
                 n_steps += 1
 
     shared_model.load_state_dict(live_model.state_dict())
-    scheduler.step()
 
     return (loss_sum / max(n_steps, 1)).item()
 
@@ -99,7 +97,6 @@ def save_snapshot(
     live_model,
     ema_model,
     optimizer,
-    scheduler,
     resume_path,
     milestone: int | None = None,
 ):
@@ -112,7 +109,6 @@ def save_snapshot(
         "model_state_dict": ema_model.state_dict(),
         "live_model_state_dict": live_model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
-        "scheduler_state_dict": scheduler.state_dict(),
     }
     torch.save(checkpoint, snapshot_path)
     torch.save(checkpoint, resume_path)

@@ -17,6 +17,7 @@ from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet, STATE_DIM
 from utils.common import get_cached_traced_model
 from utils.gameplay import game_loop_gen, iter_batched
+from utils.orchestrator import current_lr_scale
 from utils.training import train_on_batch, save_snapshot, update_ema
 
 BATCH_GAMES = 60
@@ -190,7 +191,6 @@ def run_training_loop(
 
     optimizer = torch.optim.Adam(live_model.parameters(), lr=LEARNING_RATE, fused=True)
     loss_fn = torch.nn.MSELoss()
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, 0.999988)
 
     if os.path.exists(resume_path):
         print(f"Resuming checkpoint from {resume_path}...")
@@ -200,7 +200,6 @@ def run_training_loop(
             checkpoint.get("live_model_state_dict", checkpoint["model_state_dict"])
         )
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         batch_idx = checkpoint["batch_idx"]
     else:
         checkpoint = None
@@ -209,6 +208,11 @@ def run_training_loop(
     ema_model = copy.deepcopy(live_model).requires_grad_(False)
     if checkpoint is not None:
         ema_model.load_state_dict(checkpoint["model_state_dict"])
+
+    lr = LEARNING_RATE * current_lr_scale(snapshot_dir)
+    for group in optimizer.param_groups:
+        group["lr"] = lr
+    print(f"Learning rate: {lr:.2e}")
 
     shared_model.load_state_dict(live_model.state_dict())
 
@@ -285,7 +289,6 @@ def run_training_loop(
                     optimizer,
                     loss_fn,
                     shared_model,
-                    scheduler,
                 )
                 # Warm up the decay so the random init washes out quickly
                 ema_decay = min(EMA_DECAY, (1 + batch_idx) / (10 + batch_idx))
@@ -307,7 +310,7 @@ def run_training_loop(
                     print(
                         f"=========================================================================\n"
                         f"BATCH {batch_idx:<5} | Rolling Loss: {rolling_loss:.6f} | "
-                        f"LR: {scheduler.get_last_lr()[0]:.6f} | Temp: {temperature.value:.4f}\n"
+                        f"LR: {lr:.2e} | Temp: {temperature.value:.4f}\n"
                         f"Explored: {explore_pct:.1f}% of decisions | "
                         f"Mean Q-Gap when exploring: {mean_gap:.4f}\n"
                         f"Rollout: {avg_rollout:.2f}s | Train: {avg_train:.2f}s | "
@@ -330,7 +333,6 @@ def run_training_loop(
                     live_model,
                     ema_model,
                     optimizer,
-                    scheduler,
                     resume_path,
                     MILESTONE_SNAPSHOT_EVERY,
                 )
