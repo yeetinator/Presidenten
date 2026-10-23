@@ -298,24 +298,18 @@ def run_training_loop(
                 rollout_times.append(t1 - t0)
                 train_times.append(t2 - t1)
 
-                if batch_idx % 25 == 0:
+                if batch_idx % 250 == 0:
                     rolling_loss = np.mean(running_losses)
                     avg_rollout = np.mean(rollout_times)
                     avg_train = np.mean(train_times)
                     avg_iter = np.mean(iter_times) if iter_times else 0.0
-                    train_share = (avg_train / (avg_rollout + avg_train)) * 100
                     explore_pct = 100.0 * n_explored / max(n_decisions, 1)
-                    mean_gap = q_gap_sum / max(n_explored, 1)
 
                     print(
                         f"=========================================================================\n"
-                        f"BATCH {batch_idx:<5} | Rolling Loss: {rolling_loss:.6f} | "
-                        f"LR: {lr:.2e} | Temp: {temperature.value:.4f}\n"
-                        f"Explored: {explore_pct:.1f}% of decisions | "
-                        f"Mean Q-Gap when exploring: {mean_gap:.4f}\n"
-                        f"Rollout: {avg_rollout:.2f}s | Train: {avg_train:.2f}s | "
-                        f"Train Share: {train_share:.1f}% | Iter: {avg_iter:.2f}s\n"
-                        f"========================================================================="
+                        f"b {batch_idx} | loss {rolling_loss:.4f} | "
+                        f"lr {lr:.1e} | T {temperature.value:.3f} | expl {explore_pct:.1f}% | "
+                        f"roll {avg_rollout:.2f}s train {avg_train:.2f}s | {avg_iter:.2f}s/it\n"
                     )
                     running_losses.clear()
                     rollout_times.clear()
