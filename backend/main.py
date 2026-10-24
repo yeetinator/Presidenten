@@ -6,6 +6,7 @@ import torch
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from game import President, PlayerType
+from game.engine import MAPPING_SV, MAPPING_VS
 from playerTypes.player import Player
 from playerTypes.random_bot import PresidentRandomBot
 from playerTypes.baseline_bot import PresidentBaselineBot
@@ -75,15 +76,13 @@ class GameSession:
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     next_round_event: asyncio.Event = field(default_factory=asyncio.Event)
     dealt_cards_event: asyncio.Event = field(default_factory=asyncio.Event)
-    game_over_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 def _parse_helper(suits):
-    char_to_value = {"T": 10, "J": 11, "Q": 12, "K": 13, "A": 14, "2": 15}
     return [
         (
-            char_to_value[r]
-            if (r := suit if len(suit) == 1 else suit[:-1]) in char_to_value
+            MAPPING_SV[r]
+            if (r := suit if len(suit) == 1 else suit[:-1]) in MAPPING_SV
             else int(r)
         )
         for suit in suits
@@ -111,13 +110,12 @@ def parse_suits_to_selection(suits):
 
 def parse_moves_to_suits(moves: list):
     suits_moves = []
-    value_to_char = {10: "T", 11: "J", 12: "Q", 13: "K", 14: "A", 15: "2"}
 
     for card_val, count, twos_used in moves:
         if card_val == 0:
             continue
 
-        suit = value_to_char.get(card_val, str(card_val))
+        suit = MAPPING_VS.get(card_val, str(card_val))
         suits_moves.append([suit] * (count - twos_used) + ["2"] * twos_used)
     return suits_moves
 
@@ -271,10 +269,6 @@ def is_offered_move(move: tuple, suits: list[str], prompt_state: dict) -> bool:
     )
 
 
-def apply_fast_forward(timings: GameTimings):
-    timings.set_fast_forward()
-
-
 async def control_listener(
     control_queue: asyncio.Queue,
     session: GameSession,
@@ -299,7 +293,7 @@ async def control_listener(
         message_type = control_message.get("type")
 
         if message_type == "FAST_FORWARD":
-            apply_fast_forward(session.timings)
+            session.timings.set_fast_forward()
             continue
 
         if message_type == "START_GAME":
@@ -389,16 +383,15 @@ async def wait_for_exchange_cards(
     disconnect_event: asyncio.Event,
     can_choose: bool,
 ):
-    while True:
-        raw_data = await next_queued_message(
-            input_queue,
-            pending_messages,
-            disconnect_event,
-            allowed_types={"EXCHANGE_CARDS"},
-        )
+    raw_data = await next_queued_message(
+        input_queue,
+        pending_messages,
+        disconnect_event,
+        allowed_types={"EXCHANGE_CARDS"},
+    )
 
-        suits = raw_data.get("suits", []) if can_choose else []
-        return parse_suits_to_selection(suits)
+    suits = raw_data.get("suits", []) if can_choose else []
+    return parse_suits_to_selection(suits)
 
 
 async def run_exchange_phase(
@@ -504,7 +497,7 @@ async def run(
 
                         await send_game_log(websocket, "Succesful jump in!")
                         await send_state_update(websocket, env, human_id, assign_p)
-                        await asyncio.sleep(MESSAGE_DELAY)
+                        await asyncio.sleep(timings.message_delay)
 
                         if env.was_pile_reset:
                             env.clear_pile()
@@ -707,6 +700,24 @@ async def run(
     )
 
 
+async def deal_hands(
+    websocket: WebSocket,
+    env: President,
+    session: GameSession,
+    disconnect_event: asyncio.Event,
+    message: str,
+):
+    await websocket.send_json({"type": "LOG_ALERT", "message": message})
+    await websocket.send_json(
+        {
+            "type": "DEAL_CARDS",
+            "state": enrich_state(env._get_state(session.human_id), session.assign_p),
+        }
+    )
+    await wait_for_event(session.dealt_cards_event, disconnect_event)
+    session.timings.reset()
+
+
 async def run_connection(
     websocket: WebSocket,
     play_queue: asyncio.Queue,
@@ -725,23 +736,13 @@ async def run_connection(
         if session.env is None:
             return
 
-        await websocket.send_json(
-            {
-                "type": "LOG_ALERT",
-                "message": "Game lobby created. Dealing hands...",
-            }
+        await deal_hands(
+            websocket,
+            session.env,
+            session,
+            disconnect_event,
+            "Game lobby created. Dealing hands...",
         )
-        await websocket.send_json(
-            {
-                "type": "DEAL_CARDS",
-                "state": enrich_state(
-                    session.env._get_state(session.human_id), session.assign_p
-                ),
-            }
-        )
-        await wait_for_event(session.dealt_cards_event, disconnect_event)
-
-        session.timings.reset()
         if session.env.curr_turn != session.human_id:
             await asyncio.sleep(session.timings.message_delay)
         await run(
@@ -764,23 +765,13 @@ async def run_connection(
                 continue
 
             session.env.full_reset(next_round=True)
-            await websocket.send_json(
-                {
-                    "type": "LOG_ALERT",
-                    "message": f"Starting Round {session.env.round}...",
-                }
+            await deal_hands(
+                websocket,
+                session.env,
+                session,
+                disconnect_event,
+                f"Starting Round {session.env.round}...",
             )
-            await websocket.send_json(
-                {
-                    "type": "DEAL_CARDS",
-                    "state": enrich_state(
-                        session.env._get_state(session.human_id), session.assign_p
-                    ),
-                }
-            )
-            await wait_for_event(session.dealt_cards_event, disconnect_event)
-
-            session.timings.reset()
             await run_exchange_phase(
                 session.env,
                 session.assigned_players,
