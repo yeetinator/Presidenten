@@ -321,10 +321,19 @@ async def control_listener(
 
 
 async def wait_for_event(event: asyncio.Event, disconnect_event: asyncio.Event):
-    while not event.is_set():
-        if disconnect_event.is_set():
-            raise WebSocketDisconnect
-        await asyncio.sleep(0.05)
+    if not event.is_set():
+        waiters = {
+            asyncio.create_task(event.wait()),
+            asyncio.create_task(disconnect_event.wait()),
+        }
+        try:
+            await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for waiter in waiters:
+                waiter.cancel()
+
+    if not event.is_set():
+        raise WebSocketDisconnect
 
 
 # Models from independently trained runs, averaged into one ensemble
