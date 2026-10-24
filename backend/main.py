@@ -809,6 +809,11 @@ async def run_connection(
             )
     except WebSocketDisconnect:
         return
+    except RuntimeError:
+        # uvicorn raises this instead of WebSocketDisconnect when we send after the client left
+        if disconnect_event.is_set():
+            return
+        raise
     finally:
         control_task.cancel()
         await asyncio.gather(control_task, return_exceptions=True)
