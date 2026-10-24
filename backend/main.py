@@ -96,9 +96,9 @@ def parse_suits_to_move(suits):
 
     vals = _parse_helper(suits)
     count = len(vals)
-    twos_used = vals.count(15)
     non_twos = [v for v in vals if v != 15]
     card_val = non_twos[0] if non_twos else 15
+    twos_used = count - len(non_twos) if non_twos else 0
 
     return (card_val, count, twos_used)
 
@@ -140,14 +140,20 @@ def make_json_serializable(state: dict):
     return clean_state
 
 
-def enrich_state(state: dict, assign_p: dict[int, PlayerType]):
+def enrich_state(
+    state: dict, assign_p: dict[int, PlayerType], *, accepts_moves: bool = False
+):
     clean_state = make_json_serializable(state)
     clean_state["player_types"] = {
         p_id: get_player_type_label(player_type)
         for p_id, player_type in assign_p.items()
     }
-    clean_state["can_pass"] = (0, 0, 0) in state["legal_moves"]
-    clean_state["legal_moves_suits"] = parse_moves_to_suits(state["legal_moves"])
+    # Only offer moves while the server is actually waiting for one, so the client
+    # can't queue a move from a state that is about to change (e.g. pile clearing)
+    legal_moves = state["legal_moves"] if accepts_moves else []
+    clean_state["legal_moves"] = legal_moves
+    clean_state["can_pass"] = (0, 0, 0) in legal_moves
+    clean_state["legal_moves_suits"] = parse_moves_to_suits(legal_moves)
 
     return clean_state
 
@@ -240,6 +246,29 @@ async def next_queued_message(
             return raw_data
 
         pending_messages.append(raw_data)
+
+
+def discard_stale_moves(input_queue: asyncio.Queue, pending_messages: list[dict]):
+    """Drop moves sent before the prompt that is about to go out; keep other messages."""
+    pending_messages[:] = [m for m in pending_messages if m.get("type") != "PLAY_MOVE"]
+    while not input_queue.empty():
+        message = input_queue.get_nowait()
+        if message.get("type") != "PLAY_MOVE":
+            pending_messages.append(message)
+
+
+def is_offered_move(move: tuple, suits: list[str], prompt_state: dict) -> bool:
+    """Whether the prompt offered this move and the suit cards are in the hand."""
+    if move not in prompt_state["legal_moves"]:
+        return False
+
+    hand = prompt_state["suited_hand"]
+    ranks = {v for v in _parse_helper(suits) if v != 15}
+    return (
+        len(set(suits)) == len(suits)
+        and all(card in hand for card in suits)
+        and len(ranks) <= 1
+    )
 
 
 def apply_fast_forward(timings: GameTimings):
@@ -445,10 +474,12 @@ async def run(
             if curr_id == human_id or (
                 env.pending_finish and env.pending_finish["queue"][0][2] == human_id
             ):
+                jump_state = env._get_state(human_id)
+                discard_stale_moves(input_queue, pending_messages)
                 await websocket.send_json(
                     {
                         "type": "JUMP_IN_PROMPT",
-                        "state": enrich_state(env._get_state(human_id), assign_p),
+                        "state": enrich_state(jump_state, assign_p, accepts_moves=True),
                         "message": "JUMP IN!",
                     }
                 )
@@ -465,8 +496,10 @@ async def run(
                         "jump", True
                     ):
                         suits_array = raw_data.get("suits", [])
-                        parsed_array = get_finish_suits(suits_array, state)
+                        parsed_array = get_finish_suits(suits_array, jump_state)
                         chosen_move = parse_suits_to_move(parsed_array)
+                        if not is_offered_move(chosen_move, parsed_array, jump_state):
+                            continue
                         env.step(human_id, chosen_move, parsed_array)
 
                         await send_game_log(websocket, "Succesful jump in!")
@@ -523,13 +556,13 @@ async def run(
 
         if assign_p[curr_id] == PlayerType.HUMAN:
             pending_bool = False if env.pending_finish else True
+            prompt_state = env._get_state(human_id, only_finish=pending_bool)
 
+            discard_stale_moves(input_queue, pending_messages)
             await websocket.send_json(
                 {
                     "type": "STATE_UPDATE",
-                    "state": enrich_state(
-                        env._get_state(human_id, only_finish=pending_bool), assign_p
-                    ),
+                    "state": enrich_state(prompt_state, assign_p, accepts_moves=True),
                     "clearJump": pending_bool,
                 }
             )
@@ -541,9 +574,28 @@ async def run(
             )
 
             suits_array = raw_data.get("suits", [])
-            if raw_data.get("jump"):
-                suits_array = get_finish_suits(suits_array, env._get_state(human_id))
-            elif env.pending_finish and env.pending_finish["queue"][0][2] == human_id:
+            is_jump = bool(raw_data.get("jump"))
+            if is_jump:
+                suits_array = get_finish_suits(suits_array, prompt_state)
+            chosen_move = parse_suits_to_move(suits_array)
+
+            # A finish option can only be taken as a jump, never as a normal play
+            finish_moves = (
+                set(env.get_legal_moves(human_id)) - {(0, 0, 0)}
+                if prompt_state["is_finish_prompt"]
+                else set()
+            )
+            if not is_offered_move(chosen_move, suits_array, prompt_state) or (
+                chosen_move != (0, 0, 0) and (chosen_move in finish_moves) != is_jump
+            ):
+                await send_game_log(websocket, "That move isn't allowed right now.")
+                continue
+
+            if (
+                not is_jump
+                and env.pending_finish
+                and env.pending_finish["queue"][0][2] == human_id
+            ):
                 env.step(human_id, (0, 0, 0))
                 if env.pending_finish:
                     if env.pending_finish["queue"][0][2] == human_id:
@@ -562,7 +614,6 @@ async def run(
                         else:
                             env.step(env.pending_finish["queue"][0][2], (0, 0, 0))
 
-            chosen_move = parse_suits_to_move(suits_array)
             env.step(human_id, chosen_move, suits_array)
 
             await send_game_log(

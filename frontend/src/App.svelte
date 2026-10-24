@@ -155,9 +155,9 @@
       playLength: play.length,
     })),
   );
-  $: isPileClearing =
+  $: isTurnPending =
     isMyTurn &&
-    $gameState?.pile_leader === 0 &&
+    !$gameState?.can_pass &&
     ($gameState?.legal_moves_suits?.length ?? 0) === 0;
 
   let lastStateRef: typeof $gameState = null;
@@ -224,8 +224,13 @@
 
     if (!myTurn) return { text: "Waiting for your turn", tone: "waiting" };
 
-    if (state.legal_moves_suits?.length === 0 && state.pile_leader === 0)
-      return { text: "Pile clears · you lead next", tone: "waiting" };
+    if (state.legal_moves_suits?.length === 0 && !state.can_pass)
+      return {
+        text: state.suit_last_move?.length
+          ? "Pile clears · you lead next"
+          : "You lead next",
+        tone: "waiting",
+      };
 
     if (state.legal_moves_suits.length === 0 && state.can_pass)
       return { text: "No legal moves · you must pass", tone: "invalid" };
@@ -724,7 +729,7 @@
                 ⚡ {$jumpInPrompt?.message ?? "Jump In"}
                 <span class="opacity-70">· Space</span></button
               >
-            {:else if isMyTurn && !$exchangePrompt && !isPileClearing && !$isDealing}
+            {:else if isMyTurn && !$exchangePrompt && !isTurnPending && !$isDealing}
               <span
                 transition:fade={{ duration: 100 }}
                 class="animate-turn-pill rounded-full border px-4 py-1.5 text-[0.65rem] font-black uppercase tracking-[0.22em] backdrop-blur-md"
@@ -732,7 +737,7 @@
                 >Your Turn</span
               >
             {/if}
-            {#if isMyTurn && $gameState?.can_pass && $gameState?.pile_leader !== 0 && !isPileClearing}
+            {#if isMyTurn && $gameState?.can_pass && $gameState?.pile_leader !== 0 && !isTurnPending}
               <button
                 transition:fade={{ duration: 100 }}
                 type="button"
@@ -785,7 +790,7 @@
                       (!!$exchangePrompt &&
                         (!exchangeCanChoose || exchangeRequiredCards === 0)) ||
                       !enableCards ||
-                      isPileClearing}
+                      isTurnPending}
                     className="shrink-0 scale-[0.75] md:scale-[0.95] pointer-events-auto"
                     onClick={() => handleToggleCard(suitCard)}
                   />
