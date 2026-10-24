@@ -24,6 +24,9 @@ BATCH_GAMES = 60
 SAVE_SNAPSHOT_EVERY = 250
 MILESTONE_SNAPSHOT_EVERY = 5000
 LEARNING_RATE = 1e-4
+# AdamW shrinks weights by lr * WEIGHT_DECAY per optimizer step. At ~24 steps per
+# batch that is ~5% per cycle at the base LR. Biases and LayerNorm are not decayed.
+WEIGHT_DECAY = 0.01
 EMA_DECAY = 0.998  # Per batch, so snapshots average roughly the last 500 batches
 NUM_WORKERS = 12
 
@@ -223,7 +226,11 @@ def run_training_loop(
     shared_model = PresidentValueNet().to("cpu")
     shared_model.share_memory()
 
-    optimizer = torch.optim.Adam(live_model.parameters(), lr=LEARNING_RATE, fused=True)
+    decay = [p for p in live_model.parameters() if p.ndim >= 2]
+    no_decay = [p for p in live_model.parameters() if p.ndim < 2]
+    optimizer = torch.optim.AdamW(
+        [{"params": decay}, {"params": no_decay}], lr=LEARNING_RATE, fused=True
+    )
     loss_fn = torch.nn.MSELoss()
 
     if os.path.exists(resume_path):
@@ -244,8 +251,10 @@ def run_training_loop(
         ema_model.load_state_dict(checkpoint["model_state_dict"])
 
     lr = LEARNING_RATE * current_lr_scale(snapshot_dir)
-    for group in optimizer.param_groups:
+    for group, weight_decay in zip(optimizer.param_groups, (WEIGHT_DECAY, 0.0)):
         group["lr"] = lr
+        group["weight_decay"] = weight_decay
+    print(f"Learning rate: {lr:.2e} | weight decay: {WEIGHT_DECAY}")
     print(f"Actor inference device: {INFERENCE_DEVICE}")
 
     shared_model.load_state_dict(live_model.state_dict())
