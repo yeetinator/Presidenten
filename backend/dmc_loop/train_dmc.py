@@ -27,17 +27,21 @@ LEARNING_RATE = 1e-4
 EMA_DECAY = 0.998  # Per batch, so snapshots average roughly the last 500 batches
 NUM_WORKERS = 12
 
+# Actors run their forwards here. An explicit index so model.parameters() device
+# checks in PresidentDMCBot match (cuda != cuda:0)
+INFERENCE_DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 TEMP_START = 0.05
 TEMP_END = 0.01
 TEMP_DECAY_BATCHES = 20000
 
 RECORD_ELITES = True
 
-GAMES_IN_FLIGHT_PER_WORKER = 32
+GAMES_IN_FLIGHT_PER_WORKER = 64
 ELITES_PER_WORKER = 2  # 0 = sample from all elites
 QUEUE_GAMES = 2 * BATCH_GAMES
 _CPU = torch.device("cpu")
-ELITE_MIN_BATCH = 4
+ELITE_MIN_BATCH = 8
 ELITE_MAX_WAIT = 16
 
 
@@ -47,9 +51,8 @@ def get_temperature(batch_idx):
 
 
 def training_game_gen(
-    live_model, temperature, elite_snapshots=None, record_elites=True
+    live_model, temperature, elite_snapshots=None, record_elites=True, device=_CPU
 ):
-    device = _CPU
     num_players = random.randint(4, 7)
     bot_instances: dict[int, Player] = {
         0: PresidentDMCBot(
@@ -73,13 +76,17 @@ def training_game_gen(
             )
         elif roll < 0.80 and elite_snapshots:
             snap_path = random.choice(elite_snapshots)
-            snap_model = get_cached_traced_model(snap_path, PresidentValueNet)
+            snap_model = get_cached_traced_model(
+                snap_path, PresidentValueNet, device=device
+            )
             bot_instances[seat] = PresidentDMCBot(
                 player_id=seat, model=snap_model, device=device, record=record_elites
             )
         elif roll < 0.90 and elite_snapshots:
             snap_path = random.choice(elite_snapshots)
-            snap_model = get_cached_traced_model(snap_path, PresidentValueNet)
+            snap_model = get_cached_traced_model(
+                snap_path, PresidentValueNet, device=device
+            )
             bot_instances[seat] = PresidentDMCBot(
                 player_id=seat, model=snap_model, device=device, profile="aggressive"
             )
@@ -101,9 +108,11 @@ def training_game_gen(
     return x, a, y, stats
 
 
-def _trace_live(model):
+def _trace_live(model, device=_CPU):
     with torch.no_grad():
-        return torch.jit.trace(model, torch.zeros(8, STATE_DIM), check_trace=False)
+        return torch.jit.trace(
+            model, torch.zeros(8, STATE_DIM, device=device), check_trace=False
+        )
 
 
 def elite_subset(elite_paths, worker_id, k):
@@ -117,6 +126,8 @@ def elite_subset(elite_paths, worker_id, k):
 def actor_loop(
     worker_id,
     shared_model,
+    model_version,
+    device,
     elite_paths,
     temperature,
     stop_event,
@@ -125,13 +136,35 @@ def actor_loop(
     elites_per_worker,
 ):
     torch.set_num_threads(1)
-    live_model = _trace_live(shared_model)
+    if device.type == "cpu":
+        # Traced straight from shared memory, so trainer updates show up as-is
+        device_model = shared_model
+    else:
+        # CUDA tensors can't be shared between processes on Windows, so keep a
+        # device copy and refresh it from shared memory when the trainer steps
+        device_model = PresidentValueNet().to(device)
+    # The trace shares device_model's weights, so copying into them updates it
+    live_model = _trace_live(device_model, device)
+    synced_version = -1
+
     elites = elite_subset(elite_paths, worker_id, elites_per_worker)
     for path in elites:
-        get_cached_traced_model(path, PresidentValueNet)
+        get_cached_traced_model(path, PresidentValueNet, device=device)
 
     def make_game():
-        return training_game_gen(live_model, temperature.value, elites, RECORD_ELITES)
+        nonlocal synced_version
+        version = model_version.value
+
+        if device.type != "cpu" and version != synced_version:
+            with torch.no_grad():
+                for dst, src in zip(
+                    device_model.parameters(), shared_model.parameters()
+                ):
+                    dst.copy_(src)
+            synced_version = version
+        return training_game_gen(
+            live_model, temperature.value, elites, RECORD_ELITES, device
+        )
 
     try:
         for result in iter_batched(
@@ -141,6 +174,7 @@ def actor_loop(
             stop_event.is_set,
             ELITE_MIN_BATCH,
             ELITE_MAX_WAIT,
+            device,
         ):
             while not stop_event.is_set():
                 try:
@@ -212,7 +246,7 @@ def run_training_loop(
     lr = LEARNING_RATE * current_lr_scale(snapshot_dir)
     for group in optimizer.param_groups:
         group["lr"] = lr
-    print(f"Learning rate: {lr:.2e}")
+    print(f"Actor inference device: {INFERENCE_DEVICE}")
 
     shared_model.load_state_dict(live_model.state_dict())
 
@@ -227,6 +261,7 @@ def run_training_loop(
     elite_paths = glob.glob(os.path.join(snapshot_dir, "elites/model_gen_*.pt"))
 
     temperature = ctx.Value("d", get_temperature(batch_idx), lock=False)
+    model_version = ctx.Value("i", 0, lock=False)  # bumped after each update
     stop_event = ctx.Event()
     out_queue = ctx.Queue(maxsize=QUEUE_GAMES)
     actors = [
@@ -235,6 +270,8 @@ def run_training_loop(
             args=(
                 i,
                 shared_model,
+                model_version,
+                INFERENCE_DEVICE,
                 elite_paths,
                 temperature,
                 stop_event,
@@ -290,6 +327,7 @@ def run_training_loop(
                     loss_fn,
                     shared_model,
                 )
+                model_version.value += 1
                 # Warm up the decay so the random init washes out quickly
                 ema_decay = min(EMA_DECAY, (1 + batch_idx) / (10 + batch_idx))
                 update_ema(ema_model, live_model, ema_decay)

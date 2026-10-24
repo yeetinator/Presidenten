@@ -147,7 +147,13 @@ def run_tagged_games(
 
 
 def iter_batched(
-    make_game, n_games, concurrency, should_stop=None, min_batch=1, max_wait=0
+    make_game,
+    n_games,
+    concurrency,
+    should_stop=None,
+    min_batch=1,
+    max_wait=0,
+    device="cpu",
 ):
     results = []
     started = 0
@@ -198,7 +204,7 @@ def iter_batched(
         with torch.inference_mode():
             for model, slots, xs, _ in run:
                 batch = xs[0] if len(xs) == 1 else np.concatenate(xs)
-                q = model(torch.from_numpy(batch)).numpy()
+                q = model(torch.from_numpy(batch).to(device)).cpu().numpy()
                 offset = 0
 
                 for slot, x in zip(slots, xs):
