@@ -329,11 +329,23 @@ class PresidentValueNet(nn.Module):
         return self.head(self.trunk(x))
 
 
+class PresidentEnsembleNet(nn.Module):
+    """Averages the Q-values of value nets. Only nets from independently
+    trained runs help: checkpoints from one run play almost identically."""
+
+    def __init__(self, members):
+        super().__init__()
+        self.members = nn.ModuleList(members)
+
+    def forward(self, x):
+        return torch.stack([m(x) for m in self.members]).mean(0)
+
+
 class PresidentDMCBot(Player):
     def __init__(
         self,
         player_id,
-        model: PresidentValueNet,
+        model: nn.Module,
         device,
         explore=False,
         temperature=0.05,

@@ -9,7 +9,11 @@ from game import President, PlayerType
 from playerTypes.player import Player
 from playerTypes.random_bot import PresidentRandomBot
 from playerTypes.baseline_bot import PresidentBaselineBot
-from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet
+from playerTypes.dmc_bot import (
+    PresidentDMCBot,
+    PresidentEnsembleNet,
+    PresidentValueNet,
+)
 
 app = FastAPI(title="President Game Server")
 app.add_middleware(
@@ -300,13 +304,40 @@ async def wait_for_event(event: asyncio.Event, disconnect_event: asyncio.Event):
         await asyncio.sleep(0.05)
 
 
+# Models from independently trained runs, averaged into one ensemble
+DMC_MODEL_FILES = ("DMC.pt", "DMCW.pt")
+
+
+def load_dmc_model(device: torch.device) -> PresidentEnsembleNet:
+    bots_dir = Path(__file__).resolve().parent / "bots"
+    members = []
+
+    for file_name in DMC_MODEL_FILES:
+        model_path = bots_dir / file_name
+        model = PresidentValueNet().to(device)
+        try:
+            load_path = torch.load(model_path, map_location=device)
+            model.load_state_dict(load_path["model_state_dict"])
+        except Exception as e:
+            print(
+                f"Warning: Could not load weights from {model_path}. Reason: {e}. Leaving it out of the ensemble."
+            )
+            continue
+        members.append(model)
+
+    if not members:
+        print("Warning: No DMC weights could be loaded. Using untrained model instead.")
+        members.append(PresidentValueNet().to(device))
+
+    return PresidentEnsembleNet(members).eval()
+
+
 def build_assigned_players(
     assign_p: dict[int, PlayerType], device: torch.device
 ) -> tuple[dict[int, Player], int]:
     assigned_players: dict[int, Player] = {}
     human_id = 0
-
-    model_path = Path(__file__).resolve().parent / "bots" / "DMC.pt"
+    dmc_model = None  # loaded once and shared
 
     for p_id, p_type in assign_p.items():
         if p_type == PlayerType.HUMAN:
@@ -316,17 +347,8 @@ def build_assigned_players(
         elif p_type == PlayerType.BASELINE:
             assigned_players[p_id] = PresidentBaselineBot(p_id)
         elif p_type == PlayerType.DMC:
-            dmc_model = PresidentValueNet().to(device)
-
-            try:
-                load_path = torch.load(model_path, map_location=device)
-                dmc_model.load_state_dict(load_path["model_state_dict"])
-            except Exception as e:
-                print(
-                    f"Warning: Could not load weights from {model_path}. Reason: {e}. Using untrained model instead."
-                )
-
-            dmc_model.eval()
+            if dmc_model is None:
+                dmc_model = load_dmc_model(device)
             assigned_players[p_id] = PresidentDMCBot(p_id, dmc_model, device)
 
     return assigned_players, human_id
