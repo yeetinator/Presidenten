@@ -62,6 +62,8 @@ export interface ExchangePromptMessage {
 const initialThemeKey = "emerald";
 export const currTheme = writable<TableTheme>(TABLE_THEMES[initialThemeKey] || TABLE_THEMES.emerald);
 export const state = writable<GameStateUpdate | null>(null);
+export const inGame = writable<boolean>(false);
+export const lobbyNotice = writable<string | null>(null);
 export const connectionStatus = writable<ConnectionStatus>("disconnected");
 export const selectedCards = writable<string[]>([]);
 export const roundSummary = writable<RoundSummary | null>(null);
@@ -85,12 +87,14 @@ type IncomingWebSocketMessage =
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
+const RECONNECT_DELAY_MS = 2000;
 // No card transition runs this long; Svelte skips the end event of an interrupted
 // transition, so an element still marked as animating by then is released
 const ANIMATION_TIMEOUT_MS = 1000;
 
 let socket: WebSocket | null = null;
 let currUrl: string | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let stateUpdateQueue: (() => void)[] = [];
 const animatingElements = new Map<EventTarget, ReturnType<typeof setTimeout>>();
 
@@ -194,6 +198,8 @@ function clearAll() {
   clearExchangePrompt();
   clearJumpInPrompt();
   clearDealing();
+  inGame.set(false);
+  lobbyNotice.set(null);
 }
 
 function buildAutoFinishMoves(suitLastMove: string[]) {
@@ -359,18 +365,40 @@ function attachSocketListeners(activeSocket: WebSocket) {
   activeSocket.addEventListener("open", () => connectionStatus.set("connected"));
   activeSocket.addEventListener("error", () => connectionStatus.set("error"));
   activeSocket.addEventListener("close", () => {
-    if (socket === activeSocket) {
-      connectionStatus.set("disconnected");
-      socket = null;
+    if (socket !== activeSocket) return; // closed on purpose by disconnect()
+
+    connectionStatus.set("disconnected");
+    socket = null;
+    if (get(inGame)) {
+      // The server's game ended with the connection, so there is nothing to resume
+      clearAll();
+      lobbyNotice.set("Lost the connection to the game server.");
     }
+    scheduleReconnect();
   });
 
   activeSocket.addEventListener("message", handleSocketMessage);
 }
 
+function scheduleReconnect() {
+  if (reconnectTimer || !currUrl) return;
+
+  const url = currUrl;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect(url);
+  }, RECONNECT_DELAY_MS);
+}
+
+function cancelReconnect() {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+}
+
 function connect(url: string) {
   if (socket && socket.readyState <= WebSocket.OPEN && currUrl === url) return;
 
+  cancelReconnect();
   if (socket) {
     socket.close();
     socket = null;
@@ -385,6 +413,7 @@ function connect(url: string) {
 }
 
 function disconnect() {
+  cancelReconnect();
   if (!socket) return;
 
   socket.close();
@@ -394,9 +423,8 @@ function disconnect() {
 
 function waitForSocketOpen() {
   return new Promise<void>((resolve, reject) => {
-    if (!socket) return reject(new Error("WebSocket is not initialized."));
+    if (!socket || socket.readyState > WebSocket.OPEN) return reject(new Error("Not connected to the game server."));
     if (socket.readyState === WebSocket.OPEN) return resolve();
-    if (socket.readyState !== WebSocket.CONNECTING) return reject(new Error("WebSocket is not connected."));
 
     const handleOpen = () => {
       cleanup();
@@ -418,12 +446,9 @@ function waitForSocketOpen() {
   });
 }
 
+// Never reconnects on its own: a new connection is a new server session without
+// this game, so anything sent there would be silently ignored
 async function send(payload: Record<string, unknown>) {
-  if (!socket || socket.readyState === WebSocket.CLOSED) {
-    if (!currUrl) throw new Error("No websocket URL has been configured.");
-    connect(currUrl);
-  }
-
   await waitForSocketOpen();
   socket?.send(JSON.stringify(payload));
 }
@@ -434,7 +459,9 @@ async function startGame(payload: {
   num_rounds: number;
   player_types: number[];
 }) {
+  lobbyNotice.set(null);
   await send(payload);
+  inGame.set(true);
 }
 
 async function dealtCards() {

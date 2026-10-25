@@ -14,6 +14,7 @@
     revealedBotSeat,
     selectedCards,
     isDealing,
+    inGame,
     state as gameState,
     currTheme,
     type GameStateUpdate,
@@ -41,7 +42,6 @@
     exchange: "text-[0.75rem] font-black tracking-[0.16em] text-amber-300",
   };
 
-  let gameStarted = false;
   let deck: string[] = [];
   let visibleCardsPerSeat: Record<number, string[]> = {};
   let isAnimatingDeal = false;
@@ -303,7 +303,6 @@
         num_rounds: config.numRounds,
         player_types: config.playerTypes,
       });
-      gameStarted = true;
     } catch (error) {
       console.error(error);
     }
@@ -357,8 +356,13 @@
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
-    await gameStore.dealtCards();
-    isAnimatingDeal = false;
+    try {
+      await gameStore.dealtCards();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      isAnimatingDeal = false; // or the next game's deal would never start
+    }
   }
 
   async function handlePlay() {
@@ -389,7 +393,7 @@
   }
 
   function handleKeyDown(event: KeyboardEvent) {
-    if (!gameStarted || event.repeat || $roundSummary) return;
+    if (!$inGame || event.repeat || $roundSummary) return;
 
     const target = event.target as HTMLElement | null;
     if (
@@ -444,7 +448,6 @@
   }
 
   function handleQuit() {
-    gameStarted = false;
     gameStore.clearAll();
     gameStore.disconnect();
     gameStore.connect(websocketUrl);
@@ -478,7 +481,7 @@
 
 <svelte:window on:keydown={handleKeyDown} />
 
-{#if !gameStarted}
+{#if !$inGame}
   <Lobby onStartGame={handleStartGame} />
 {:else}
   <main

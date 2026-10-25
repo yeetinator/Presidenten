@@ -4,6 +4,7 @@
     currTheme,
     setTheme,
     connectionStatus,
+    lobbyNotice,
   } from "../../stores/gameStore";
   import { TABLE_THEMES } from "../themes";
 
@@ -111,6 +112,14 @@
             >
               Start Game
             </button>
+
+            {#if $lobbyNotice}
+              <p class="text-sm font-semibold text-amber-300" role="alert">
+                {$lobbyNotice}
+              </p>
+            {:else if $connectionStatus !== "connected"}
+              <p class="text-sm text-white/60">Connecting to the game server…</p>
+            {/if}
 
             <div class="mt-2 grid gap-2.5 border-t border-white/10 pt-4">
               <span
