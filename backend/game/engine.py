@@ -465,7 +465,10 @@ class President:
 
             self.game_over = self._is_game_over()
             self.pile.extend([card_val] * count)
-            self.curr_turn = p_id
+            # The jumper leads the new pile, or the next player if those were their last cards
+            self.curr_turn = self._get_next_active_player(
+                p_id, ignore_passed=True, include_start=True
+            )
             self.pending_finish = None
             self.was_pile_reset = True
 
