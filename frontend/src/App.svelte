@@ -293,7 +293,6 @@
     playerTypes: number[];
   }) {
     try {
-      gameStore.clearLogs();
       gameStore.clearRoundSummary();
       gameStore.clearExchangePrompt();
       gameStore.clearSelectedCards();

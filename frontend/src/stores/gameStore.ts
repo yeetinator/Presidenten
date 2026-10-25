@@ -61,7 +61,6 @@ export interface ExchangePromptMessage {
 
 const initialThemeKey = "emerald";
 export const currTheme = writable<TableTheme>(TABLE_THEMES[initialThemeKey] || TABLE_THEMES.emerald);
-export const logs = writable<string[]>([]);
 export const state = writable<GameStateUpdate | null>(null);
 export const connectionStatus = writable<ConnectionStatus>("disconnected");
 export const selectedCards = writable<string[]>([]);
@@ -163,10 +162,6 @@ function clearExchangePrompt() {
   exchangePrompt.set(null);
 }
 
-function clearLogs() {
-  logs.set([]);
-}
-
 function clearJumpInPrompt() {
   jumpInPrompt.set(null);
 }
@@ -182,7 +177,6 @@ function clearAll() {
   clearFastForwardMode();
   clearRoundSummary();
   clearExchangePrompt();
-  clearLogs();
   clearJumpInPrompt();
   clearDealing();
 }
@@ -332,13 +326,6 @@ function handleSocketMessage(event: MessageEvent<string>) {
         roles: payload.roles,
         out_order: payload.out_order,
       });
-      return;
-    }
-
-    case "GAME_LOG":
-    case "LOG_ALERT": {
-      const { message } = payload as { message?: unknown };
-      if (typeof message === "string") logs.update((currLogs) => [...currLogs, message]);
       return;
     }
 
@@ -504,7 +491,6 @@ export const gameStore = {
   clearSelectedCards,
   clearRoundSummary,
   clearExchangePrompt,
-  clearLogs,
   clearFastForwardMode,
   clearAll,
   playSelectedCards,

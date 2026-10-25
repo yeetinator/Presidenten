@@ -167,10 +167,6 @@ def get_player_type_label(player_type: PlayerType) -> str:
     return PLAYER_TYPE_LABELS.get(player_type, "Unknown")
 
 
-async def send_game_log(websocket: WebSocket, message: str):
-    await websocket.send_json({"type": "GAME_LOG", "message": message})
-
-
 async def send_state_update(
     websocket: WebSocket,
     env: President,
@@ -444,13 +440,7 @@ async def run_exchange_phase(
     )
 
     for pair in env.role_pairs:
-        high_role, low_role, count = pair
         env.exchange_cards(pair, cards_to_pass)
-
-        await send_game_log(
-            websocket,
-            f"{high_role} and {low_role} have exchanged {count} card(s).",
-        )
         await send_state_update(websocket, env, human_id, assign_p)
         await asyncio.sleep(timings.exchange_delay)
 
@@ -503,8 +493,6 @@ async def run(
                         if not is_offered_move(chosen_move, parsed_array, jump_state):
                             continue
                         env.step(human_id, chosen_move, parsed_array)
-
-                        await send_game_log(websocket, "Succesful jump in!")
                         await send_state_update(websocket, env, human_id, assign_p)
                         await asyncio.sleep(timings.message_delay)
 
@@ -518,7 +506,6 @@ async def run(
                             break
                         continue
                 except asyncio.TimeoutError:
-                    await send_game_log(websocket, "Too slow!")
                     if env.pending_finish:
                         if (
                             curr_id
@@ -538,10 +525,6 @@ async def run(
                 chosen_move = await asyncio.to_thread(bot.get_move, state, env)
                 env.step(curr_id, chosen_move)
                 if chosen_move != (0, 0, 0):
-                    await send_game_log(
-                        websocket,
-                        f"Player {curr_id} ({env.roles[curr_id]}): jumped in with {President.visualize_move(chosen_move)}!",
-                    )
                     await send_state_update(websocket, env, human_id, assign_p)
                     await asyncio.sleep(timings.message_delay)
 
@@ -590,8 +573,7 @@ async def run(
             if not is_offered_move(chosen_move, suits_array, prompt_state) or (
                 chosen_move != (0, 0, 0) and (chosen_move in finish_moves) != is_jump
             ):
-                await send_game_log(websocket, "That move isn't allowed right now.")
-                continue
+                continue  # ask again with a fresh prompt
 
             if (
                 not is_jump
@@ -617,11 +599,6 @@ async def run(
                             env.step(env.pending_finish["queue"][0][2], (0, 0, 0))
 
             env.step(human_id, chosen_move, suits_array)
-
-            await send_game_log(
-                websocket,
-                f"({env.roles[human_id]}) You played: {President.visualize_move(chosen_move)}",
-            )
             await send_state_update(websocket, env, human_id, assign_p)
 
             if env.was_pile_reset and not env.pending_finish and not env.game_over:
@@ -647,10 +624,7 @@ async def run(
             and env.pending_finish
             and env.pending_finish["queue"][0][2] == human_id
         ):
-            await send_game_log(
-                websocket,
-                f"Player {curr_id} ({env.roles[curr_id]}) played before you could jump in!",
-            )
+            # The bot played before the human jumped in, so the finish lapses
             env.step(human_id, (0, 0, 0))
 
             if env.pending_finish:
@@ -659,11 +633,6 @@ async def run(
                 else:
                     continue
         env.step(curr_id, chosen_move)
-
-        await send_game_log(
-            websocket,
-            f"Player {curr_id} ({env.roles[curr_id]}): {President.visualize_move(chosen_move)}",
-        )
         if env.curr_turn != human_id or env.was_pile_reset:
             await send_state_update(websocket, env, human_id, assign_p)
 
@@ -714,9 +683,7 @@ async def deal_hands(
     env: President,
     session: GameSession,
     disconnect_event: asyncio.Event,
-    message: str,
 ):
-    await websocket.send_json({"type": "LOG_ALERT", "message": message})
     session.dealt_cards_event.clear()  # every deal waits for its own animation
     await websocket.send_json(
         {
@@ -746,13 +713,7 @@ async def run_connection(
         if session.env is None:
             return
 
-        await deal_hands(
-            websocket,
-            session.env,
-            session,
-            disconnect_event,
-            "Game lobby created. Dealing hands...",
-        )
+        await deal_hands(websocket, session.env, session, disconnect_event)
         if session.env.curr_turn != session.human_id:
             await asyncio.sleep(session.timings.message_delay)
         await run(
@@ -775,13 +736,7 @@ async def run_connection(
                 continue
 
             session.env.full_reset(next_round=True)
-            await deal_hands(
-                websocket,
-                session.env,
-                session,
-                disconnect_event,
-                f"Starting Round {session.env.round}...",
-            )
+            await deal_hands(websocket, session.env, session, disconnect_event)
             await run_exchange_phase(
                 session.env,
                 session.assigned_players,
