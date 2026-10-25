@@ -85,19 +85,32 @@ type IncomingWebSocketMessage =
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
+// No card transition runs this long; Svelte skips the end event of an interrupted
+// transition, so an element still marked as animating by then is released
+const ANIMATION_TIMEOUT_MS = 1000;
+
 let socket: WebSocket | null = null;
 let currUrl: string | null = null;
 let stateUpdateQueue: (() => void)[] = [];
-let activeAnimationsCount = 0;
+const animatingElements = new Map<EventTarget, ReturnType<typeof setTimeout>>();
 
-export function startAnimation() {
-  activeAnimationsCount++;
+export function startAnimation(event: Event) {
+  const element = event.target;
+  if (!element) return;
+
+  clearTimeout(animatingElements.get(element));
+  animatingElements.set(element, setTimeout(() => releaseAnimation(element), ANIMATION_TIMEOUT_MS));
   isAnimating.set(true);
 }
 
-export function endAnimation() {
-  activeAnimationsCount = Math.max(0, activeAnimationsCount - 1);
-  if (activeAnimationsCount === 0) isAnimating.set(false);
+export function endAnimation(event: Event) {
+  if (event.target) releaseAnimation(event.target);
+}
+
+function releaseAnimation(element: EventTarget) {
+  clearTimeout(animatingElements.get(element));
+  animatingElements.delete(element);
+  if (animatingElements.size === 0) isAnimating.set(false);
 }
 
 export function setTheme(key: ThemeKey) {
@@ -144,9 +157,11 @@ function clearState() {
 }
 
 function clearAnimations() {
-  activeAnimationsCount = 0;
-  isAnimating.set(false);
+  // Empty the queue first: going idle immediately runs the next queued update
   stateUpdateQueue = [];
+  animatingElements.forEach((timer) => clearTimeout(timer));
+  animatingElements.clear();
+  isAnimating.set(false);
 }
 
 function clearFastForwardMode() {
@@ -453,6 +468,8 @@ async function nextRound() {
   clearExchangePrompt();
   clearRoundSummary();
   clearState();
+  // Updates still queued from the finished round are obsolete
+  clearAnimations();
   await send({ type: "NEXT_ROUND" });
 }
 
