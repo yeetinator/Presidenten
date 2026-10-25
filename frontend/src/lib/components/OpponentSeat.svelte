@@ -1,6 +1,11 @@
 <script lang="ts">
   import Card from "../../assets/Card.svelte";
-  import { send, receive } from "../transitions";
+  import {
+    send,
+    receive,
+    NORMAL_DURATION_MS,
+    FAST_FORWARD_DURATION_MS,
+  } from "../transitions";
   import {
     fastForwardMode,
     startAnimation,
@@ -11,11 +16,15 @@
   export let opponent: OpponentView;
   export let className = "";
   export let revealBotCards = false;
+
+  $: transitionMs = $fastForwardMode
+    ? FAST_FORWARD_DURATION_MS
+    : NORMAL_DURATION_MS;
 </script>
 
 <article
   class={`flex flex-col gap-1 transition-all duration-300 ${className} ${opponent.has_passed ? "opacity-40 grayscale pointer-events-none" : ""}`}
-  style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"};`}
+  style={`transition-duration: ${transitionMs}ms;`}
 >
   <div class="flex items-center justify-center gap-2">
     <img
@@ -41,7 +50,7 @@
         on:outrostart={startAnimation}
         on:outroend={endAnimation}
         class="relative transition-all duration-300"
-        style={`transition-duration: ${$fastForwardMode ? "100ms" : "200ms"}; margin-left: ${cardIndex === 0 ? 0 : -5.4}rem; z-index: ${cardIndex};`}
+        style={`transition-duration: ${transitionMs}ms; margin-left: ${cardIndex === 0 ? 0 : -5.4}rem; z-index: ${cardIndex};`}
       >
         <Card
           {suitCard}

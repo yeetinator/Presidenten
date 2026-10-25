@@ -17,8 +17,7 @@
     | ((config: StartGameConfig) => void | Promise<void>)
     | undefined = undefined;
 
-  const playerTypeOptions = [
-    { value: 0, label: "Human" },
+  const botTypeOptions = [
     { value: 4, label: "DMC" },
     { value: 2, label: "Baseline" },
     { value: 1, label: "Random" },
@@ -157,7 +156,7 @@
                   Player {index + 1}
                 </span>
                 <div class="grid grid-cols-3 gap-2">
-                  {#each playerTypeOptions.filter((option) => option.value !== 0) as option}
+                  {#each botTypeOptions as option}
                     <button
                       class="rounded-lg border px-3 py-2 text-sm font-semibold transition active:scale-[0.99]"
                       style={playerTypes[index] === option.value

@@ -13,6 +13,7 @@
     ? `/cards/${suitCard.trim().toUpperCase()}.svg`
     : "/cards/1B.svg";
   $: jumpColor = $currTheme?.jumpInColor ?? "#ef4444";
+  $: ringColor = $currTheme?.cardRing ?? "#34d399";
 </script>
 
 <button
@@ -24,7 +25,7 @@
         ? ""
         : "hover:-translate-y-2 hover:shadow-lg"
   } border ${isBlinking && !disabled ? "animate-jump-ready" : "border-slate-200"}`}
-  style={`${isSelected ? `ring-color: ${$currTheme?.cardRing ?? "#34d399"}; --tw-ring-color: ${$currTheme?.cardRing ?? "#34d399"};` : ""} --jump-color: ${jumpColor};`}
+  style={`${isSelected ? `--tw-ring-color: ${ringColor};` : ""} --jump-color: ${jumpColor};`}
   {disabled}
   on:click={onClick}
 >

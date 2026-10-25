@@ -50,6 +50,9 @@
     runDealSequence();
   }
 
+  $: transitionMs = $fastForwardMode
+    ? FAST_FORWARD_DURATION_MS
+    : NORMAL_DURATION_MS;
   $: suitedHand = $isDealing
     ? (visibleCardsPerSeat[0] ?? [])
     : ($gameState?.suited_hand ?? []);
@@ -96,7 +99,7 @@
       suitedHand: $isDealing
         ? (visibleCardsPerSeat[opponent.seat] ?? [])
         : ($gameState?.opp_suited_hands?.[opponent.seat] ?? []),
-      label: `${displayBotType(opponent.role)} ${$gameState?.player_types?.[opponent.seat] ?? "Bot"}`,
+      label: `${opponent.role || "Waiting"} ${$gameState?.player_types?.[opponent.seat] ?? "Bot"}`,
       position:
         index === 0 ? "left" : index === arr.length - 1 ? "right" : "top",
       is_turn:
@@ -249,11 +252,6 @@
     };
   }
 
-  function displayBotType(role: string | null) {
-    if (!role) return "Waiting";
-    return role.replace(/\s*Bot$/i, "");
-  }
-
   function getPileBaseAngle(leaderSeat: number, opponents: OpponentView[]) {
     if (leaderSeat === 0) return 0;
 
@@ -294,25 +292,18 @@
     numRounds: number;
     playerTypes: number[];
   }) {
-    const payload: {
-      type: "START_GAME";
-      num_players: number;
-      num_rounds: number;
-      player_types: number[];
-    } = {
-      type: "START_GAME",
-      num_players: config.numPlayers,
-      num_rounds: config.numRounds,
-      player_types: config.playerTypes,
-    };
-
     try {
       gameStore.clearLogs();
       gameStore.clearRoundSummary();
       gameStore.clearExchangePrompt();
       gameStore.clearSelectedCards();
       gameStore.clearFastForwardMode();
-      await gameStore.startGame(payload);
+      await gameStore.startGame({
+        type: "START_GAME",
+        num_players: config.numPlayers,
+        num_rounds: config.numRounds,
+        player_types: config.playerTypes,
+      });
       gameStarted = true;
     } catch (error) {
       console.error(error);
@@ -480,7 +471,7 @@
       return;
     }
 
-    const selectionLimit = !!$exchangePrompt ? exchangeRequiredCards : 4;
+    const selectionLimit = $exchangePrompt ? exchangeRequiredCards : 4;
     if ($selectedCards.length >= selectionLimit) return;
     gameStore.selectedCards.set([...$selectedCards, suitCard]);
   }
@@ -646,7 +637,7 @@
                         on:outrostart={gameStore.startAnimation}
                         on:outroend={gameStore.endAnimation}
                         class="absolute transition-all duration-300 flex justify-center origin-center"
-                        style={`transition-duration: ${$fastForwardMode ? FAST_FORWARD_DURATION_MS : NORMAL_DURATION_MS}ms; z-index: ${card.playIndex * 10 + card.cardIndex}; 
+                        style={`transition-duration: ${transitionMs}ms; z-index: ${card.playIndex * 10 + card.cardIndex}; 
                       transform: translateX(${(card.cardIndex - (card.playLength - 1) / 2) * 1.4}rem);`}
                       >
                         <div
@@ -688,7 +679,7 @@
                   on:outrostart={gameStore.startAnimation}
                   on:outroend={gameStore.endAnimation}
                   class="absolute transition-all duration-300 flex justify-center origin-center"
-                  style={`transition-duration: ${$fastForwardMode ? FAST_FORWARD_DURATION_MS : NORMAL_DURATION_MS}ms;`}
+                  style={`transition-duration: ${transitionMs}ms;`}
                 >
                   <Card
                     {suitCard}
@@ -762,7 +753,7 @@
               class="flex w-full justify-center overflow-visible h-28 md:h-36 items-center transition-all duration-300 {haveIPassed
                 ? 'opacity-40 grayscale pointer-events-none'
                 : ''}"
-              style={`transition-duration: ${$fastForwardMode ? FAST_FORWARD_DURATION_MS : NORMAL_DURATION_MS}ms;`}
+              style={`transition-duration: ${transitionMs}ms;`}
             >
               {#each suitedHand as suitCard, index (suitCard)}
                 <div
@@ -773,7 +764,7 @@
                   on:outrostart={gameStore.startAnimation}
                   on:outroend={gameStore.endAnimation}
                   class="relative pointer-events-none transition-all duration-300"
-                  style={`transition-duration: ${$fastForwardMode ? FAST_FORWARD_DURATION_MS : NORMAL_DURATION_MS}ms; ${getHorizontalOverlapStyle(index)}`}
+                  style={`transition-duration: ${transitionMs}ms; ${getHorizontalOverlapStyle(index)}`}
                 >
                   <Card
                     {suitCard}

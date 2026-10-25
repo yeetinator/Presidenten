@@ -35,11 +35,7 @@ export interface RoundOverMessage {
   out_order: number[];
 }
 
-export interface RoundSummary {
-  scores: Record<number, [number, number]>;
-  roles: Record<string, string>;
-  out_order: number[];
-}
+export type RoundSummary = Omit<RoundOverMessage, "type">;
 
 export interface JumpInPromptMessage {
   type: "JUMP_IN_PROMPT";
@@ -49,11 +45,9 @@ export interface JumpInPromptMessage {
 
 export interface JumpInPrompt {
   message: string;
-  state: GameStateUpdate;
 }
 
 export interface ExchangePrompt {
-  state: GameStateUpdate;
   requiredCards: number;
   canChoose: boolean;
 }
@@ -66,12 +60,10 @@ export interface ExchangePromptMessage {
 }
 
 const initialThemeKey = "emerald";
-export const currThemeKey = writable<ThemeKey>(initialThemeKey);
 export const currTheme = writable<TableTheme>(TABLE_THEMES[initialThemeKey] || TABLE_THEMES.emerald);
 export const logs = writable<string[]>([]);
 export const state = writable<GameStateUpdate | null>(null);
 export const connectionStatus = writable<ConnectionStatus>("disconnected");
-export const lastMessageType = writable<string | null>(null);
 export const selectedCards = writable<string[]>([]);
 export const roundSummary = writable<RoundSummary | null>(null);
 export const jumpInPrompt = writable<JumpInPrompt | null>(null);
@@ -110,10 +102,7 @@ export function endAnimation() {
 }
 
 export function setTheme(key: ThemeKey) {
-  if (TABLE_THEMES[key]) {
-    currThemeKey.set(key);
-    currTheme.set(TABLE_THEMES[key]);
-  }
+  if (TABLE_THEMES[key]) currTheme.set(TABLE_THEMES[key]);
 }
 
 function isGameStateUpdate(value: unknown): value is GameStateUpdate {
@@ -165,10 +154,6 @@ function clearFastForwardMode() {
   fastForwardMode.set(false);
 }
 
-function clearLastMessageType() {
-  lastMessageType.set(null);
-}
-
 function clearRoundSummary() {
   roundSummary.set(null);
   revealedBotSeat.set(null);
@@ -195,7 +180,6 @@ function clearAll() {
   clearState();
   clearAnimations();
   clearFastForwardMode();
-  clearLastMessageType();
   clearRoundSummary();
   clearExchangePrompt();
   clearLogs();
@@ -272,7 +256,6 @@ function handleSocketMessage(event: MessageEvent<string>) {
     return;
   }
 
-  lastMessageType.set(payload.type);
   switch (payload.type) {
     case "DEAL_CARDS": {
       const msg = payload as DealCardsMessage;
@@ -312,7 +295,7 @@ function handleSocketMessage(event: MessageEvent<string>) {
       enqueue(() => {
         state.set(nextState);
         clearJumpInPrompt();
-        jumpInPrompt.set({ message, state: nextState });
+        jumpInPrompt.set({ message });
       });
       return;
     }
@@ -333,7 +316,7 @@ function handleSocketMessage(event: MessageEvent<string>) {
         state.set(nextState);
         if (!canChoose && requiredCards > 0) selectedCards.set(getHighestSuitCards(nextState.suited_hand, requiredCards));
 
-        exchangePrompt.set({ state: nextState, requiredCards, canChoose });
+        exchangePrompt.set({ requiredCards, canChoose });
       });
       return;
     }
@@ -513,14 +496,7 @@ isAnimating.subscribe((animating) => {
 });
 
 export const gameStore = {
-  state,
   selectedCards,
-  roundSummary,
-  revealedBotSeat,
-  jumpInPrompt,
-  exchangePrompt,
-  isDealing,
-  currTheme,
   connect,
   disconnect,
   startGame,
