@@ -549,6 +549,10 @@ async def offer_human_jump_in(table: Table, curr_id: int) -> int | None:
             timeout=timings.jump_in_window,
         )
     except asyncio.TimeoutError:
+        if env.was_pile_reset:  # everyone has passed; the pile only waited for this
+            await clear_finished_pile(table)
+            return None
+
         pending = env.pending_finish
         if pending:
             if (
@@ -632,7 +636,17 @@ async def play_human_turn(table: Table):
         return  # ask again with a fresh prompt
 
     if not is_jump and finisher(env) == human_id:
-        # Playing normally declines the jump-in, but a bot may still finish first
+        if move == (0, 0, 0):
+            # Passing doesn't give up the jump-in, it stays open while the others pass.
+            # The engine would take a pass by the finisher as declining it, so the
+            # pending finish sits out this one normal pass
+            pending, env.pending_finish = env.pending_finish, None
+            env.step(human_id, move)
+            env.pending_finish = pending
+            await table.show_state()
+            return  # the human's jump-in window opens again straight away
+
+        # Playing declines the jump-in, but a bot may still finish first
         env.step(human_id, (0, 0, 0))
         bot_id = finisher(env)
         if bot_id is not None:
@@ -680,18 +694,25 @@ async def play_bot_turn(table: Table, bot_id: int):
         await table.show_state()
 
     if env.was_pile_reset and not env.game_over:
-        await asyncio.sleep(timings.message_delay)
+        if finisher(env) == human_id:
+            return  # the pile clears only after the human's jump-in window
 
-        env.clear_pile()
-        if env.curr_turn == human_id:
-            return  # the human's prompt shows the cleared pile
-
-        await table.show_state()
         await asyncio.sleep(timings.message_delay)
+        await clear_finished_pile(table)
     elif not env.pending_finish and not env.game_over and env.curr_turn != human_id:
         await asyncio.sleep(
             timings.message_delay if move != (0, 0, 0) else timings.pass_delay
         )
+
+
+async def clear_finished_pile(table: Table):
+    """Clear a pile everyone passed on; the next leader's turn follows."""
+    table.env.clear_pile()
+    if table.env.curr_turn == table.human_id:
+        return  # the human's prompt shows the cleared pile
+
+    await table.show_state()
+    await asyncio.sleep(table.timings.message_delay)
 
 
 async def end_round(table: Table):
