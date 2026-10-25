@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import itertools
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,6 +46,9 @@ PLAYER_TYPE_LABELS = {
 }
 
 DISCONNECT_MESSAGE_TYPE = "__DISCONNECT__"
+
+# Every prompt for player input gets a fresh id that its reply must echo
+prompt_ids = itertools.count(1)
 
 
 @dataclass
@@ -246,13 +250,31 @@ async def next_queued_message(
         pending_messages.append(raw_data)
 
 
-def discard_stale_moves(input_queue: asyncio.Queue, pending_messages: list[dict]):
-    """Drop moves sent before the prompt that is about to go out; keep other messages."""
-    pending_messages[:] = [m for m in pending_messages if m.get("type") != "PLAY_MOVE"]
-    while not input_queue.empty():
-        message = input_queue.get_nowait()
-        if message.get("type") != "PLAY_MOVE":
-            pending_messages.append(message)
+async def wait_for_reply(
+    input_queue: asyncio.Queue,
+    pending_messages: list[dict],
+    disconnect_event: asyncio.Event,
+    message_type: str,
+    prompt_id: int,
+    *,
+    timeout: float | None = None,
+) -> dict:
+    """Next `message_type` message answering prompt `prompt_id`; replies to earlier
+    prompts (e.g. a jump-in sent after its window closed) are dropped."""
+    loop = asyncio.get_running_loop()
+    deadline = None if timeout is None else loop.time() + timeout
+
+    while True:
+        remaining = None if deadline is None else max(0.0, deadline - loop.time())
+        message = await next_queued_message(
+            input_queue,
+            pending_messages,
+            disconnect_event,
+            allowed_types={message_type},
+            timeout=remaining,
+        )
+        if message.get("prompt_id") == prompt_id:
+            return message
 
 
 def is_offered_move(move: tuple, suits: list[str], prompt_state: dict) -> bool:
@@ -418,12 +440,10 @@ async def wait_for_exchange_cards(
     pending_messages: list[dict],
     disconnect_event: asyncio.Event,
     can_choose: bool,
+    prompt_id: int,
 ):
-    raw_data = await next_queued_message(
-        input_queue,
-        pending_messages,
-        disconnect_event,
-        allowed_types={"EXCHANGE_CARDS"},
+    raw_data = await wait_for_reply(
+        input_queue, pending_messages, disconnect_event, "EXCHANGE_CARDS", prompt_id
     )
 
     suits = raw_data.get("suits", []) if can_choose else []
@@ -454,9 +474,12 @@ async def run_exchange_phase(
         state = env._get_state(p_id)
         chosen_cards = await asyncio.to_thread(bot.choose_cards_to_pass, state)
         cards_to_pass[p_id] = chosen_cards
+
+    prompt_id = next(prompt_ids)
     await websocket.send_json(
         {
             "type": "EXCHANGE_PROMPT",
+            "prompt_id": prompt_id,
             "state": enrich_state(env._get_state(human_id), assign_p),
             "required_cards": required_cards,
             "can_choose": can_choose,
@@ -468,6 +491,7 @@ async def run_exchange_phase(
         pending_messages,
         disconnect_event,
         can_choose,
+        prompt_id,
     )
 
     for pair in env.role_pairs:
@@ -497,27 +521,27 @@ async def run(
             if curr_id == human_id or (
                 env.pending_finish and env.pending_finish["queue"][0][2] == human_id
             ):
+                prompt_id = next(prompt_ids)
                 jump_state = env._get_state(human_id)
-                discard_stale_moves(input_queue, pending_messages)
                 await websocket.send_json(
                     {
                         "type": "JUMP_IN_PROMPT",
+                        "prompt_id": prompt_id,
                         "state": enrich_state(jump_state, assign_p, accepts_moves=True),
                         "message": "JUMP IN!",
                     }
                 )
 
                 try:
-                    raw_data = await next_queued_message(
+                    raw_data = await wait_for_reply(
                         input_queue,
                         pending_messages,
                         disconnect_event,
-                        allowed_types={"PLAY_MOVE"},
+                        "PLAY_MOVE",
+                        prompt_id,
                         timeout=timings.jump_in_window,
                     )
-                    if raw_data.get("type") == "PLAY_MOVE" and raw_data.get(
-                        "jump", True
-                    ):
+                    if raw_data.get("jump", True):
                         suits_array = raw_data.get("suits", [])
                         parsed_array = get_finish_suits(suits_array, jump_state)
                         chosen_move = parse_suits_to_move(parsed_array)
@@ -573,20 +597,18 @@ async def run(
         if assign_p[curr_id] == PlayerType.HUMAN:
             pending_bool = False if env.pending_finish else True
             prompt_state = env._get_state(human_id, only_finish=pending_bool)
+            prompt_id = next(prompt_ids)
 
-            discard_stale_moves(input_queue, pending_messages)
             await websocket.send_json(
                 {
                     "type": "STATE_UPDATE",
+                    "prompt_id": prompt_id,
                     "state": enrich_state(prompt_state, assign_p, accepts_moves=True),
                     "clearJump": pending_bool,
                 }
             )
-            raw_data = await next_queued_message(
-                input_queue,
-                pending_messages,
-                disconnect_event,
-                allowed_types={"PLAY_MOVE"},
+            raw_data = await wait_for_reply(
+                input_queue, pending_messages, disconnect_event, "PLAY_MOVE", prompt_id
             )
 
             suits_array = raw_data.get("suits", [])

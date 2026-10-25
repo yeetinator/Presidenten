@@ -26,6 +26,7 @@ export interface StateUpdateMessage {
   type: "STATE_UPDATE";
   state: GameStateUpdate;
   clearJump?: boolean;
+  prompt_id?: number;
 }
 
 export interface RoundOverMessage {
@@ -41,6 +42,7 @@ export interface JumpInPromptMessage {
   type: "JUMP_IN_PROMPT";
   state: GameStateUpdate;
   message: string;
+  prompt_id: number;
 }
 
 export interface JumpInPrompt {
@@ -57,6 +59,7 @@ export interface ExchangePromptMessage {
   state: GameStateUpdate;
   required_cards: number;
   can_choose: boolean;
+  prompt_id: number;
 }
 
 const initialThemeKey = "emerald";
@@ -97,6 +100,8 @@ let currUrl: string | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let stateUpdateQueue: (() => void)[] = [];
 const animatingElements = new Map<EventTarget, ReturnType<typeof setTimeout>>();
+// Id of the prompt on screen; replies echo it so the server can ignore stale ones
+let activePromptId: number | null = null;
 
 export function startAnimation(event: Event) {
   const element = event.target;
@@ -198,6 +203,7 @@ function clearAll() {
   clearExchangePrompt();
   clearJumpInPrompt();
   clearDealing();
+  activePromptId = null;
   inGame.set(false);
   lobbyNotice.set(null);
 }
@@ -278,6 +284,7 @@ function handleSocketMessage(event: MessageEvent<string>) {
 
       const nextState = msg.state;
       enqueue(() => {
+        activePromptId = null;
         isDealing.set(true);
         state.set(nextState);
         clearSelectedCards();
@@ -293,7 +300,9 @@ function handleSocketMessage(event: MessageEvent<string>) {
 
       const nextState = msg.state;
       const keepJumpIn = msg.clearJump === false;
+      const promptId = typeof msg.prompt_id === "number" ? msg.prompt_id : null;
       enqueue(() => {
+        activePromptId = promptId;
         state.set(nextState);
         clearExchangePrompt();
         if (!keepJumpIn) clearJumpInPrompt();
@@ -303,11 +312,13 @@ function handleSocketMessage(event: MessageEvent<string>) {
 
     case "JUMP_IN_PROMPT": {
       const msg = payload as JumpInPromptMessage;
-      if (!isGameStateUpdate(msg.state)) return;
+      if (!isGameStateUpdate(msg.state) || typeof msg.prompt_id !== "number") return;
 
       const nextState = msg.state;
       const message = typeof msg.message === "string" ? msg.message : "JUMP IN!";
+      const promptId = msg.prompt_id;
       enqueue(() => {
+        activePromptId = promptId;
         state.set(nextState);
         clearJumpInPrompt();
         jumpInPrompt.set({ message });
@@ -320,14 +331,17 @@ function handleSocketMessage(event: MessageEvent<string>) {
       if (
         !isGameStateUpdate(msg.state) ||
         typeof msg.required_cards !== "number" ||
-        typeof msg.can_choose !== "boolean"
+        typeof msg.can_choose !== "boolean" ||
+        typeof msg.prompt_id !== "number"
       )
         return;
 
       const nextState = msg.state;
       const requiredCards = msg.required_cards;
       const canChoose = msg.can_choose;
+      const promptId = msg.prompt_id;
       enqueue(() => {
+        activePromptId = promptId;
         state.set(nextState);
         if (!canChoose && requiredCards > 0) selectedCards.set(getHighestSuitCards(nextState.suited_hand, requiredCards));
 
@@ -479,6 +493,7 @@ async function dealtCards() {
 async function playSelectedCards() {
   await send({
     type: "PLAY_MOVE",
+    prompt_id: activePromptId,
     suits: get(selectedCards),
   });
   clearSelectedCards();
@@ -489,11 +504,11 @@ async function playJumpInPrompt(finishMove: string[]) {
 
   clearJumpInPrompt();
   clearSelectedCards();
-  await send({ type: "PLAY_MOVE", suits: finishMove, jump: true });
+  await send({ type: "PLAY_MOVE", prompt_id: activePromptId, suits: finishMove, jump: true });
 }
 
 async function passTurn() {
-  await send({ type: "PLAY_MOVE", suits: [] });
+  await send({ type: "PLAY_MOVE", prompt_id: activePromptId, suits: [] });
   clearSelectedCards();
 }
 
@@ -508,7 +523,7 @@ async function nextRound() {
 }
 
 async function sendExchangeCards(cards: string[]) {
-  await send({ type: "EXCHANGE_CARDS", suits: cards });
+  await send({ type: "EXCHANGE_CARDS", prompt_id: activePromptId, suits: cards });
 }
 
 async function processQueue() {
