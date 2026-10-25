@@ -717,6 +717,7 @@ async def deal_hands(
     message: str,
 ):
     await websocket.send_json({"type": "LOG_ALERT", "message": message})
+    session.dealt_cards_event.clear()  # every deal waits for its own animation
     await websocket.send_json(
         {
             "type": "DEAL_CARDS",
