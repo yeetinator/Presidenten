@@ -1,4 +1,5 @@
 import asyncio
+import functools
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -336,6 +337,7 @@ async def wait_for_event(event: asyncio.Event, disconnect_event: asyncio.Event):
 DMC_MODEL_FILES = ("DMC.pt", "DMCW.pt")
 
 
+@functools.cache  # loaded once per device and shared by every game (inference only)
 def load_dmc_model(device: torch.device) -> PresidentEnsembleNet:
     bots_dir = Path(__file__).resolve().parent / "bots"
     members = []
@@ -344,7 +346,7 @@ def load_dmc_model(device: torch.device) -> PresidentEnsembleNet:
         model_path = bots_dir / file_name
         model = PresidentValueNet().to(device)
         try:
-            load_path = torch.load(model_path, map_location=device)
+            load_path = torch.load(model_path, map_location=device, weights_only=True)
             model.load_state_dict(load_path["model_state_dict"])
         except Exception as e:
             print(
@@ -365,7 +367,6 @@ def build_assigned_players(
 ) -> tuple[dict[int, Player], int]:
     assigned_players: dict[int, Player] = {}
     human_id = 0
-    dmc_model = None  # loaded once and shared
 
     for p_id, p_type in assign_p.items():
         if p_type == PlayerType.HUMAN:
@@ -375,9 +376,9 @@ def build_assigned_players(
         elif p_type == PlayerType.BASELINE:
             assigned_players[p_id] = PresidentBaselineBot(p_id)
         elif p_type == PlayerType.DMC:
-            if dmc_model is None:
-                dmc_model = load_dmc_model(device)
-            assigned_players[p_id] = PresidentDMCBot(p_id, dmc_model, device)
+            assigned_players[p_id] = PresidentDMCBot(
+                p_id, load_dmc_model(device), device
+            )
 
     return assigned_players, human_id
 
