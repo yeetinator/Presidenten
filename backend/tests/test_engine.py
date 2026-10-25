@@ -1,0 +1,111 @@
+import random
+
+import pytest
+
+from game import President
+from playerTypes.baseline_bot import PresidentBaselineBot
+from playerTypes.random_bot import PresidentRandomBot
+from support import card_value
+
+
+def table_with(hands: dict[int, list[str]], turn: int) -> President:
+    """A 4-player game mid-round with the given suit-card hands."""
+    env = President(4, track_suits=True)
+    env.full_reset()
+    env.suited_hands = {p: sorted(cards, key=card_value) for p, cards in hands.items()}
+    env.hands = {p: sorted(card_value(c) for c in cards) for p, cards in hands.items()}
+    env.first_turn = False
+    env.curr_turn = turn
+    return env
+
+
+def test_jumping_in_with_last_cards_passes_the_lead_on():
+    env = table_with(
+        {0: ["5H", "5C", "9S"], 1: ["5S", "5D"], 2: ["3C", "6H"], 3: ["4C", "7H"]},
+        turn=0,
+    )
+    env.step(0, (5, 2, 0), ["5H", "5C"])
+    assert env.curr_turn == 1 and env._get_state(1)["is_finish_prompt"]
+
+    env.step(1, (5, 2, 0), ["5S", "5D"])
+
+    assert env.hands[1] == [] and env.out_order == [1]
+    assert env.curr_turn == 2, "an empty-handed jumper must not keep the lead"
+    assert env.was_pile_reset
+
+
+def test_jumper_with_cards_left_leads_the_new_pile():
+    env = table_with(
+        {
+            0: ["5H", "5C", "9S"],
+            1: ["5S", "5D", "KH"],
+            2: ["3C", "6H"],
+            3: ["4C", "7H"],
+        },
+        turn=0,
+    )
+    env.step(0, (5, 2, 0), ["5H", "5C"])
+    env.step(1, (5, 2, 0), ["5S", "5D"])
+
+    assert env.curr_turn == 1 and env.was_pile_reset
+
+
+def test_a_player_who_passed_can_still_jump_in():
+    env = table_with(
+        {
+            0: ["5H", "5C", "9S"],
+            1: ["5S", "5D", "KH"],
+            2: ["3C", "6H"],
+            3: ["4C", "7H"],
+        },
+        turn=0,
+    )
+    env.passed = {1}  # passing on this pile earlier doesn't forfeit a jump-in
+
+    env.step(0, (5, 2, 0), ["5H", "5C"])
+
+    assert env.curr_turn == 1
+    assert env._get_state(1)["is_finish_prompt"]
+    assert (5, 2, 0) in env.get_legal_moves(1)
+
+
+@pytest.mark.parametrize("players", [4, 5, 6, 7])
+def test_hands_and_suit_cards_stay_in_sync_over_whole_games(players):
+    random.seed(players)
+    env = President(players, track_suits=True)
+    bots = {
+        p: (PresidentRandomBot(p) if p % 2 else PresidentBaselineBot(p))
+        for p in range(players)
+    }
+
+    for round_idx in range(5):
+        state = env.full_reset(next_round=round_idx > 0)
+        if round_idx:
+            cards = {
+                p: bots[p].choose_cards_to_pass(env._get_state(p))
+                for p in range(players)
+            }
+            for pair in env.role_pairs:
+                env.exchange_cards(pair, cards)
+            state = env._get_state(env.curr_turn)
+
+        for _ in range(1000):
+            if env.game_over:
+                break
+            player = env.curr_turn
+            move = bots[player].get_move(state)
+            assert move in state["legal_moves"] or (
+                move == (0, 0, 0) and not state["legal_moves"]
+            )
+            state, _ = env.step(player, move)
+            if env.was_pile_reset:
+                env.clear_pile()
+
+            for p in range(players):
+                assert sorted(card_value(c) for c in env.suited_hands[p]) == sorted(
+                    env.hands[p]
+                )
+        assert env.game_over, "a round must end"
+
+        env.assign_roles()
+        assert sorted(env.out_order) == list(range(players))
