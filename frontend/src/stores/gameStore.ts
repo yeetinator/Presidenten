@@ -350,6 +350,13 @@ function handleSocketMessage(event: MessageEvent<string>) {
       return;
     }
 
+    case "START_REJECTED": {
+      const { message } = payload as { message?: unknown };
+      inGame.set(false);
+      lobbyNotice.set(typeof message === "string" ? message : "The server couldn't start that game.");
+      return;
+    }
+
     case "REVEAL_BOT": {
       const { seat } = payload as { seat?: unknown };
       if (typeof seat === "number") revealedBotSeat.set(seat);

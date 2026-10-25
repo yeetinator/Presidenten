@@ -34,6 +34,9 @@ JUMP_IN_WINDOW = 1.5
 REVEAL_DELAY = 2
 PASS_DELAY = 1.0
 
+MIN_PLAYERS = 4
+MAX_PLAYERS = 7
+
 PLAYER_TYPE_LABELS = {
     PlayerType.HUMAN: "Human",
     PlayerType.RANDOM: "Random",
@@ -266,7 +269,31 @@ def is_offered_move(move: tuple, suits: list[str], prompt_state: dict) -> bool:
     )
 
 
+def parse_start_game(message: dict) -> dict[int, PlayerType]:
+    """Seat -> player type from a START_GAME message; raises ValueError if invalid."""
+    num_players = message.get("num_players")
+    player_types = message.get("player_types")
+
+    if type(num_players) is not int or not MIN_PLAYERS <= num_players <= MAX_PLAYERS:
+        raise ValueError(f"A game needs {MIN_PLAYERS} to {MAX_PLAYERS} players.")
+    if not isinstance(player_types, list) or len(player_types) != num_players:
+        raise ValueError("Every seat needs a player type.")
+
+    try:
+        seats = [PlayerType(player_type) for player_type in player_types]
+    except ValueError:
+        raise ValueError("Unknown player type.") from None
+
+    if any(seat not in PLAYER_TYPE_LABELS for seat in seats):
+        raise ValueError("That player type isn't available in the web game.")
+    if seats[0] != PlayerType.HUMAN or seats.count(PlayerType.HUMAN) != 1:
+        raise ValueError("Seat 0 must be the only human player.")
+
+    return dict(enumerate(seats))
+
+
 async def control_listener(
+    websocket: WebSocket,
     control_queue: asyncio.Queue,
     session: GameSession,
     disconnect_event: asyncio.Event,
@@ -294,13 +321,16 @@ async def control_listener(
             continue
 
         if message_type == "START_GAME":
-            num_players = control_message.get("num_players", 4)
-            player_config = control_message.get("player_types") or []
-            session.assign_p = {
-                p_id: PlayerType(player_type)
-                for p_id, player_type in enumerate(player_config)
-            }
-            session.env = President(num_players, track_suits=True)
+            try:
+                if session.env is not None:
+                    raise ValueError("A game is already running.")
+                assign_p = parse_start_game(control_message)
+            except ValueError as e:
+                await websocket.send_json({"type": "START_REJECTED", "message": str(e)})
+                continue
+
+            session.assign_p = assign_p
+            session.env = President(len(assign_p), track_suits=True)
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             session.assigned_players, session.human_id = build_assigned_players(
                 session.assign_p, device
@@ -705,7 +735,7 @@ async def run_connection(
     session = GameSession()
     pending_messages: list[dict] = []
     control_task = asyncio.create_task(
-        control_listener(control_queue, session, disconnect_event)
+        control_listener(websocket, control_queue, session, disconnect_event)
     )
 
     try:
