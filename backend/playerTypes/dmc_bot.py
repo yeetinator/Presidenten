@@ -79,6 +79,7 @@ for card in [0] + list(range(3, 16)):
 
 _HIGH_ROLES = {"President", "Vice-President", "Secretary"}
 _PASS_SCALE = 1.0 / PASS_CAP
+# The LUT is used to convert counts of passes into a scaled float in [0, 1].
 _PASS_LUT = (np.minimum(np.arange(256), PASS_CAP) * _PASS_SCALE).astype(np.float32)
 _PAD = [[-1.0] * k for k in range(MAX_PLAYERS + 1)]
 _ROWS = np.arange(COUNT_BUCKETS).reshape(-1, 1)
@@ -203,8 +204,6 @@ def _fill_tail(out, state, my_id, own_hand_len):
     p_card, p_count, p_twos = state["last_move"]
     out[O_LAST:O_OPP] = _MOVE_TABLE[p_card * 25 + p_count * 5 + p_twos, :LAST_MOVE_DIM]
 
-    # opp counts (own hand first), roles, pile status, pile, misc: one Python
-    # list and a single slice assignment instead of several small numpy writes
     roles = state["player_roles"]
     active = state["active_players"]
     passed = state["passed"]
