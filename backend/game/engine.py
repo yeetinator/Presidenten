@@ -22,42 +22,10 @@ class President:
 
         # 3 to Ace (14), plus 2 (15)
         self.deck = [rank for rank in range(3, 16) for _ in range(4)]
-        self.hands = {p_id: [] for p_id in range(players)}
 
-        self.scores = {
-            p_id: (0, 0) for p_id in range(players)
-        }  # (total_score, rounds_won)
-
-        self.roles = {p_id: "Citizen" for p_id in range(players)}
-        self.out_order = []  # Track finishing order for role assignment
-        self.round = 0
-        self.ended_2 = []  # Track players who finished with a 2 for role assignment
-
-        self._history_flat_counts = [0] * 16  # Count of each card played
-        self._passed_by_player = [
-            [0] * 16 for _ in range(players)
-        ]  # Count of each card passed by each player
-        self._passed_multi_by_player = [
-            [0] * 16 for _ in range(players)
-        ]  # Same but only on 2x+ cards
-        self.last_move = (0, 0, 0)  # (card_value, count, twos_used)
-        self.pile = []  # Cards currently on the pile
-        self.was_pile_reset = False
-
-        if self.track_suits:
-            self.suited_hands: dict[int, list[str]] = {
-                p_id: [] for p_id in range(players)
-            }  # For future suit-based features
-            self.suit_last_move = []
-
-        self.pile_leader = None  # P_id of the player who last played to the pile
-        self.passed = set()  # Players who have passed in the current pile
-        self.playing = set(range(players))
-        self.first_turn = True
         self.curr_turn = None  # P_id of the current player
         self.clubs_3_holder = None
-        self.game_over = False
-        self.pending_finish = None  # {"queue": [(card, count, player_id), ...], "resume_turn": player_id, "pile_reset": bool}
+        self._reset_state(new_game=True)
 
         self.role_pairs = []
         if self.players >= 4:
@@ -226,8 +194,9 @@ class President:
         return suited_hands
 
     def full_reset(self, next_round=False):
+        self._reset_state(new_game=not next_round)
+
         random.shuffle(self.deck)
-        self.hands = {p_id: [] for p_id in range(self.players)}
         rng_offset = random.randint(0, self.players - 1)
 
         for i, card in enumerate(self.deck):
@@ -244,37 +213,45 @@ class President:
             ]
             self.curr_turn = scum_player if scum_player is not None else None
         else:
-            self.roles = {p_id: "Citizen" for p_id in range(self.players)}
-            self.round = 1
-            self.scores = {p_id: (0, 0) for p_id in range(self.players)}
-
             self.curr_turn = random.choice(
                 [
                     p_id for p_id, hand in self.hands.items() if 3 in hand
                 ]  # 3 of Clubs starts
             )
             self.clubs_3_holder = self.curr_turn
-            self.first_turn = True
-
-        self._history_flat_counts = [0] * 16
-        self._passed_by_player = [[0] * 16 for _ in range(self.players)]
-        self._passed_multi_by_player = [[0] * 16 for _ in range(self.players)]
-        self.last_move = (0, 0, 0)
-        self.pile = []
-        self.was_pile_reset = False
-        self.pile_leader = None
-        self.passed = set()
-        self.game_over = False
-        self.playing = set(range(self.players))
-        self.out_order = []
-        self.ended_2 = []
-        self.pending_finish = None
 
         if self.track_suits:
             self.suited_hands = self.gen_suited_hands()
-            self.suit_last_move = []
 
         return self._get_state(self.curr_turn)
+
+    def _reset_state(self, new_game):
+        if new_game:
+            self.roles = {p_id: "Citizen" for p_id in range(self.players)}
+            self.scores = {
+                p_id: (0, 0) for p_id in range(self.players)
+            }  # (total_score, rounds_won)
+            self.round = 1
+            self.first_turn = True
+
+        self.hands = {p_id: [] for p_id in range(self.players)}
+        if self.track_suits:
+            self.suited_hands: dict[int, list[str]] = {
+                p_id: [] for p_id in range(self.players)
+            }
+
+        self._history_flat_counts = [0] * 16  # Count of each card played
+        self._passed_by_player = [
+            [0] * 16 for _ in range(self.players)
+        ]  # Count of each card passed by each player
+        self._passed_multi_by_player = [
+            [0] * 16 for _ in range(self.players)
+        ]  # Same but only on 2x+ cards
+        self.playing = set(range(self.players))  # Players with cards
+        self.out_order = []  # Track finishing order for role assignment
+        self.ended_2 = []  # Track players who finished with a 2 for role assignment
+        self.game_over = False
+        self.clear_pile()
 
     def _record_history_move(self, p_id, move):
         if move == (0, 0, 0):
@@ -501,11 +478,11 @@ class President:
         if self.track_suits:
             self.suit_last_move = []
 
-        self.last_move = (0, 0, 0)
-        self.passed = set()
-        self.pile = []
-        self.pile_leader = None
-        self.pending_finish = None
+        self.last_move = (0, 0, 0)  # (card_value, count, twos_used)
+        self.passed = set()  # Players who have passed in the current pile
+        self.pile = []  # Cards currently on the pile
+        self.pile_leader = None  # P_id of the player who last played to the pile
+        self.pending_finish = None  # {"queue": [(card, count, player_id), ...], "resume_turn": player_id, "pile_reset": bool}
         self.was_pile_reset = False
 
     def _is_game_over(self):
