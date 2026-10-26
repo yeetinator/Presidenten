@@ -102,11 +102,7 @@ def training_game_gen(
         for b in bot_instances.values()
         if isinstance(b, PresidentDMCBot) and b.explore
     ]
-    stats = (
-        sum(b.n_decisions for b in learners),
-        sum(b.n_explored for b in learners),
-        sum(b.q_gap_sum for b in learners),
-    )
+    stats = (sum(b.n_decisions for b in learners), sum(b.n_explored for b in learners))
 
     return x, a, y, stats
 
@@ -260,13 +256,11 @@ def run_training_loop(
     shared_model.load_state_dict(live_model.state_dict())
 
     print("Starting training loop. Press Ctrl+C to stop and save the model.")
-    max_batches = 0 if batch_idx == 0 else batch_idx % 2000
+    batches_done = batch_idx % 2000
     running_losses = []
     rollout_times = []
     train_times = []
-    iter_times = []
     n_decisions = n_explored = 0
-    q_gap_sum = 0.0
     elite_paths = glob.glob(os.path.join(snapshot_dir, "elites/model_gen_*.pt"))
 
     temperature = ctx.Value("d", get_temperature(batch_idx), lock=False)
@@ -295,13 +289,13 @@ def run_training_loop(
     for a in actors:
         a.start()
 
+    t_window_start = time.perf_counter()
     try:
-        while max_batches < 2000:
+        while batches_done < 2000:
             t_iter_start = time.perf_counter()
             batch_idx += 1
-            max_batches += 1
+            batches_done += 1
 
-            t0 = time.perf_counter()
             game_data = []
             while len(game_data) < BATCH_GAMES:
                 try:
@@ -313,10 +307,9 @@ def run_training_loop(
             temperature.value = get_temperature(batch_idx)
 
             all_x, all_a, all_y = [], [], []
-            for x, a, y, (dec, expl, gap) in game_data:
+            for x, a, y, (dec, expl) in game_data:
                 n_decisions += dec
                 n_explored += expl
-                q_gap_sum += gap
 
                 if x.shape[0] == 0:
                     continue
@@ -342,32 +335,31 @@ def run_training_loop(
                 update_ema(ema_model, live_model, ema_decay)
                 t2 = time.perf_counter()
                 running_losses.append(avg_loss)
-                rollout_times.append(t1 - t0)
+                rollout_times.append(t1 - t_iter_start)
                 train_times.append(t2 - t1)
-
-                if batch_idx % 250 == 0:
-                    rolling_loss = np.mean(running_losses)
-                    avg_rollout = np.mean(rollout_times)
-                    avg_train = np.mean(train_times)
-                    avg_iter = np.mean(iter_times) if iter_times else 0.0
-                    explore_pct = 100.0 * n_explored / max(n_decisions, 1)
-
-                    print(
-                        f"=========================================================================\n"
-                        f"b {batch_idx} | loss {rolling_loss:.4f} | "
-                        f"lr {lr:.1e} | T {temperature.value:.3f} | expl {explore_pct:.1f}% | "
-                        f"roll {avg_rollout:.2f}s train {avg_train:.2f}s | {avg_iter:.2f}s/it\n"
-                    )
-                    running_losses.clear()
-                    rollout_times.clear()
-                    train_times.clear()
-                    iter_times.clear()
-                    n_decisions = n_explored = 0
-                    q_gap_sum = 0.0
             else:
                 print(f"Batch {batch_idx}: No training data collected.")
 
             if batch_idx % SAVE_SNAPSHOT_EVERY == 0:
+                t_now = time.perf_counter()
+                avg_iter = (t_now - t_window_start) / SAVE_SNAPSHOT_EVERY
+                t_window_start = t_now
+                rolling_loss = np.mean(running_losses)
+                avg_rollout = np.mean(rollout_times)
+                avg_train = np.mean(train_times)
+                explore_pct = 100.0 * n_explored / max(n_decisions, 1)
+
+                print(
+                    f"=========================================================================\n"
+                    f"b {batch_idx} | loss {rolling_loss:.4f} | "
+                    f"lr {lr:.1e} | T {temperature.value:.3f} | expl {explore_pct:.1f}% | "
+                    f"roll {avg_rollout:.2f}s train {avg_train:.2f}s | {avg_iter:.2f}s/it"
+                )
+                running_losses.clear()
+                rollout_times.clear()
+                train_times.clear()
+                n_decisions = n_explored = 0
+
                 snapshot_path = save_snapshot(
                     snapshot_dir,
                     batch_idx,
@@ -378,9 +370,8 @@ def run_training_loop(
                     MILESTONE_SNAPSHOT_EVERY,
                 )
                 print(
-                    f"Saved model snapshot to {snapshot_path} and updated latest_model.pt."
+                    f"Saved model snapshot to {snapshot_path} and updated latest_model.pt\n"
                 )
-            iter_times.append(time.perf_counter() - t_iter_start)
     except KeyboardInterrupt:
         print("Training interrupted.")
     finally:

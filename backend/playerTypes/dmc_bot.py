@@ -376,7 +376,6 @@ class PresidentDMCBot(Player):
 
         self.n_decisions = 0
         self.n_explored = 0
-        self.q_gap_sum = 0.0
 
     def get_move_gen(self, state: dict):
         legal_moves = state["legal_moves"]
@@ -403,7 +402,6 @@ class PresidentDMCBot(Player):
 
             if choice != greedy:
                 self.n_explored += 1
-                self.q_gap_sum += float(q_legal[greedy] - q_legal[choice])
         else:
             choice = greedy
 
