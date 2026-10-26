@@ -423,6 +423,15 @@ def finisher(env: President) -> int | None:
     return env.pending_finish["queue"][0][2] if env.pending_finish else None
 
 
+def normal_turn(env: President) -> int | None:
+    """Whose turn it is in play order while a jump-in waits (None if none waits): the
+    player after the one who made the play, moving on as players pass."""
+    pending = env.pending_finish
+    if not pending:
+        return None
+    return env.curr_turn if pending["resume_played"] else pending["resume_turn"]
+
+
 @dataclass
 class Table:
     """A game in progress and the connection it is played over."""
@@ -517,7 +526,16 @@ async def play_round(table: Table):
             break
 
         if env.pending_finish:  # the last play can still be finished into a quad
-            if curr_id == table.human_id or finisher(env) == table.human_id:
+            human_may_jump = finisher(env) == table.human_id
+            if (
+                human_may_jump
+                and normal_turn(env) == table.human_id
+                and not env.was_pile_reset
+            ):
+                # The human's own turn: jump in, or play or pass and give it up
+                await play_human_turn(table)
+                continue
+            if curr_id == table.human_id or human_may_jump:
                 curr_id = await offer_human_jump_in(table, curr_id)
                 if curr_id is None:
                     continue
@@ -636,17 +654,8 @@ async def play_human_turn(table: Table):
         return  # ask again with a fresh prompt
 
     if not is_jump and finisher(env) == human_id:
-        if move == (0, 0, 0):
-            # Passing doesn't give up the jump-in, it stays open while the others pass.
-            # The engine would take a pass by the finisher as declining it, so the
-            # pending finish sits out this one normal pass
-            pending, env.pending_finish = env.pending_finish, None
-            env.step(human_id, move)
-            env.pending_finish = pending
-            await table.show_state()
-            return  # the human's jump-in window opens again straight away
-
-        # Playing declines the jump-in, but a bot may still finish first
+        # Playing other cards or passing declines the jump-in, but a bot may still
+        # finish first
         env.step(human_id, (0, 0, 0))
         bot_id = finisher(env)
         if bot_id is not None:

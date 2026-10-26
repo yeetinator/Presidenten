@@ -70,8 +70,9 @@ class BrowserPlayer:
         self.shown += 1
         if kind == "JUMP_IN_PROMPT":
             self.jump_visible = True
-        elif kind == "STATE_UPDATE" and message.get("clearJump") is not False:
-            self.jump_visible = False
+        elif kind == "STATE_UPDATE":
+            # a turn with clearJump False offers the jump-in next to normal moves
+            self.jump_visible = message.get("clearJump") is False
 
         my_turn = state["curr_turn"] == 0
         turn_pending = (

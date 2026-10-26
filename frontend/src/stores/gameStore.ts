@@ -91,6 +91,7 @@ type IncomingWebSocketMessage =
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 const RECONNECT_DELAY_MS = 2000;
+const JUMP_IN_MESSAGE = "JUMP IN!";
 // No card transition runs this long; Svelte skips the end event of an interrupted
 // transition, so an element still marked as animating by then is released
 const ANIMATION_TIMEOUT_MS = 1000;
@@ -306,6 +307,8 @@ function handleSocketMessage(event: MessageEvent<string>) {
         state.set(nextState);
         clearExchangePrompt();
         if (!keepJumpIn) clearJumpInPrompt();
+        // The human's own turn offers a pending jump-in next to a normal move
+        else if (!get(jumpInPrompt)) jumpInPrompt.set({ message: JUMP_IN_MESSAGE });
       });
       return;
     }
@@ -315,7 +318,7 @@ function handleSocketMessage(event: MessageEvent<string>) {
       if (!isGameStateUpdate(msg.state) || typeof msg.prompt_id !== "number") return;
 
       const nextState = msg.state;
-      const message = typeof msg.message === "string" ? msg.message : "JUMP IN!";
+      const message = typeof msg.message === "string" ? msg.message : JUMP_IN_MESSAGE;
       const promptId = msg.prompt_id;
       enqueue(() => {
         activePromptId = promptId;
