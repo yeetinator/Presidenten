@@ -1,5 +1,6 @@
 import os
 
+# Avoid oversubscription
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
@@ -24,14 +25,11 @@ BATCH_GAMES = 60
 SAVE_SNAPSHOT_EVERY = 250
 MILESTONE_SNAPSHOT_EVERY = 5000
 LEARNING_RATE = 1e-4
-# AdamW shrinks weights by lr * WEIGHT_DECAY per optimizer step. At ~24 steps per
-# batch that is ~5% per cycle at the base LR. Biases and LayerNorm are not decayed.
 WEIGHT_DECAY = 0.01
 EMA_DECAY = 0.998  # Per batch, so snapshots average roughly the last 500 batches
 NUM_WORKERS = 12
 
-# Actors run their forwards here. An explicit index so model.parameters() device
-# checks in PresidentDMCBot match (cuda != cuda:0)
+# Explicit index so model.parameters() device checks in PresidentDMCBot match (cuda != cuda:0)
 INFERENCE_DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 TEMP_START = 0.05
@@ -108,6 +106,7 @@ def training_game_gen(
 
 
 def _trace_live(model, device=_CPU):
+    """Trace live model for faster inference. Traced model shares weights with the original, so updates to the original are reflected in the traced version."""
     with torch.no_grad():
         return torch.jit.trace(
             model, torch.zeros(8, STATE_DIM, device=device), check_trace=False
@@ -142,7 +141,7 @@ def actor_loop(
         # CUDA tensors can't be shared between processes on Windows, so keep a
         # device copy and refresh it from shared memory when the trainer steps
         device_model = PresidentValueNet().to(device)
-    # The trace shares device_model's weights, so copying into them updates it
+
     live_model = _trace_live(device_model, device)
     synced_version = -1
 
@@ -155,6 +154,7 @@ def actor_loop(
         version = model_version.value
 
         if device.type != "cpu" and version != synced_version:
+            # Refresh device model from shared memory if the trainer has updated it
             with torch.no_grad():
                 for dst, src in zip(
                     device_model.parameters(), shared_model.parameters()
@@ -222,6 +222,7 @@ def run_training_loop(
     shared_model = PresidentValueNet().to("cpu")
     shared_model.share_memory()
 
+    # Set up optimizer with no weight decay for biases and LayerNorm weights
     decay = [p for p in live_model.parameters() if p.ndim >= 2]
     no_decay = [p for p in live_model.parameters() if p.ndim < 2]
     optimizer = torch.optim.AdamW(
@@ -232,7 +233,6 @@ def run_training_loop(
     if os.path.exists(resume_path):
         print(f"Resuming checkpoint from {resume_path}...")
         checkpoint = torch.load(resume_path, map_location=device)
-        # Checkpoints from before EMA only hold the live weights
         live_model.load_state_dict(
             checkpoint.get("live_model_state_dict", checkpoint["model_state_dict"])
         )
@@ -250,6 +250,7 @@ def run_training_loop(
     for group, weight_decay in zip(optimizer.param_groups, (WEIGHT_DECAY, 0.0)):
         group["lr"] = lr
         group["weight_decay"] = weight_decay
+
     print(f"Learning rate: {lr:.2e} | weight decay: {WEIGHT_DECAY}")
     print(f"Actor inference device: {INFERENCE_DEVICE}")
 

@@ -4,6 +4,7 @@ import random
 
 MAPPING_VS = {10: "T", 11: "J", 12: "Q", 13: "K", 14: "A", 15: "2"}
 MAPPING_SV = {"T": 10, "J": 11, "Q": 12, "K": 13, "A": 14, "2": 15}
+SUITS = ["C", "D", "H", "S"]
 
 
 class President:
@@ -61,9 +62,8 @@ class President:
         if not self.out_order:
             return
 
-        for p_id in range(
-            self.players
-        ):  # Add any remaining players who haven't finished
+        for p_id in range(self.players):
+            # Add any remaining players who haven't finished
             if p_id not in self.out_order:
                 self.out_order.append(p_id)
 
@@ -82,7 +82,7 @@ class President:
             )
 
     def _get_card_value(self, suit_str):
-        # Can't use .get(r, int(r)) because int(r) will be evaluated even if r is in MAPPING_SV which will cause an error if r is not a valid integer string.
+        # No .get(r, int(r)) because int(r) will error if r is not an integer.
         r = suit_str[:-1]
         return MAPPING_SV[r] if r in MAPPING_SV else int(r)
 
@@ -165,13 +165,11 @@ class President:
 
     def gen_suited_hands(self):
         suited_hands = {p_id: [] for p_id in range(self.players)}
-        suits = ["C", "D", "H", "S"]
-        card_map = {"10": "T", "11": "J", "12": "Q", "13": "K", "14": "A", "15": "2"}
         pool: dict[int, list[str]] = {}
 
         for card in range(3, 16):
-            c_str = card_map.get(str(card), str(card))
-            pool[card] = [f"{c_str}{s}" for s in suits]
+            c_str = MAPPING_VS.get(card, str(card))
+            pool[card] = [f"{c_str}{s}" for s in SUITS]
             random.shuffle(pool[card])
 
         if self.first_turn and self.clubs_3_holder is not None:
@@ -208,17 +206,14 @@ class President:
 
         if next_round:
             self.round += 1
-            scum_player = [p_id for p_id, role in self.roles.items() if role == "Scum"][
-                0
-            ]
-            self.curr_turn = scum_player if scum_player is not None else None
-        else:
-            self.curr_turn = random.choice(
-                [
-                    p_id for p_id, hand in self.hands.items() if 3 in hand
-                ]  # 3 of Clubs starts
+            self.curr_turn = next(
+                (p_id for p_id, role in self.roles.items() if role == "Scum"), None
             )
-            self.clubs_3_holder = self.curr_turn
+        else:
+            self.clubs_3_holder = self.curr_turn = random.choice(
+                # 3 of Clubs starts
+                [p_id for p_id, hand in self.hands.items() if 3 in hand]
+            )
 
         if self.track_suits:
             self.suited_hands = self.gen_suited_hands()
@@ -228,9 +223,8 @@ class President:
     def _reset_state(self, new_game):
         if new_game:
             self.roles = {p_id: "Citizen" for p_id in range(self.players)}
-            self.scores = {
-                p_id: (0, 0) for p_id in range(self.players)
-            }  # (total_score, rounds_won)
+            # (total_score, rounds_won)
+            self.scores = {p_id: (0, 0) for p_id in range(self.players)}
             self.round = 1
             self.first_turn = True
 
@@ -241,12 +235,10 @@ class President:
             }
 
         self._history_flat_counts = [0] * 16  # Count of each card played
-        self._passed_by_player = [
-            [0] * 16 for _ in range(self.players)
-        ]  # Count of each card passed by each player
-        self._passed_multi_by_player = [
-            [0] * 16 for _ in range(self.players)
-        ]  # Same but only on 2x+ cards
+        # Count of each card passed by each player
+        self._passed_by_player = [[0] * 16 for _ in range(self.players)]
+        # Same but only on 2x+ cards
+        self._passed_multi_by_player = [[0] * 16 for _ in range(self.players)]
         self.playing = set(range(self.players))  # Players with cards
         self.out_order = []  # Track finishing order for role assignment
         self.ended_2 = []  # Track players who finished with a 2 for role assignment
@@ -271,6 +263,7 @@ class President:
 
         last_move = (0, 0, 0) if reset_view else self.last_move
         legal_moves = self.get_legal_moves(p_id, last_move)
+
         if len(legal_moves) <= 1:
             return {"legal_moves": legal_moves}
         return self._get_state(p_id, reset_view=reset_view, legal_moves=legal_moves)
