@@ -5,6 +5,10 @@ from .dmc_bot import (
     COUNT_BUCKETS,
     MAX_PLAYERS,
     NUM_RANKS,
+    O_HAND,
+    O_OPP,
+    O_PASS,
+    O_PASS_MULTI,
     STATE_DIM,
     _SEAT_ORDER,
     _rank_counts,
@@ -36,6 +40,68 @@ class PresidentCriticNet(PresidentValueNet):
 
     def forward(self, x):
         return super().forward(x).squeeze(-1)
+
+
+HAND_DIM = COUNT_BUCKETS * NUM_RANKS
+SEAT_TOKEN_DIM = HAND_DIM + 2 * NUM_RANKS + 4 + MAX_PLAYERS
+
+
+def _seat_token_index(see_hands):
+    """Columns of the critic input that make up each seat's token, in the actor's
+    seat order: hand, passes, hand size, role, active, passed. -1 picks a zero
+    column, for opponents' hands the critic doesn't see."""
+    index = []
+    for seat in range(MAX_PLAYERS):
+        if seat == 0:
+            hand = list(range(O_HAND, O_HAND + HAND_DIM))
+        elif see_hands:
+            start = STATE_DIM + (seat - 1) * HAND_DIM
+            hand = list(range(start, start + HAND_DIM))
+        else:
+            hand = [-1] * HAND_DIM
+        passes = list(range(O_PASS + seat * NUM_RANKS, O_PASS + (seat + 1) * NUM_RANKS))
+        multi = list(
+            range(
+                O_PASS_MULTI + seat * NUM_RANKS, O_PASS_MULTI + (seat + 1) * NUM_RANKS
+            )
+        )
+        public = [
+            O_OPP + seat,
+            O_OPP + MAX_PLAYERS + seat,
+            O_OPP + 2 * MAX_PLAYERS + 2 * seat,
+            O_OPP + 2 * MAX_PLAYERS + 2 * seat + 1,
+        ]
+        index.append(hand + passes + multi + public)
+    return torch.tensor(index)
+
+
+class PresidentSeatCriticNet(torch.nn.Module):
+    """Expected round placement, with one shared encoder over every seat's hand
+    and public record, so what makes a hand strong is learned once rather than
+    per seat. Takes the same inputs as PresidentCriticNet: with see_hands off,
+    the opponents' hands are blanked, for a critic on the actor's information."""
+
+    def __init__(self, see_hands=True, embed=128, width=1024):
+        super().__init__()
+        self.see_hands = see_hands
+        self.register_buffer("token_index", _seat_token_index(see_hands))
+        self.register_buffer("seat_onehot", torch.eye(MAX_PLAYERS))
+        self.encoder = torch.nn.Sequential(
+            torch.nn.Linear(SEAT_TOKEN_DIM, 256),
+            torch.nn.LayerNorm(256),
+            torch.nn.LeakyReLU(0.1),
+            torch.nn.Linear(256, embed),
+            torch.nn.LeakyReLU(0.1),
+        )
+        self.value = PresidentValueNet(STATE_DIM + MAX_PLAYERS * embed, 1, width)
+
+    def forward(self, x):
+        padded = torch.cat([x, x.new_zeros(x.shape[0], 1)], dim=1)
+        tokens = padded[:, self.token_index]  # [B, seats, features]
+        onehot = self.seat_onehot.to(x.dtype).expand(x.shape[0], -1, -1)
+        seats = self.encoder(torch.cat([tokens, onehot], dim=2))
+        trunk_in = torch.cat([x[:, :STATE_DIM], seats.flatten(1).to(x.dtype)], dim=1)
+        return self.value(trunk_in).squeeze(-1)
 
 
 def opponent_hand_counts(env, my_id):

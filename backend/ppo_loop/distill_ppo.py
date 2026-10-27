@@ -11,8 +11,8 @@ import time
 import argparse
 import numpy as np
 import torch.multiprocessing as mp
-from playerTypes.dmc_bot import PresidentValueNet, STATE_DIM
-from playerTypes.ppo_bot import DMC_ENSEMBLE, PresidentPolicyNet, PresidentCriticNet
+from playerTypes.dmc_bot import PresidentValueNet
+from playerTypes.ppo_bot import DMC_ENSEMBLE, PresidentPolicyNet
 from utils.common import get_cached_model
 from utils.ppo import (
     DISTILLED_PATH,
@@ -24,6 +24,7 @@ from utils.ppo import (
     collect_games,
     critic_features,
     explained_variance,
+    make_critics,
     make_optimizer,
     masked_entropy,
     masked_log_softmax,
@@ -50,6 +51,7 @@ TARGET_ENTROPY = 0.25  # nats: PPO's starting exploration
 MIN_MINUTES = 10
 MAX_MINUTES = 60
 PATIENCE = 3  # log windows without a 0.5% better held-out cross-entropy
+EV_MIN_GAIN = 0.001  # or, training only the critics, a better explained variance
 
 INFERENCE_DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -121,7 +123,10 @@ def choose_tau(teacher_q, batch):
     return min(TAU_CANDIDATES, key=lambda t: abs(entropies[t] - TARGET_ENTROPY))
 
 
-def run_distillation(dagger=False, max_minutes=MAX_MINUTES, tau=None):
+def run_distillation(mode="bc", max_minutes=MAX_MINUTES, tau=None, arch=None):
+    """mode "bc" clones the teacher from scratch, "dagger" continues with the
+    student playing, "critics" trains only the critics on the teacher's games.
+    A critic arch other than the saved one starts those critics afresh."""
     torch.set_num_threads(2)
     torch.set_float32_matmul_precision("highest")  # the student's logits need fp32
     os.makedirs(PPO_DIR, exist_ok=True)
@@ -129,15 +134,22 @@ def run_distillation(dagger=False, max_minutes=MAX_MINUTES, tau=None):
 
     ctx = mp.get_context("spawn")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device} | DAgger: {dagger}")
+    print(f"Using device: {device} | mode: {mode}")
 
     teacher = get_cached_model(DMC_ENSEMBLE, PresidentValueNet, device)
     shared_model = PresidentPolicyNet().to("cpu")
     shared_model.share_memory()
-    if dagger:
+    resume = mode != "bc"
+    saved_arch = None
+    if resume:
+        backup = f"{PPO_DIR}/distilled_before_{mode}.pt"
+        if not os.path.exists(backup):
+            shutil.copy2(DISTILLED_PATH, backup)
         checkpoint = torch.load(DISTILLED_PATH, map_location=device)
         tau = checkpoint["tau_bc"]
+        saved_arch = checkpoint.get("critic_arch", "flat")
         shared_model.load_state_dict(checkpoint["model_state_dict"])
+    arch = arch or saved_arch or "flat"
 
     dmc_elites = glob.glob(f"{DMC_ELITES_DIR}/model_gen_*.pt")
     model_version = ctx.Value("i", 0, lock=False)
@@ -157,7 +169,7 @@ def run_distillation(dagger=False, max_minutes=MAX_MINUTES, tau=None):
                 out_queue,
                 GAMES_IN_FLIGHT_PER_WORKER,
                 ELITES_PER_WORKER,
-                None if dagger else ROLLOUT_TAU,
+                None if mode == "dagger" else ROLLOUT_TAU,
             ),
             daemon=True,
         )
@@ -167,7 +179,7 @@ def run_distillation(dagger=False, max_minutes=MAX_MINUTES, tau=None):
         a.start()
 
     try:
-        if dagger:
+        if resume:  # the same held-out set, so the numbers stay comparable
             heldout = dict(np.load(HELDOUT_PATH))
         else:
             # Skip the first wave: short 4-player games finish first and would
@@ -190,16 +202,17 @@ def run_distillation(dagger=False, max_minutes=MAX_MINUTES, tau=None):
         heldout_lp = masked_log_softmax(heldout_q / tau, heldout_batch["legal"])
         print(f"Label temperature tau_bc = {tau}")
 
-        if dagger:
+        if resume:
             student = PresidentPolicyNet().to(device)
             student.load_state_dict(checkpoint["model_state_dict"])
         else:
             student = student_from_dmc(tau, device)
-        critics = {
-            "full": PresidentCriticNet().to(device),
-            "own": PresidentCriticNet(STATE_DIM).to(device),
-        }
-        if dagger:
+        critics = make_critics(arch, device)
+        print(
+            f"Critics: {arch}"
+            + (" (from the checkpoint)" if arch == saved_arch else " (new)")
+        )
+        if arch == saved_arch:
             critics["full"].load_state_dict(checkpoint["critic_state_dict"])
             critics["own"].load_state_dict(checkpoint["own_critic_state_dict"])
         critics = {
@@ -214,7 +227,7 @@ def run_distillation(dagger=False, max_minutes=MAX_MINUTES, tau=None):
                 evaluate_heldout(student, critics, heldout_q, heldout_lp, heldout_batch)
             )
         )
-        best_ce, stale = float("inf"), 0
+        best, stale = float("-inf"), 0
         batch_idx = 0
         t_start = t_window = time.perf_counter()
         train_ces, rollout_times, train_times = [], [], []
@@ -224,9 +237,12 @@ def run_distillation(dagger=False, max_minutes=MAX_MINUTES, tau=None):
             games, _, _ = collect_games(out_queue, actors, BATCH_GAMES)
             t1 = time.perf_counter()
             batch = build_batch(games, device)
-            _, target_lp = teacher_log_probs(teacher, batch, tau)
-            train_ces.append(train_step(student, optimizer, critics, batch, target_lp))
-            if dagger:
+            if mode != "critics":
+                _, target_lp = teacher_log_probs(teacher, batch, tau)
+                train_ces.append(train_student(student, optimizer, batch, target_lp))
+            for name, (critic, critic_opt) in critics.items():
+                train_critic_once(critic, critic_opt, name, batch)
+            if mode == "dagger":
                 shared_model.load_state_dict(student.state_dict())
                 model_version.value += 1
             batch_idx += 1
@@ -241,7 +257,7 @@ def run_distillation(dagger=False, max_minutes=MAX_MINUTES, tau=None):
             )
             print(
                 "=========================================================================\n"
-                f"b {batch_idx} | ce {np.mean(train_ces):.4f} | "
+                f"b {batch_idx} | ce {np.mean(train_ces) if train_ces else 0:.4f} | "
                 f"roll {np.mean(rollout_times):.2f}s train {np.mean(train_times):.2f}s | "
                 f"{(t_now - t_window) / LOG_EVERY:.2f}s/it\n{format_heldout(stats)}"
             )
@@ -249,14 +265,21 @@ def run_distillation(dagger=False, max_minutes=MAX_MINUTES, tau=None):
             train_ces.clear()
             rollout_times.clear()
             train_times.clear()
-            save_distilled(student, critics, tau, batch_idx)
+            save_distilled(student, critics, tau, batch_idx, arch)
 
-            if stats["ce"] < best_ce * 0.995:
-                best_ce, stale = stats["ce"], 0
+            # Cloning watches the student's cross-entropy, critic training the
+            # full critic's explained variance
+            if mode == "critics":
+                score, min_gain, min_minutes = stats["ev_full"], EV_MIN_GAIN, 30
+            else:
+                score, min_gain = -stats["ce"], 0.005 * stats["ce"]
+                min_minutes = MIN_MINUTES
+            if score > best + min_gain:
+                best, stale = score, 0
             else:
                 stale += 1
             minutes = (t_now - t_start) / 60
-            if minutes >= max_minutes or (minutes >= MIN_MINUTES and stale >= PATIENCE):
+            if minutes >= max_minutes or (minutes >= min_minutes and stale >= PATIENCE):
                 print(
                     f"Stopping after {minutes:.1f} min (plateau: {stale >= PATIENCE})."
                 )
@@ -267,9 +290,8 @@ def run_distillation(dagger=False, max_minutes=MAX_MINUTES, tau=None):
         shutdown(actors, stop_event, out_queue)
 
 
-def train_step(student, optimizer, critics, batch, target_lp):
-    """One pass over a batch: cross-entropy to the teacher for the student, the
-    round outcome for both critics."""
+def train_student(student, optimizer, batch, target_lp):
+    """One pass over a batch: cross-entropy to the teacher's policy."""
     n = batch["x"].shape[0]
     perm = torch.randperm(n, device=batch["x"].device)
     ce_sum, n_steps = 0.0, 0
@@ -287,16 +309,15 @@ def train_step(student, optimizer, critics, batch, target_lp):
         optimizer.step()
         ce_sum += loss.item()
         n_steps += 1
-
-    for name, (critic, critic_opt) in critics.items():
-        train_critic_once(critic, critic_opt, name, batch, perm)
     return ce_sum / max(n_steps, 1)
 
 
-def train_critic_once(critic, optimizer, name, batch, perm):
+def train_critic_once(critic, optimizer, name, batch):
+    """One pass over a batch, regressing on the round outcome."""
     critic.train()
     targets = batch["outcome"]
     device_type = targets.device.type
+    perm = torch.randperm(targets.numel(), device=targets.device)
     for i in range(0, perm.numel(), MINI_BATCH):
         rows = perm[i : i + MINI_BATCH]
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
@@ -316,7 +337,7 @@ def format_heldout(s):
     )
 
 
-def save_distilled(student, critics, tau, batch_idx):
+def save_distilled(student, critics, tau, batch_idx, arch):
     torch.save(
         {
             "batch_idx": 0,  # PPO counts its iterations from here
@@ -325,19 +346,25 @@ def save_distilled(student, critics, tau, batch_idx):
             "critic_state_dict": critics["full"][0].state_dict(),
             "own_critic_state_dict": critics["own"][0].state_dict(),
             "tau_bc": tau,
+            "critic_arch": arch,
         },
         DISTILLED_PATH,
     )
 
 
 def main():
-    # python -m ppo_loop.distill_ppo [--dagger] [--minutes N] [--tau T]
+    # python -m ppo_loop.distill_ppo [--dagger | --critics] [--minutes N] [--tau T]
+    #                               [--arch flat | seat]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dagger", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--dagger", action="store_true")
+    modes.add_argument("--critics", action="store_true")
     parser.add_argument("--minutes", type=float, default=MAX_MINUTES)
     parser.add_argument("--tau", type=float, default=None)
+    parser.add_argument("--arch", choices=("flat", "seat"), default=None)
     args = parser.parse_args()
-    run_distillation(args.dagger, args.minutes, args.tau)
+    mode = "dagger" if args.dagger else "critics" if args.critics else "bc"
+    run_distillation(mode, args.minutes, args.tau, args.arch)
 
 
 if __name__ == "__main__":

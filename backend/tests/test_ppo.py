@@ -8,9 +8,11 @@ from game import President
 from playerTypes.dmc_bot import (
     COUNT_BUCKETS,
     NUM_RANKS,
+    ROLE_MAP,
     PresidentDMCBot,
     PresidentValueNet,
     _rank_counts,
+    vectorize_state,
 )
 from playerTypes.ppo_bot import (
     CRITIC_DIM,
@@ -19,6 +21,7 @@ from playerTypes.ppo_bot import (
     PresidentCriticNet,
     PresidentPolicyNet,
     PresidentPPOBot,
+    PresidentSeatCriticNet,
     critic_input,
     opponent_hand_counts,
 )
@@ -231,3 +234,34 @@ def test_one_ppo_iteration_stays_in_the_trust_region_and_fits_the_critic():
     for _ in range(5):
         last = train_critic(critic, critic_opt, "full", batch, returns, 1, 256)
     assert last < first
+
+
+@pytest.mark.parametrize("see_hands", [True, False])
+def test_seat_critic_tokens_hold_each_seats_hand_and_public_record(see_hands):
+    random.seed(21)
+    env = President(6, lightweight=True)
+    env.full_reset()
+    env.first_turn = False
+    env.step(env.curr_turn, env.get_legal_moves(env.curr_turn)[-1])
+    me = env.curr_turn
+    x = torch.from_numpy(vectorize_state(env._get_state(me), me)[None])
+    full = critic_input(x, torch.from_numpy(opponent_hand_counts(env, me)[None]))
+
+    critic = PresidentSeatCriticNet(see_hands)
+    inp = full if see_hands else x
+    padded = torch.cat([inp, inp.new_zeros(1, 1)], dim=1)
+    tokens = padded[:, critic.token_index][0]
+    rows = np.arange(COUNT_BUCKETS).reshape(-1, 1)
+
+    for seat, p_id in enumerate([(me + k) % 6 for k in range(6)]):
+        hand = (rows < _rank_counts(env.hands[p_id])).ravel().astype(np.float32)
+        if seat and not see_hands:
+            hand = np.zeros_like(hand)
+        assert np.array_equal(tokens[seat, :52].numpy(), hand)
+        size, role, active, passed = tokens[seat, -4:].tolist()
+        assert size == pytest.approx(len(env.hands[p_id]) / NUM_RANKS)
+        assert role == pytest.approx(ROLE_MAP[env.roles[p_id]])
+        assert active == float(p_id in env.playing)
+        assert passed == float(p_id in env.passed)
+    assert (tokens[6, -4:] == -1).all(), "the seventh seat is absent"
+    assert critic(inp).shape == (1,)

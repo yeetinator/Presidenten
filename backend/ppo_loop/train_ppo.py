@@ -11,8 +11,8 @@ import time
 import sys
 import numpy as np
 import torch.multiprocessing as mp
-from playerTypes.dmc_bot import PresidentValueNet, STATE_DIM
-from playerTypes.ppo_bot import DMC_ENSEMBLE, PresidentPolicyNet, PresidentCriticNet
+from playerTypes.dmc_bot import PresidentValueNet
+from playerTypes.ppo_bot import DMC_ENSEMBLE, PresidentPolicyNet
 from utils.common import get_cached_model
 from utils.orchestrator import current_lr_scale
 from utils.ppo import (
@@ -25,6 +25,7 @@ from utils.ppo import (
     collect_games,
     compute_gae,
     explained_variance,
+    make_critics,
     make_optimizer,
     masked_log_softmax,
     ppo_update,
@@ -101,10 +102,8 @@ def run_training_loop(snapshot_dir=SNAPSHOT_DIR, max_iters=None):
     shared_model.load_state_dict(live_model.state_dict())
     shared_model.share_memory()
 
-    critics = {
-        "full": PresidentCriticNet().to(device),
-        "own": PresidentCriticNet(STATE_DIM).to(device),
-    }
+    critic_arch = checkpoint.get("critic_arch", "flat")
+    critics = make_critics(critic_arch, device)
     critics["full"].load_state_dict(checkpoint["critic_state_dict"])
     critics["own"].load_state_dict(checkpoint["own_critic_state_dict"])
     critic_opts = {
@@ -260,6 +259,7 @@ def run_training_loop(snapshot_dir=SNAPSHOT_DIR, max_iters=None):
                     resume_path,
                     MILESTONE_SNAPSHOT_EVERY,
                     extra={
+                        "critic_arch": critic_arch,
                         "critic_state_dict": critics["full"].state_dict(),
                         "own_critic_state_dict": critics["own"].state_dict(),
                         **{

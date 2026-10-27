@@ -14,8 +14,10 @@ from playerTypes.dmc_bot import (
 )
 from playerTypes.ppo_bot import (
     DMC_ENSEMBLE,
+    PresidentCriticNet,
     PresidentPolicyNet,
     PresidentPPOBot,
+    PresidentSeatCriticNet,
     critic_input,
 )
 from .common import NUM_ROUNDS, get_cached_model, get_cached_traced_model
@@ -346,6 +348,19 @@ def make_optimizer(model, lr, weight_decay):
 def explained_variance(pred, target):
     var = target.var()
     return float(1.0 - (target - pred).var() / var) if var > 0 else float("nan")
+
+
+def make_critics(arch, device):
+    """The full critic and the own-information one, of the same architecture so
+    their gap measures information alone: "flat" MLPs or "seat" encoders."""
+    if arch == "seat":
+        critics = {
+            "full": PresidentSeatCriticNet(see_hands=True),
+            "own": PresidentSeatCriticNet(see_hands=False),
+        }
+    else:
+        critics = {"full": PresidentCriticNet(), "own": PresidentCriticNet(STATE_DIM)}
+    return {name: net.to(device) for name, net in critics.items()}
 
 
 def critic_features(name, batch, rows=slice(None)):
