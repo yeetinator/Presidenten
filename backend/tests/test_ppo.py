@@ -16,6 +16,7 @@ from playerTypes.ppo_bot import (
     CRITIC_DIM,
     DMC_ENSEMBLE,
     STATE_DIM,
+    PresidentCriticNet,
     PresidentPolicyNet,
     PresidentPPOBot,
     critic_input,
@@ -26,9 +27,13 @@ from utils.gameplay import iter_batched, run_tagged_games, seeded_game_gen
 from utils.ppo import (
     build_batch,
     compute_gae,
+    make_optimizer,
     masked_entropy,
     masked_log_softmax,
+    ppo_update,
+    predict_values,
     rollout_game_gen,
+    train_critic,
 )
 
 CPU = torch.device("cpu")
@@ -198,3 +203,31 @@ def test_masked_log_softmax_and_entropy_have_finite_gradients():
     manual = -(probs * torch.where(legal, log_probs, 0.0)).sum(1)
     assert torch.allclose(entropy, manual, atol=1e-6)
     assert (probs[~legal] == 0).all()
+
+
+def test_one_ppo_iteration_stays_in_the_trust_region_and_fits_the_critic():
+    random.seed(9)
+    torch.manual_seed(0)
+    actor = PresidentPolicyNet()
+    ensemble = get_cached_traced_model(DMC_ENSEMBLE, PresidentValueNet)
+    games = iter_batched(
+        lambda: rollout_game_gen(actor.eval(), ensemble, [], [], CPU, 0), 2, 2
+    )
+    batch = build_batch([g for g in games if g is not None], CPU)
+
+    critic = PresidentCriticNet()
+    values = predict_values(critic, "full", batch)
+    adv, returns = compute_gae(values, batch)
+    adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+
+    stats = ppo_update(
+        actor, make_optimizer(actor, 3e-5, 0.01), batch, adv, 0.1, 0.003, 1, 256, 1.0
+    )
+    assert stats["epochs"] == 1
+    assert 0 <= stats["clip"] < 0.5 and abs(stats["kl"]) < 0.05
+
+    critic_opt = make_optimizer(critic, 1e-4, 0.01)
+    first = train_critic(critic, critic_opt, "full", batch, returns, 1, 256)
+    for _ in range(5):
+        last = train_critic(critic, critic_opt, "full", batch, returns, 1, 256)
+    assert last < first

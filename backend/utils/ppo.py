@@ -22,6 +22,13 @@ from .common import NUM_ROUNDS, get_cached_model, get_cached_traced_model
 from .gameplay import play_round_gen, iter_batched
 from .training import GRADIENT_CLIP, _concat_pinned, elite_subset
 
+PPO_DIR = "snapshots_ppo"
+DISTILLED_PATH = f"{PPO_DIR}/distilled.pt"
+HELDOUT_PATH = f"{PPO_DIR}/heldout.npz"
+# A frozen copy, so later DMC runs can't change PPO's anchors
+DMC_DIR = f"{PPO_DIR}/dmc"
+DMC_ELITES_DIR = f"{DMC_DIR}/elites"
+
 # Greedy unless gate 1 shows sampling plays better
 EVAL_SAMPLE = False
 PPO_CLASSES = (
@@ -320,6 +327,20 @@ def masked_entropy(log_probs, legal):
     # Zeroing the illegal log-probs first keeps their -inf out of the gradient
     safe = log_probs.masked_fill(~legal, 0.0)
     return -(safe.exp() * safe).masked_fill(~legal, 0.0).sum(1)
+
+
+def make_optimizer(model, lr, weight_decay):
+    """AdamW without decay on biases and LayerNorm weights, as in train_dmc."""
+    decay = [p for p in model.parameters() if p.ndim >= 2]
+    no_decay = [p for p in model.parameters() if p.ndim < 2]
+    return torch.optim.AdamW(
+        [
+            {"params": decay, "weight_decay": weight_decay},
+            {"params": no_decay, "weight_decay": 0.0},
+        ],
+        lr=lr,
+        fused=decay[0].is_cuda,
+    )
 
 
 def explained_variance(pred, target):
