@@ -5,8 +5,11 @@ import shutil
 import glob
 import sys
 import subprocess
+from playerTypes.dmc_bot import PresidentValueNet, PresidentDMCBot
 from .head_to_head import run_h2h, format_h2h
 
+DMC_CLASSES = (PresidentValueNet, PresidentDMCBot)
+BATCHES_PER_CYCLE = 2000
 STOP_CHECK_EVERY = 3
 STOP_CHECK_GAMES = 1200
 STOP_PATIENCE = 2
@@ -84,6 +87,7 @@ def should_stop_training(
     check_every=STOP_CHECK_EVERY,
     games=STOP_CHECK_GAMES,
     min_cycles=STOP_MIN_CYCLES,
+    classes=DMC_CLASSES,
 ):
     if gen_cycle % check_every != 0:
         return False
@@ -115,7 +119,14 @@ def should_stop_training(
             f"  [stop check] Cycle {gen_cycle}: batch {cur_batch} vs anchor "
             f"cycle {anchor_cycle} (batch {anchor_batch}, {games} games)..."
         )
-        summary = run_h2h(cur_ref, anchor_ref, games, progress_every=0)
+        summary = run_h2h(
+            cur_ref,
+            anchor_ref,
+            games,
+            master_classes=classes,
+            old_classes=classes,
+            progress_every=0,
+        )
         improved = summary["ci_lo"] > 0
         report = format_h2h(summary)
 
@@ -232,20 +243,28 @@ def run_step(module_name, args=None, dir_name=None):
     return True
 
 
-def get_resume_cycle(snapshot_dir):
+def get_resume_cycle(snapshot_dir, batches_per_cycle=BATCHES_PER_CYCLE):
     resume_path = f"{snapshot_dir}/latest_model.pt"
     if os.path.exists(resume_path):
         try:
             checkpoint = torch.load(resume_path, map_location=torch.device("cpu"))
             batch_idx = checkpoint.get("batch_idx", 0)
-            return (batch_idx // 2000) + 1
+            return (batch_idx // batches_per_cycle) + 1
         except Exception as e:
             print(f"Error loading checkpoint from {resume_path}: {e}")
     return 1
 
 
-def run_orchestrator(snapshot_dir, train_script, evaluate_script, dir_name):
-    gen_cycle = get_resume_cycle(snapshot_dir)
+def run_orchestrator(
+    snapshot_dir,
+    train_script,
+    evaluate_script,
+    dir_name,
+    classes=DMC_CLASSES,
+    batches_per_cycle=BATCHES_PER_CYCLE,
+    after_cycle=None,
+):
+    gen_cycle = get_resume_cycle(snapshot_dir, batches_per_cycle)
     while True:
         print(f"\n=== STARTING LEAGUE GENERATION CYCLE {gen_cycle} ===")
         if not run_step(train_script, dir_name=dir_name):
@@ -255,8 +274,14 @@ def run_orchestrator(snapshot_dir, train_script, evaluate_script, dir_name):
 
         manage_league_files(snapshot_dir, gen_cycle)
 
-        if should_stop_training(snapshot_dir, gen_cycle):
+        stop = should_stop_training(snapshot_dir, gen_cycle, classes=classes)
+        if stop:
             print("Training has plateaued.")
+
+        # Runs after the stop check, which saves this cycle's benchmark ref
+        if after_cycle is not None and after_cycle(snapshot_dir, gen_cycle):
+            stop = True
+        if stop:
             break
 
         gen_cycle += 1

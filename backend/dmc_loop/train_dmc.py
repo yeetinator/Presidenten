@@ -19,7 +19,13 @@ from playerTypes.dmc_bot import PresidentDMCBot, PresidentValueNet, STATE_DIM
 from utils.common import get_cached_traced_model
 from utils.gameplay import game_loop_gen, iter_batched
 from utils.orchestrator import current_lr_scale
-from utils.training import train_on_batch, save_snapshot, update_ema
+from utils.training import (
+    train_on_batch,
+    save_snapshot,
+    update_ema,
+    elite_subset,
+    shutdown,
+)
 
 BATCH_GAMES = 60
 SAVE_SNAPSHOT_EVERY = 250
@@ -113,14 +119,6 @@ def _trace_live(model, device=_CPU):
         )
 
 
-def elite_subset(elite_paths, worker_id, k):
-    """Balanced when NUM_WORKERS * k is a multiple of len(elite_paths)."""
-    elites = sorted(elite_paths)
-    if not k or len(elites) <= k:
-        return elites
-    return [elites[(worker_id * k + j) % len(elites)] for j in range(k)]
-
-
 def actor_loop(
     worker_id,
     shared_model,
@@ -185,23 +183,6 @@ def actor_loop(
         pass
     finally:
         out_queue.cancel_join_thread()
-
-
-def shutdown(actors, stop_event, out_queue):
-    stop_event.set()
-    deadline = time.time() + 10
-
-    while any(a.is_alive() for a in actors) and time.time() < deadline:
-        try:
-            while True:
-                out_queue.get_nowait()
-        except (queue.Empty, OSError, EOFError):
-            pass
-        for a in actors:
-            a.join(timeout=0.1)
-    for a in actors:
-        if a.is_alive():
-            a.kill()
 
 
 def run_training_loop(

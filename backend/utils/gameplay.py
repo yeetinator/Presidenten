@@ -20,7 +20,8 @@ def play_round_gen(env: President, bot_instances: dict[int, Player], round_idx: 
                 bot = bot_instances[p_id]
                 p_state = env._get_state(p_id)
 
-                if isinstance(bot, PresidentDMCBot):
+                # Bots with *_gen methods hand their forwards to the caller to batch
+                if hasattr(bot, "choose_cards_to_pass_gen"):
                     cards_to_pass[p_id] = yield from bot.choose_cards_to_pass_gen(
                         p_state
                     )
@@ -45,7 +46,7 @@ def play_round_gen(env: President, bot_instances: dict[int, Player], round_idx: 
             break
 
         bot = bot_instances[curr_player]
-        if isinstance(bot, PresidentDMCBot):
+        if hasattr(bot, "get_move_gen"):
             chosen_move = yield from bot.get_move_gen(state)
         else:
             chosen_move = bot.get_move(state)

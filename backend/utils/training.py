@@ -1,5 +1,7 @@
 import torch
 import os
+import time
+import queue
 import contextlib
 import numpy as np
 
@@ -99,6 +101,7 @@ def save_snapshot(
     optimizer,
     resume_path,
     milestone: int | None = None,
+    extra: dict | None = None,
 ):
     snapshot_path = os.path.join(snapshot_dir, f"model_gen_{batch_idx}.pt")
     # Everything that plays from a snapshot (evaluation, elites, stop checks,
@@ -110,6 +113,8 @@ def save_snapshot(
         "live_model_state_dict": live_model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
     }
+    if extra:  # e.g. a critic, which only training needs
+        checkpoint.update(extra)
     torch.save(checkpoint, snapshot_path)
     torch.save(checkpoint, resume_path)
 
@@ -122,3 +127,28 @@ def save_snapshot(
         print(f"Saved milestone snapshot to {milestone_path}.")
 
     return snapshot_path
+
+
+def elite_subset(elite_paths, worker_id, k):
+    """Balanced when NUM_WORKERS * k is a multiple of len(elite_paths)."""
+    elites = sorted(elite_paths)
+    if not k or len(elites) <= k:
+        return elites
+    return [elites[(worker_id * k + j) % len(elites)] for j in range(k)]
+
+
+def shutdown(actors, stop_event, out_queue):
+    stop_event.set()
+    deadline = time.time() + 10
+
+    while any(a.is_alive() for a in actors) and time.time() < deadline:
+        try:
+            while True:
+                out_queue.get_nowait()
+        except (queue.Empty, OSError, EOFError):
+            pass
+        for a in actors:
+            a.join(timeout=0.1)
+    for a in actors:
+        if a.is_alive():
+            a.kill()
