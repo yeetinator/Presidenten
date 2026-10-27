@@ -403,7 +403,6 @@ class President:
             return
 
         queue: list = self.pending_finish["queue"]
-        card_val, count, _ = queue[0]
 
         if move == (0, 0, 0):
             queue.pop(0)
@@ -414,6 +413,9 @@ class President:
                 self.was_pile_reset = self.pending_finish["pile_reset"]
                 self.pending_finish = None
         else:
+            # A player can have two finish options (the card and the 2s), so the
+            # chosen move isn't necessarily the first in the queue
+            card_val, count, _ = move
             if self.verbose:
                 print(
                     f"\nJUMP IN! Player {p_id} finishes the last move with [{self.visualize_move(move)}]"

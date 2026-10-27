@@ -69,6 +69,26 @@ def test_a_player_who_passed_can_still_jump_in():
     assert (5, 2, 0) in env.get_legal_moves(1)
 
 
+def test_jumping_in_with_the_second_finish_option_plays_those_cards():
+    env = table_with(
+        {
+            0: ["7H", "7C", "2S", "9S"],
+            1: ["7S", "7D", "2H", "2C", "2D", "KH"],
+            2: ["3C", "6H"],
+            3: ["4C", "5H"],
+        },
+        turn=0,
+    )
+    env.step(0, (7, 3, 1), ["7H", "7C", "2S"])
+    assert env.get_legal_moves(1) == [(0, 0, 0), (7, 2, 0), (15, 3, 0)]
+
+    env.step(1, (15, 3, 0), ["2H", "2C", "2D"])
+
+    assert env.hands[1] == [7, 7, 13]
+    assert sorted(env.suited_hands[1]) == ["7D", "7S", "KH"]
+    assert env.pile[-3:] == [15, 15, 15]
+
+
 @pytest.mark.parametrize("players", [4, 5, 6, 7])
 def test_hands_and_suit_cards_stay_in_sync_over_whole_games(players):
     random.seed(players)
