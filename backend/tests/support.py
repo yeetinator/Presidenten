@@ -126,7 +126,13 @@ async def answer(ws: FakeWebSocket, message: dict) -> bool:
         await ws.send(
             {"type": "EXCHANGE_CARDS", "suits": cards, "prompt_id": prompt_id}
         )
-    elif kind == "JUMP_IN_PROMPT":
+    elif kind == "JUMP_IN_PROMPT" or (
+        # Our own turn with a jump-in open: the first move is the finish, which
+        # only counts as a jump
+        kind == "STATE_UPDATE"
+        and prompt_id is not None
+        and message["state"]["is_finish_prompt"]
+    ):
         finish = message["state"]["legal_moves_suits"][0]
         await ws.send(
             {"type": "PLAY_MOVE", "suits": finish, "jump": True, "prompt_id": prompt_id}
