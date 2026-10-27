@@ -14,6 +14,7 @@ from playerTypes.dmc_bot import (
 )
 from playerTypes.ppo_bot import (
     CRITIC_DIM,
+    DMC_ENSEMBLE,
     STATE_DIM,
     PresidentPolicyNet,
     PresidentPPOBot,
@@ -21,7 +22,14 @@ from playerTypes.ppo_bot import (
     opponent_hand_counts,
 )
 from utils.common import get_cached_traced_model
-from utils.gameplay import run_tagged_games, seeded_game_gen
+from utils.gameplay import iter_batched, run_tagged_games, seeded_game_gen
+from utils.ppo import (
+    build_batch,
+    compute_gae,
+    masked_entropy,
+    masked_log_softmax,
+    rollout_game_gen,
+)
 
 CPU = torch.device("cpu")
 
@@ -69,7 +77,9 @@ def test_greedy_ppo_bot_with_dmc_weights_plays_like_the_dmc_bot():
         for g in range(8):
             n = 4 + g % 4
             bots = {s: bot_for(s) for s in range(n)}
-            games.append((g, seeded_game_gen(n, bots, [900 + g * 10 + r for r in range(10)])))
+            games.append(
+                (g, seeded_game_gen(n, bots, [900 + g * 10 + r for r in range(10)]))
+            )
         results.append(run_tagged_games(games))
     assert results[0] == results[1]
 
@@ -118,3 +128,73 @@ def test_critic_sees_each_opponent_hand_in_the_actor_seat_order():
 def test_recording_needs_the_env_for_the_critic():
     with pytest.raises(ValueError):
         PresidentPPOBot(0, untrained_policy(), CPU, record=True, passer="bots/DMC.pt")
+
+
+def fake_batch(lengths, rewards, n_actions=125):
+    n = sum(lengths)
+    game = {
+        "x": np.zeros((n, STATE_DIM), dtype=np.float32),
+        "opp": np.zeros((n, 6, NUM_RANKS), dtype=np.int8),
+        "legal": np.ones((n, n_actions), dtype=bool),
+        "action": np.zeros(n, dtype=np.int64),
+        "logp": np.zeros(n, dtype=np.float32),
+        "lengths": np.array(lengths, dtype=np.int64),
+        "rewards": np.array(rewards, dtype=np.float32),
+        "version": 0,
+    }
+    return build_batch([game], CPU)
+
+
+def test_gae_matches_a_hand_computed_round():
+    batch = fake_batch([3, 1], [1.0, -0.5])
+    values = torch.tensor([0.2, 0.5, 0.3, 0.1])
+
+    # deltas 0.3, -0.2, 0.7 | -0.6; at lambda 0.5: 0.3 + 0.5 * (-0.2 + 0.5 * 0.7)
+    adv, ret = compute_gae(values, batch, gamma=1.0, lam=0.5)
+    assert torch.allclose(adv, torch.tensor([0.375, 0.15, 0.7, -0.6]))
+    assert torch.allclose(ret, adv + values)
+
+    adv, _ = compute_gae(values, batch, gamma=1.0, lam=1.0)
+    assert torch.allclose(adv, batch["outcome"] - values), "lambda 1 is R - V"
+
+
+def test_recorded_log_probs_match_the_trainer_so_ratios_start_at_one():
+    random.seed(5)
+    model = untrained_policy(seed=1)
+    ensemble = get_cached_traced_model(DMC_ENSEMBLE, PresidentValueNet)
+    games = list(
+        iter_batched(
+            lambda: rollout_game_gen(model, ensemble, [], [], CPU, version=7), 3, 3
+        )
+    )
+    games = [g for g in games if g is not None]
+    assert games and all(g["version"] == 7 for g in games)
+
+    batch = build_batch(games, CPU)
+    n = batch["x"].shape[0]
+    assert int(batch["lengths"].sum()) == n
+    assert batch["legal"][torch.arange(n), batch["action"]].all()
+    assert ((batch["rewards"] >= -1) & (batch["rewards"] <= 1)).all()
+
+    with torch.no_grad():
+        log_probs = masked_log_softmax(model(batch["x"]), batch["legal"])
+    recomputed = log_probs.gather(1, batch["action"][:, None]).squeeze(1)
+    assert torch.allclose(recomputed, batch["logp"], atol=1e-5)
+
+
+def test_masked_log_softmax_and_entropy_have_finite_gradients():
+    torch.manual_seed(0)
+    logits = torch.randn(64, 125, requires_grad=True)
+    legal = torch.rand(64, 125) < 0.05
+    legal[:, 0] = True
+    action = torch.multinomial(legal.float(), 1).squeeze(1)
+
+    log_probs = masked_log_softmax(logits, legal)
+    entropy = masked_entropy(log_probs, legal)
+    (-log_probs.gather(1, action[:, None]).mean() - entropy.mean()).backward()
+
+    assert torch.isfinite(logits.grad).all()
+    probs = log_probs.exp()
+    manual = -(probs * torch.where(legal, log_probs, 0.0)).sum(1)
+    assert torch.allclose(entropy, manual, atol=1e-6)
+    assert (probs[~legal] == 0).all()
