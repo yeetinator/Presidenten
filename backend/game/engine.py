@@ -234,6 +234,8 @@ class President:
                 p_id: [] for p_id in range(self.players)
             }
 
+        # [(p_id, move), ...] Every play and pass this round, declined jump-ins aside
+        self.history: list[tuple[int, tuple[int, int, int]]] = []
         self._history_flat_counts = [0] * 16  # Count of each card played
         # Count of each card passed by each player
         self._passed_by_player = [[0] * 16 for _ in range(self.players)]
@@ -246,6 +248,7 @@ class President:
         self.clear_pile()
 
     def _record_history_move(self, p_id, move):
+        self.history.append((p_id, move))
         if move == (0, 0, 0):
             pile_card, pile_count, _ = self.last_move
             if pile_card:

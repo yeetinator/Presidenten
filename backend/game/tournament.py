@@ -25,7 +25,7 @@ def create_players(assign_p: dict[int, PlayerType], iterations=400, dmc_paths=No
             case PlayerType.BASELINE:
                 assigned_players[p_id] = PresidentBaselineBot(p_id)
             case PlayerType.ISMCTS:
-                assigned_players[p_id] = PresidentISMCTSBot(p_id, iterations)
+                assigned_players[p_id] = PresidentISMCTSBot(p_id)
             case PlayerType.DMC:
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 dmc_model = PresidentValueNet().to(device)
