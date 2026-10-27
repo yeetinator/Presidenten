@@ -49,6 +49,9 @@ WEIGHT_DECAY = 0.01
 EMA_DECAY = 0.987  # Per iteration: about 30k games, as DMC's 0.998 per batch
 CLIP = 0.1
 EPOCHS = 4
+# One pass over fresh data takes the critics to their plateau, so more epochs
+# over each iteration's data only cost time
+CRITIC_EPOCHS = 2
 MINI_BATCH = 4096
 MAX_KL = 0.015  # Stops the epochs early, 1.5x a 0.01 target
 GAMMA = 1.0
@@ -213,7 +216,7 @@ def run_training_loop(snapshot_dir=SNAPSHOT_DIR, max_iters=None):
                     name,
                     batch,
                     returns[name],
-                    EPOCHS,
+                    CRITIC_EPOCHS,
                     MINI_BATCH,
                 )
             # Warm up the decay when starting fresh from the distilled actor
