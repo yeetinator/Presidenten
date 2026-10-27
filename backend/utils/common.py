@@ -1,5 +1,6 @@
 import torch
 import os
+from playerTypes.dmc_bot import PresidentEnsembleNet
 
 NUM_ROUNDS = 10
 NUM_WORKERS = 12
@@ -12,12 +13,25 @@ def init_worker():
     torch.set_num_threads(1)
 
 
+def _load_model(path, model_cls, device):
+    model = model_cls().to(device)
+    checkpoint = torch.load(path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    return model
+
+
 def get_cached_model(path, model_cls, device: str | torch.device = "cpu"):
+    """path is one checkpoint, or a tuple of checkpoints whose outputs are averaged."""
+    if isinstance(path, list):
+        path = tuple(path)
     key = (path, str(device))
     if key not in _SNAPSHOT_CACHE:
-        model = model_cls().to(device)
-        checkpoint = torch.load(path, map_location=device)
-        model.load_state_dict(checkpoint["model_state_dict"])
+        if isinstance(path, tuple):
+            model = PresidentEnsembleNet(
+                [_load_model(p, model_cls, device) for p in path]
+            )
+        else:
+            model = _load_model(path, model_cls, device)
         model.eval()
         _SNAPSHOT_CACHE[key] = model
     return _SNAPSHOT_CACHE[key]
@@ -26,6 +40,8 @@ def get_cached_model(path, model_cls, device: str | torch.device = "cpu"):
 def get_cached_traced_model(
     path, model_cls, example_batch_size=8, device: str | torch.device = "cpu"
 ):
+    if isinstance(path, list):
+        path = tuple(path)
     key = (path, str(device))
     if key not in _TRACED_CACHE:
         model = get_cached_model(path, model_cls, device)

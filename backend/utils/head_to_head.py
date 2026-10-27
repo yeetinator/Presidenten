@@ -107,8 +107,12 @@ def run_h2h(
     num_workers=NUM_WORKERS,
     progress_every=100,
     early_stop=True,
+    base_seed=None,
 ):
-    base_entropy = random.randint(1_000_000, 99_000_000)
+    # A fixed base_seed replays the same deals, e.g. to rerun a gate exactly
+    base_entropy = (
+        random.randint(1_000_000, 99_000_000) if base_seed is None else base_seed
+    )
     game_tasks = [
         (base_entropy + game_idx * NUM_ROUNDS, 4 + (game_idx % 4))
         for game_idx in range(total_games)
@@ -183,6 +187,7 @@ def run_h2h(
         "old_path": old_path,
         "total_games": len(results),
         "planned_games": total_games,
+        "base_seed": base_entropy,
         "stopped_early": stopped_at is not None,
         "total_rounds": sum(r["match_rounds"] for r in results),
         "master_avg": float(np.mean(master_scores)),
