@@ -21,6 +21,8 @@ def problems(monkeypatch):
     real_step = President.step
 
     def checked_step(env, p_id, move, suits=None):
+        if not env.track_suits:  # an ISMCTS bot's simulation, not the game
+            return real_step(env, p_id, move, suits)
         if p_id == 0 and move not in env.get_legal_moves(0, None, only_finish=False):
             found.append(f"illegal human move {move} on {env.last_move}")
         result = real_step(env, p_id, move, suits)
@@ -139,10 +141,10 @@ class BrowserPlayer:
     "seed, player_types",
     [
         (1, [0, 2, 2, 2]),
-        (2, [0, 1, 2, 1]),
-        (3, [0, 2, 1, 2, 2]),
-        (4, [0, 1, 2, 1, 2, 1]),
-        (5, [0, 2, 2, 1, 2, 1, 2]),
+        (2, [0, 3, 2, 3]),
+        (3, [0, 2, 3, 2, 2]),
+        (4, [0, 3, 2, 3, 2, 3]),
+        (5, [0, 2, 2, 3, 2, 3, 2]),
     ],
 )
 @async_test

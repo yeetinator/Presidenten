@@ -20,8 +20,8 @@
 
   const botTypeOptions = [
     { value: 4, label: "DMC" },
+    { value: 3, label: "ISMCTS" },
     { value: 2, label: "Baseline" },
-    { value: 1, label: "Random" },
   ] as const;
 
   const defaultNumRounds = 10;

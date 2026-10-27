@@ -14,6 +14,7 @@ def fast_delays(monkeypatch):
         "BOT_THINK_DELAY",
         "REVEAL_DELAY",
         "PASS_DELAY",
+        "ISMCTS_TIME_LIMIT",
     ):
         monkeypatch.setattr(main, name, getattr(main, name) / SPEEDUP)
     # Long enough that an answered jump-in never times out on a slow machine

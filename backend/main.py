@@ -10,8 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from game import President, PlayerType
 from game.engine import MAPPING_SV, MAPPING_VS
 from playerTypes.player import Player
-from playerTypes.random_bot import PresidentRandomBot
 from playerTypes.baseline_bot import PresidentBaselineBot
+from playerTypes.ismcts_bot import PresidentISMCTSBot
 from playerTypes.dmc_bot import (
     PresidentDMCBot,
     PresidentEnsembleNet,
@@ -34,14 +34,16 @@ BOT_THINK_DELAY = 0.5
 JUMP_IN_WINDOW = 1.5
 REVEAL_DELAY = 2
 PASS_DELAY = 1.0
+# Bots think while the last update is on screen, so this fits in the delays
+ISMCTS_TIME_LIMIT = 1.0
 
 MIN_PLAYERS = 4
 MAX_PLAYERS = 7
 
 PLAYER_TYPE_LABELS = {
     PlayerType.HUMAN: "Human",
-    PlayerType.RANDOM: "Random",
     PlayerType.BASELINE: "Baseline",
+    PlayerType.ISMCTS: "ISMCTS",
     PlayerType.DMC: "DMC",
 }
 
@@ -406,10 +408,12 @@ def build_assigned_players(
     for p_id, p_type in assign_p.items():
         if p_type == PlayerType.HUMAN:
             human_id = p_id
-        elif p_type == PlayerType.RANDOM:
-            assigned_players[p_id] = PresidentRandomBot(p_id)
         elif p_type == PlayerType.BASELINE:
             assigned_players[p_id] = PresidentBaselineBot(p_id)
+        elif p_type == PlayerType.ISMCTS:
+            assigned_players[p_id] = PresidentISMCTSBot(
+                p_id, time_limit=ISMCTS_TIME_LIMIT
+            )
         elif p_type == PlayerType.DMC:
             assigned_players[p_id] = PresidentDMCBot(
                 p_id, load_dmc_model(device), device

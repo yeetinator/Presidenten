@@ -66,7 +66,7 @@ def test_display_states_offer_no_moves():
         ),
         ({"num_players": 4, "player_types": [0, 2, 2, 9]}, "Unknown player type."),
         (
-            {"num_players": 4, "player_types": [0, 2, 2, 3]},
+            {"num_players": 4, "player_types": [0, 2, 2, 1]},
             "That player type isn't available in the web game.",
         ),
         (

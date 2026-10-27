@@ -15,9 +15,9 @@ I kept the game engine synchronous to allow multiprocessing across CPU cores for
 
 ## Bots
 
-- **Random**: Picks a random legal move.
+- **Random**: Picks a random legal move. Available in the CLI only.
 - **Baseline**: Hardcoded rule-based bot modeled after human playstyles.
-- **ISMCTS**: (Information Set Monte Carlo Tree Search), creates possible game states from the current state, plays them out, results are backpropagated up the tree to determine which move is statistically the most successful. Available in the CLI only.
+- **ISMCTS**: (Information Set Monte Carlo Tree Search), creates possible game states from the current state, plays them out, results are backpropagated up the tree to determine which move is statistically the most successful. The possible states favour hands that explain the opponents' moves so far this round. Thinks for 1 second per move.
 - **DMC**: (Deep Monte Carlo) Q-value network over 125 move actions, trained through self-play with round placement rewards. It also chooses which cards to pass. The web game averages two independently trained models (`bots/DMC.pt` and `bots/DMCW.pt`) into an ensemble.
 
 ### Planned
