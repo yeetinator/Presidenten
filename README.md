@@ -23,7 +23,7 @@ I kept the game engine synchronous to allow multiprocessing across CPU cores for
 ### Planned
 
 - **Master-Student DMC**: Master is trained with knowing opponent hands, guiding a student model.
-- **Asymmetric PPO Actor-Critic**: (Proximal Policy Optimization) with action masking, Critic sees opponent hands to compute GAE (Generalized Advantage Estimation) advantages.
+- **Asymmetric PPO Actor-Critic**: (Proximal Policy Optimization) with action masking, Critic sees opponent hands to compute GAE (Generalized Advantage Estimation) advantages. In progress, see [PPO Training](#ppo-training).
 
 ## Custom Rules
 
@@ -51,7 +51,8 @@ Presidenten/
 │   ├── bots/                   # Trained DMC checkpoints used by the server
 │   ├── dmc_loop/               # DMC training loop (train, evaluate, orchestrate)
 │   ├── game/                   # Synchronous game engine, CLI prompts & tournaments
-│   ├── playerTypes/            # Human player & bots (Random, Baseline, ISMCTS, DMC)
+│   ├── playerTypes/            # Human player & bots (Random, Baseline, ISMCTS, DMC, PPO)
+│   ├── ppo_loop/               # PPO training loop (distill, train, evaluate, orchestrate, gates)
 │   ├── tests/                  # Pytest suite (engine, jump-ins, server, full games)
 │   ├── utils/                  # Self-play, training, Elo league & head-to-head helpers
 │   ├── benchmark.py            # Pit two DMC checkpoints head-to-head
@@ -133,13 +134,23 @@ Runs league cycles until training plateaus, resuming from `snapshots/latest_mode
 
 Snapshots, elites and evaluation results are written to `backend/snapshots/`.
 
+### PPO Training
+
+PPO trains a policy that plays from its own information, with a critic that also sees every opponent's hand during training, for lower-variance advantages than DMC's Monte Carlo targets. It starts from the DMC ensemble and passes cards with the DMC passer.
+
+1. **Distill** (`python -m ppo_loop.distill_ppo`): clones the DMC ensemble's policy into the actor and pretrains the critics on its games. `--dagger` continues with the student playing.
+2. **Gate 1** (`python -m ppo_loop.gates_ppo gate1`): the distilled actor has to play at parity with the ensemble over 2400 head-to-head games.
+3. **Train** (`python -m ppo_loop.orchestrate_ppo`): league cycles as for DMC. Every 3 cycles, gate 2 plays the best elite against the ensemble and the distilled start, and gives up if training stops improving.
+
+Snapshots, the frozen DMC elites and gate results are written to `backend/snapshots_ppo/`.
+
 ### Benchmark
 
 ```Bash
 python benchmark.py
 ```
 
-Plays two checkpoints (`MASTER_PATH` vs `OLD_PATH`) against each other in paired, seeded games and reports the score difference with a 95% confidence interval, stopping early once the result is clear.
+Plays two checkpoints (`MASTER_PATH` vs `OLD_PATH`) against each other in paired, seeded games and reports the score difference with a 95% confidence interval, stopping early once the result is clear. A tuple of checkpoints, such as `("bots/DMC.pt", "bots/DMCW.pt")`, plays as their averaged ensemble.
 
 ### Tests
 
