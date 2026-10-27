@@ -442,6 +442,9 @@ class Table:
     input_queue: asyncio.Queue
     pending_messages: list[dict]
     disconnect_event: asyncio.Event
+    # Event loop time until which the last update stays on screen; bots think
+    # during it instead of after it
+    shown_until: float = 0.0
 
     @property
     def human_id(self) -> int:
@@ -460,10 +463,22 @@ class Table:
     def view(self, state: dict, *, accepts_moves: bool = False) -> dict:
         return enrich_state(state, self.session.assign_p, accepts_moves=accepts_moves)
 
+    def hold(self, delay: float):
+        """Keep what is on screen there for `delay` more before the next update."""
+        now = asyncio.get_running_loop().time()
+        self.shown_until = max(self.shown_until, now) + delay
+
+    async def send(self, message: dict):
+        """Send an update once the previous one has been on screen long enough."""
+        wait = self.shown_until - asyncio.get_running_loop().time()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        await self.websocket.send_json(message)
+
     async def show_state(self):
         """Send the human's view of the table (offering no moves)."""
         state = self.view(self.env._get_state(self.human_id))
-        await self.websocket.send_json({"type": "STATE_UPDATE", "state": state})
+        await self.send({"type": "STATE_UPDATE", "state": state})
 
     async def clear_pile_and_show(self):
         self.env.clear_pile()
@@ -474,7 +489,7 @@ class Table:
     ) -> dict:
         """Send a prompt with a fresh id and wait for the reply that echoes it."""
         prompt_id = next(prompt_ids)
-        await self.websocket.send_json({**message, "prompt_id": prompt_id})
+        await self.send({**message, "prompt_id": prompt_id})
         return await wait_for_reply(
             self.input_queue,
             self.pending_messages,
@@ -515,7 +530,7 @@ async def run_exchange_phase(table: Table):
     for pair in env.role_pairs:
         env.exchange_cards(pair, cards_to_pass)
         await table.show_state()
-        await asyncio.sleep(table.timings.exchange_delay)
+        table.hold(table.timings.exchange_delay)
 
 
 async def play_round(table: Table):
@@ -593,7 +608,7 @@ async def offer_human_jump_in(table: Table, curr_id: int) -> int | None:
 
     env.step(human_id, move, suits)
     await table.show_state()
-    await asyncio.sleep(timings.message_delay)
+    table.hold(timings.message_delay)
 
     if env.was_pile_reset:
         env.clear_pile()
@@ -606,21 +621,21 @@ async def play_bot_finish(table: Table, bot_id: int):
     """The bot that could finish the quad on the pile decides whether to jump in."""
     env, timings = table.env, table.timings
     state = env._get_state(bot_id)
-    await asyncio.sleep(timings.bot_think_delay)
+    table.hold(timings.bot_think_delay)
 
     move = await asyncio.to_thread(table.bot(bot_id).get_move, state, env)
     env.step(bot_id, move)
     if move != (0, 0, 0):
         await table.show_state()
-        await asyncio.sleep(timings.message_delay)
+        table.hold(timings.message_delay)
 
         if env.was_pile_reset:
             await table.clear_pile_and_show()
     elif not env.pending_finish:
-        await asyncio.sleep(timings.pass_delay)
+        table.hold(timings.pass_delay)
     if env.was_pile_reset:
         await table.clear_pile_and_show()
-        await asyncio.sleep(timings.message_delay)
+        table.hold(timings.message_delay)
 
 
 async def play_human_turn(table: Table):
@@ -675,12 +690,10 @@ async def play_human_turn(table: Table):
     await table.show_state()
 
     if env.was_pile_reset and not env.pending_finish and not env.game_over:
-        await asyncio.sleep(timings.message_delay)
+        table.hold(timings.message_delay)
         await table.clear_pile_and_show()
     else:
-        await asyncio.sleep(
-            timings.message_delay if move != (0, 0, 0) else timings.pass_delay
-        )
+        table.hold(timings.message_delay if move != (0, 0, 0) else timings.pass_delay)
 
 
 async def play_bot_turn(table: Table, bot_id: int):
@@ -706,12 +719,10 @@ async def play_bot_turn(table: Table, bot_id: int):
         if finisher(env) == human_id:
             return  # the pile clears only after the human's jump-in window
 
-        await asyncio.sleep(timings.message_delay)
+        table.hold(timings.message_delay)
         await clear_finished_pile(table)
     elif not env.pending_finish and not env.game_over and env.curr_turn != human_id:
-        await asyncio.sleep(
-            timings.message_delay if move != (0, 0, 0) else timings.pass_delay
-        )
+        table.hold(timings.message_delay if move != (0, 0, 0) else timings.pass_delay)
 
 
 async def clear_finished_pile(table: Table):
@@ -721,7 +732,7 @@ async def clear_finished_pile(table: Table):
         return  # the human's prompt shows the cleared pile
 
     await table.show_state()
-    await asyncio.sleep(table.timings.message_delay)
+    table.hold(table.timings.message_delay)
 
 
 async def end_round(table: Table):
@@ -734,15 +745,13 @@ async def end_round(table: Table):
                 break
 
     if last_active_player is not None:
-        await asyncio.sleep(timings.message_delay)
+        table.hold(timings.message_delay)
         if last_active_player != table.human_id:
-            await table.websocket.send_json(
-                {"type": "REVEAL_BOT", "seat": last_active_player}
-            )
-            await asyncio.sleep(timings.reveal_delay)
+            await table.send({"type": "REVEAL_BOT", "seat": last_active_player})
+            table.hold(timings.reveal_delay)
 
     env.assign_roles()
-    await table.websocket.send_json(
+    await table.send(
         {
             "type": "ROUND_OVER",
             "scores": env.scores,
@@ -755,7 +764,7 @@ async def end_round(table: Table):
 async def deal_hands(table: Table):
     session = table.session
     session.dealt_cards_event.clear()  # every deal waits for its own animation
-    await table.websocket.send_json(
+    await table.send(
         {
             "type": "DEAL_CARDS",
             "state": table.view(table.env._get_state(table.human_id)),
@@ -785,7 +794,7 @@ async def run_connection(
 
         await deal_hands(table)
         if table.env.curr_turn != table.human_id:
-            await asyncio.sleep(table.timings.message_delay)
+            table.hold(table.timings.message_delay)
         await play_round(table)
 
         while not disconnect_event.is_set():
@@ -799,7 +808,7 @@ async def run_connection(
             await deal_hands(table)
             await run_exchange_phase(table)
             await table.show_state()
-            await asyncio.sleep(table.timings.message_delay)
+            table.hold(table.timings.message_delay)
             await play_round(table)
     except WebSocketDisconnect:
         return
