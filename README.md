@@ -28,6 +28,52 @@ I kept the game engine synchronous to allow multiprocessing across CPU cores for
 
 - **Master-Student DMC**: Master is trained with knowing opponent hands, guiding a student model. Dropped after the PPO outcome: its critic already saw every opponent's hand and still couldn't guide the actor past the ensemble.
 
+## How Strong Are the Bots?
+
+To test a player, we seat it at a table where every other seat is the same bot. Then we deal the same cards again with the player in each seat, so everyone gets the good and the bad hands once. Each player was measured at two tables: one of DMC bots, the strongest, and one of Baseline bots, which play like a careful casual player.
+
+**Beat rate** is the share of opponents a player finishes ahead of in a round. 50% means as good as the table. 100% would mean finishing first every round, and 0% last every round.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./public/bot_strength_dark.png">
+  <img alt="Beat rate of each bot at a table of DMC bots and at a table of Baseline bots" src="./public/bot_strength_light.png">
+</picture>
+
+| Player   | How it decides                                                   | Think time | Beat rate at a DMC table | At a Baseline table | Finishes first | Finishes last |
+| -------- | ---------------------------------------------------------------- | ---------- | ------------------------ | ------------------- | -------------- | ------------- |
+| Random   | Any legal move                                                   | instant    | 2.8% ± 0.1               | 10.3% ± 0.2         | 0.2%           | 90%           |
+| Baseline | Fixed rules: play low cards first, hold back 2s and high triples | instant    | 27.3% ± 0.5              | 50% (itself)        | 7.1%           | 47%           |
+| ISMCTS   | Guesses the hidden hands, plays each option out many times       | 1 s / move | 31.3% ± 1.5              | 71.8% ± 1.1         | 8.7%           | 41%           |
+| PPO      | Neural network that started as a copy of DMC, trained further    | instant    | 50.1% ± 0.5              | 73.1% ± 0.4         | 18.4%          | 18%           |
+| DMC      | Neural network that learned by playing millions of rounds        | instant    | 50% (itself)             | 73.4% ± 0.4         | 18.2%          | 18%           |
+
+± is a 95% confidence interval. Beat rates count tables of 4 to 7 players equally. Finishing first and last are at a DMC table, where luck alone would put a player first, or last, about 18% of the time.
+
+### Why This Order
+
+- **The card exchange snowballs.** Whoever finishes last becomes Scum and has to give their best cards to the President. A strong player climbs out of that hole; a weak one stays in it.
+  - At a DMC table, Random finishes last 90% of the time. After finishing last it avoids last place again only 8% of the time.
+  - At a Baseline table, DMC keeps the President role 64% of the time (Baseline among its own copies: 45%). After finishing last, it avoids last place again 92% of the time (Baseline: 77%).
+- **ISMCTS assumes everyone plays like Baseline.** When it imagines how a round plays out, every player in its imagination, itself included, plays like Baseline. Against real Baseline bots that guess is right, and it comes close to DMC (71.8% against 73.4%). Against DMC bots the guess is wrong, and it is only a little better than Baseline (31.3% against 27.3%).
+- **PPO ties DMC.** It started as a copy of DMC and still picks the same move 88% of the time. Further training didn't find anything better (see [PPO Training](#ppo-training)).
+- **Skill matters most at small tables.** At a DMC table, Baseline beats 21% of its opponents with 4 players and 32% with 7. With more players, a player's own choices decide less of where they finish.
+
+### Where Does a Human Fit?
+
+About 100 rounds of play are too few for a fair comparison on their own: with that many rounds, luck of the deal alone moves a beat rate by about ±9 percentage points. So the web game has a benchmark mode that records the deal of every round. Afterwards, each round is played again from the same start, with the same cards, roles and opponents, but with a bot in the human's seat. Comparing the human with each bot on the very same rounds takes most of the luck out: the uncertainty drops to about ±5 points, as much as 400 ordinary rounds would give. See [Bot Strength](#bot-strength) to measure yourself.
+
+<!-- Human placement: add the result of human_placement.py here -->
+
+<details>
+<summary>Method details</summary>
+
+- **Bots:** 800 deal sequences per bot and table (120 for ISMCTS, which thinks for about 6.5 s per round), 200 (30) each at 4, 5, 6 and 7 players. Each sequence is 10 rounds, so roles carry over, and is played once with the bot in every seat. Every bot at the same table plays the same deals.
+- **Score:** a round's finish maps to −1 (last) to +1 (first), and beat rate is (score + 1) / 2. Intervals come from the spread of the per-sequence scores.
+- **Human:** Random and ISMCTS make random choices, so their replays are averaged over 8 runs. The other bots always make the same move, so one replay each is enough. The intervals come from a bootstrap that resamples runs of 5 consecutive rounds, since one round's finish sets the next round's roles.
+- **Check:** with the Baseline bot standing in for the human, 20 simulated sessions of 100 rounds each gave an interval of ±4.7 points against DMC, and all 20 covered the true value. A DMC bot replaying its own rounds reproduced every round exactly.
+
+</details>
+
 ## Custom Rules
 
 - 4 to 7 players. The holder of the 3 of Clubs starts the first round by playing 3s, the Scum starts every round after that.
@@ -56,10 +102,14 @@ Presidenten/
 │   ├── game/                   # Synchronous game engine, CLI prompts & tournaments
 │   ├── playerTypes/            # Human player & bots (Random, Baseline, ISMCTS, DMC, PPO)
 │   ├── ppo_loop/               # PPO training loop (distill, train, evaluate, orchestrate, gates)
-│   ├── tests/                  # Pytest suite (engine, jump-ins, server, full games)
+│   ├── results/                # Bot ladder & human placement results
+│   ├── tests/                  # Pytest suite (engine, jump-ins, server, full games, ladder)
 │   ├── utils/                  # Self-play, training, Elo league & head-to-head helpers
 │   ├── benchmark.py            # Pit two DMC checkpoints head-to-head
+│   ├── bot_ladder.py           # Rank the bots at DMC and Baseline tables
+│   ├── human_placement.py      # Place a human among the bots from logged rounds
 │   ├── main.py                 # FastAPI WebSocket server
+│   ├── plot_bot_strength.py    # Draw the bot strength chart
 │   └── run_cli.py              # Terminal tournaments between any player types
 │
 ├── frontend/                   # Svelte/TypeScript codebase
@@ -158,6 +208,29 @@ python benchmark.py
 ```
 
 Plays two checkpoints (`MASTER_PATH` vs `OLD_PATH`) against each other in paired, seeded games and reports the score difference with a 95% confidence interval, stopping early once the result is clear. A tuple of checkpoints, such as `("bots/DMC.pt", "bots/DMCW.pt")`, plays as their averaged ensemble.
+
+### Bot Strength
+
+```Bash
+python bot_ladder.py               # every bot at a DMC table and at a Baseline table
+python bot_ladder.py --only ISMCTS # some bots; --field DMC for one table, --force to rerun
+python plot_bot_strength.py        # redraws public/bot_strength_{light,dark}.png
+```
+
+Runs the [bot ladder](#how-strong-are-the-bots) and saves it to `results/bot_ladder.json`, skipping finished runs. The fast bots take under a minute each. ISMCTS takes about 1.5 h per table on 8 cores and should have the machine to itself, as it thinks for a fixed time. PPO needs a model under `snapshots_ppo/`, which isn't in the repo.
+
+To place yourself, start the server in benchmark mode and play at tables of DMC bots only, ideally about 25 rounds each at 4, 5, 6 and 7 players:
+
+```PowerShell
+$env:PRESIDENT_BENCHMARK_LOG = "results/human_rounds.jsonl"; uvicorn main:app
+```
+
+```Bash
+PRESIDENT_BENCHMARK_LOG=results/human_rounds.jsonl uvicorn main:app  # Linux/macOS
+python human_placement.py results/human_rounds.jsonl
+```
+
+`human_placement.py` replays every logged round with each bot in your seat. It prints your result against each bot with a 95% interval and the chance that you are ahead, and saves it to `results/human_placement.json`. The chart script adds you to the chart. The replays take about 15 minutes, most of it ISMCTS. `--dry-run Baseline` checks the intervals by letting a bot play the human's seat.
 
 ### Tests
 
