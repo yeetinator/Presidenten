@@ -9,12 +9,15 @@ from playerTypes.baseline_bot import PresidentBaselineBot
 from playerTypes.dmc_bot import (
     NUM_ACTIONS,
     STATE_DIM,
+    _SEAT_ORDER,
     PresidentDMCBot,
     PresidentValueNet,
 )
 from playerTypes.ppo_bot import (
     DMC_ENSEMBLE,
+    OPP_SEATS,
     PresidentCriticNet,
+    PresidentPairwiseCriticNet,
     PresidentPolicyNet,
     PresidentPPOBot,
     PresidentSeatCriticNet,
@@ -66,6 +69,17 @@ def placement_reward(rank, num_players):
     """DMC's round reward: normalized placement in [-1, 1]."""
     max_score = num_players - 1
     return ((max_score - rank) / max_score) * 2 - 1
+
+
+def opponents_beaten(out_order, my_id):
+    """1 for each opponent the seat finished ahead of, 0 for those it finished
+    behind, in its seat order, with -1 for absent seats: the pairwise critic's
+    labels. Their mean, scaled to [-1, 1], is the placement reward."""
+    out = np.full(OPP_SEATS, -1, dtype=np.int8)
+    my_rank = out_order.index(my_id)
+    for row, p_id in enumerate(_SEAT_ORDER[len(out_order)][my_id][1:]):
+        out[row] = my_rank < out_order.index(p_id)
+    return out
 
 
 def rollout_game_gen(live_model, ensemble, dmc_elites, ppo_elites, device, version):
@@ -132,14 +146,18 @@ def rollout_game_gen(live_model, ensemble, dmc_elites, ppo_elites, device, versi
             if isinstance(bot, PresidentPPOBot) and bot.record:
                 if bot.trajectory:
                     episodes.append(
-                        (bot.trajectory, placement_reward(rank, num_players))
+                        (
+                            bot.trajectory,
+                            placement_reward(rank, num_players),
+                            opponents_beaten(env.out_order, p_id),
+                        )
                     )
                 bot.trajectory = []
     return pack_episodes(episodes, version)
 
 
 def pack_episodes(episodes, version):
-    steps = [step for trajectory, _ in episodes for step in trajectory]
+    steps = [step for trajectory, _, _ in episodes for step in trajectory]
     if not steps:
         return None
 
@@ -153,8 +171,9 @@ def pack_episodes(episodes, version):
         "legal": legal,
         "action": np.array([s[2] for s in steps], dtype=np.int64),
         "logp": np.array([s[3] for s in steps], dtype=np.float32),
-        "lengths": np.array([len(t) for t, _ in episodes], dtype=np.int64),
-        "rewards": np.array([r for _, r in episodes], dtype=np.float32),
+        "lengths": np.array([len(t) for t, _, _ in episodes], dtype=np.int64),
+        "rewards": np.array([r for _, r, _ in episodes], dtype=np.float32),
+        "beats": np.stack([b for _, _, b in episodes]),
         "version": version,
     }
 
@@ -294,6 +313,8 @@ def build_batch(games, device):
         torch.arange(lengths.numel(), device=device), lengths
     )
     batch["outcome"] = batch["rewards"][episode_of]
+    if "beats" in games[0]:  # the held-out set predates the pairwise labels
+        batch["beats"] = cat("beats", torch.int8)[episode_of]
     return batch
 
 
@@ -352,12 +373,13 @@ def explained_variance(pred, target):
 
 def make_critics(arch, device):
     """The full critic and the own-information one, of the same architecture so
-    their gap measures information alone: "flat" MLPs or "seat" encoders."""
-    if arch == "seat":
-        critics = {
-            "full": PresidentSeatCriticNet(see_hands=True),
-            "own": PresidentSeatCriticNet(see_hands=False),
-        }
+    their gap measures information alone: "flat" MLPs, "seat" encoders, or
+    "pairwise" seat encoders that predict who finishes ahead."""
+    if arch in ("seat", "pairwise"):
+        net = (
+            PresidentPairwiseCriticNet if arch == "pairwise" else PresidentSeatCriticNet
+        )
+        critics = {"full": net(see_hands=True), "own": net(see_hands=False)}
     else:
         critics = {"full": PresidentCriticNet(), "own": PresidentCriticNet(STATE_DIM)}
     return {name: net.to(device) for name, net in critics.items()}
@@ -382,8 +404,21 @@ def predict_values(critic, name, batch, chunk=16384):
     return out
 
 
+def pairwise_loss(logits, beats):
+    """Cross-entropy of each present opponent's finished-ahead label, averaged
+    per decision as the placement averages over opponents."""
+    present = beats >= 0
+    bce = torch.nn.functional.binary_cross_entropy_with_logits(
+        logits.float(), beats.clamp(min=0).float(), reduction="none"
+    )
+    return ((bce * present).sum(1) / present.sum(1)).mean()
+
+
 def train_critic(critic, optimizer, name, batch, targets, epochs, mini_batch_size):
+    """Regresses on the targets. A pairwise critic learns from who actually
+    finished ahead instead, so its targets are outcomes, not lambda-returns."""
     n = targets.shape[0]
+    pairwise = isinstance(critic, PresidentPairwiseCriticNet)
     critic.train()
     loss_sum = torch.zeros((), device=targets.device)
     n_steps = 0
@@ -392,9 +427,13 @@ def train_critic(critic, optimizer, name, batch, targets, epochs, mini_batch_siz
         for i in range(0, n, mini_batch_size):
             rows = perm[i : i + mini_batch_size]
             optimizer.zero_grad(set_to_none=True)
+            features = critic_features(name, batch, rows)
             with torch.autocast(device_type=targets.device.type, dtype=torch.bfloat16):
-                pred = critic(critic_features(name, batch, rows))
-            loss = torch.nn.functional.mse_loss(pred.float(), targets[rows])
+                pred = critic.heads(features) if pairwise else critic(features)
+            if pairwise:
+                loss = pairwise_loss(pred, batch["beats"][rows])
+            else:
+                loss = torch.nn.functional.mse_loss(pred.float(), targets[rows])
             loss.backward()
             torch.nn.utils.clip_grad_norm_(critic.parameters(), GRADIENT_CLIP)
             optimizer.step()

@@ -81,7 +81,7 @@ class PresidentSeatCriticNet(torch.nn.Module):
     per seat. Takes the same inputs as PresidentCriticNet: with see_hands off,
     the opponents' hands are blanked, for a critic on the actor's information."""
 
-    def __init__(self, see_hands=True, embed=128, width=1024):
+    def __init__(self, see_hands=True, embed=128, width=1024, outputs=1):
         super().__init__()
         self.see_hands = see_hands
         self.register_buffer("token_index", _seat_token_index(see_hands))
@@ -93,15 +93,34 @@ class PresidentSeatCriticNet(torch.nn.Module):
             torch.nn.Linear(256, embed),
             torch.nn.LeakyReLU(0.1),
         )
-        self.value = PresidentValueNet(STATE_DIM + MAX_PLAYERS * embed, 1, width)
+        self.value = PresidentValueNet(STATE_DIM + MAX_PLAYERS * embed, outputs, width)
 
-    def forward(self, x):
+    def heads(self, x):
         padded = torch.cat([x, x.new_zeros(x.shape[0], 1)], dim=1)
         tokens = padded[:, self.token_index]  # [B, seats, features]
         onehot = self.seat_onehot.to(x.dtype).expand(x.shape[0], -1, -1)
         seats = self.encoder(torch.cat([tokens, onehot], dim=2))
         trunk_in = torch.cat([x[:, :STATE_DIM], seats.flatten(1).to(x.dtype)], dim=1)
-        return self.value(trunk_in).squeeze(-1)
+        return self.value(trunk_in)
+
+    def forward(self, x):
+        return self.heads(x).squeeze(-1)
+
+
+class PresidentPairwiseCriticNet(PresidentSeatCriticNet):
+    """Expected round placement through the chance of finishing ahead of each
+    opponent. Placement is linear in the number of opponents beaten, so this is
+    the same value, learned from one label per opponent instead of one per
+    round."""
+
+    def __init__(self, see_hands=True, embed=128, width=1024):
+        super().__init__(see_hands, embed, width, outputs=OPP_SEATS)
+
+    def forward(self, x):
+        # Absent seats have a hand size of -1 in the actor's state
+        present = x[:, O_OPP + 1 : O_OPP + MAX_PLAYERS] >= 0
+        beats = torch.sigmoid(self.heads(x).float()) * present
+        return 2 * beats.sum(1) / present.sum(1) - 1
 
 
 def opponent_hand_counts(env, my_id):

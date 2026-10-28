@@ -22,13 +22,13 @@ from utils.ppo import (
     actor_loop,
     build_batch,
     collect_games,
-    critic_features,
     explained_variance,
     make_critics,
     make_optimizer,
     masked_entropy,
     masked_log_softmax,
     predict_values,
+    train_critic,
 )
 from utils.training import shutdown
 
@@ -241,7 +241,9 @@ def run_distillation(mode="bc", max_minutes=MAX_MINUTES, tau=None, arch=None):
                 _, target_lp = teacher_log_probs(teacher, batch, tau)
                 train_ces.append(train_student(student, optimizer, batch, target_lp))
             for name, (critic, critic_opt) in critics.items():
-                train_critic_once(critic, critic_opt, name, batch)
+                train_critic(
+                    critic, critic_opt, name, batch, batch["outcome"], 1, MINI_BATCH
+                )
             if mode == "dagger":
                 shared_model.load_state_dict(student.state_dict())
                 model_version.value += 1
@@ -312,23 +314,6 @@ def train_student(student, optimizer, batch, target_lp):
     return ce_sum / max(n_steps, 1)
 
 
-def train_critic_once(critic, optimizer, name, batch):
-    """One pass over a batch, regressing on the round outcome."""
-    critic.train()
-    targets = batch["outcome"]
-    device_type = targets.device.type
-    perm = torch.randperm(targets.numel(), device=targets.device)
-    for i in range(0, perm.numel(), MINI_BATCH):
-        rows = perm[i : i + MINI_BATCH]
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-            pred = critic(critic_features(name, batch, rows))
-        loss = torch.nn.functional.mse_loss(pred.float(), targets[rows])
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
-        optimizer.step()
-
-
 def format_heldout(s):
     return (
         f"   held-out | ce {s['ce']:.4f} agree {100 * s['agree']:.2f}% "
@@ -354,14 +339,14 @@ def save_distilled(student, critics, tau, batch_idx, arch):
 
 def main():
     # python -m ppo_loop.distill_ppo [--dagger | --critics] [--minutes N] [--tau T]
-    #                               [--arch flat | seat]
+    #                               [--arch flat | seat | pairwise]
     parser = argparse.ArgumentParser()
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--dagger", action="store_true")
     modes.add_argument("--critics", action="store_true")
     parser.add_argument("--minutes", type=float, default=MAX_MINUTES)
     parser.add_argument("--tau", type=float, default=None)
-    parser.add_argument("--arch", choices=("flat", "seat"), default=None)
+    parser.add_argument("--arch", choices=("flat", "seat", "pairwise"), default=None)
     args = parser.parse_args()
     mode = "dagger" if args.dagger else "critics" if args.critics else "bc"
     run_distillation(mode, args.minutes, args.tau, args.arch)

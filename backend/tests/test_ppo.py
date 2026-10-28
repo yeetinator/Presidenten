@@ -7,7 +7,9 @@ import torch
 from game import President
 from playerTypes.dmc_bot import (
     COUNT_BUCKETS,
+    MAX_PLAYERS,
     NUM_RANKS,
+    O_OPP,
     ROLE_MAP,
     PresidentDMCBot,
     PresidentValueNet,
@@ -19,6 +21,7 @@ from playerTypes.ppo_bot import (
     DMC_ENSEMBLE,
     STATE_DIM,
     PresidentCriticNet,
+    PresidentPairwiseCriticNet,
     PresidentPolicyNet,
     PresidentPPOBot,
     PresidentSeatCriticNet,
@@ -33,6 +36,8 @@ from utils.ppo import (
     make_optimizer,
     masked_entropy,
     masked_log_softmax,
+    opponents_beaten,
+    placement_reward,
     ppo_update,
     predict_values,
     rollout_game_gen,
@@ -265,3 +270,46 @@ def test_seat_critic_tokens_hold_each_seats_hand_and_public_record(see_hands):
         assert passed == float(p_id in env.passed)
     assert (tokens[6, -4:] == -1).all(), "the seventh seat is absent"
     assert critic(inp).shape == (1,)
+
+
+def test_opponents_beaten_follow_the_seat_order_and_add_up_to_the_placement():
+    out_order = [3, 1, 4, 0, 2]  # player 1 finished second of five
+    beats = opponents_beaten(out_order, my_id=1)
+
+    # Seat order from player 1: 2, 3, 4, 0, then two absent seats
+    assert list(beats) == [1, 0, 1, 1, -1, -1]
+    assert 2 * beats[:4].mean() - 1 == pytest.approx(placement_reward(1, 5))
+
+
+def test_pairwise_critic_values_average_the_present_opponents():
+    torch.manual_seed(0)
+    critic = PresidentPairwiseCriticNet(see_hands=False)
+    x = torch.rand(3, STATE_DIM)
+    x[:, O_OPP + 4 : O_OPP + MAX_PLAYERS] = -1  # a four-player table
+
+    with torch.no_grad():
+        beats = torch.sigmoid(critic.heads(x))
+        assert torch.allclose(critic(x), 2 * beats[:, :3].mean(1) - 1)
+
+
+def test_pairwise_labels_match_the_rewards_and_the_critic_fits_them():
+    random.seed(13)
+    torch.manual_seed(0)
+    ensemble = get_cached_traced_model(DMC_ENSEMBLE, PresidentValueNet)
+    games = iter_batched(
+        lambda: rollout_game_gen(untrained_policy(), ensemble, [], [], CPU, 0), 2, 2
+    )
+    batch = build_batch([g for g in games if g is not None], CPU)
+
+    present = batch["beats"] >= 0
+    placement = 2 * (batch["beats"] * present).sum(1) / present.sum(1) - 1
+    assert torch.allclose(placement.float(), batch["outcome"])
+
+    critic = PresidentPairwiseCriticNet()
+    critic_opt = make_optimizer(critic, 1e-4, 0.01)
+    outcome = batch["outcome"]
+    first = train_critic(critic, critic_opt, "full", batch, outcome, 1, 256)
+    for _ in range(5):
+        last = train_critic(critic, critic_opt, "full", batch, outcome, 1, 256)
+    assert last < first
+    assert predict_values(critic, "full", batch).abs().max() <= 1
