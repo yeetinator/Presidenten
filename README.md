@@ -23,7 +23,10 @@ I kept the game engine synchronous to allow multiprocessing across CPU cores for
 ### Planned
 
 - **Master-Student DMC**: Master is trained with knowing opponent hands, guiding a student model.
-- **Asymmetric PPO Actor-Critic**: (Proximal Policy Optimization) with action masking, Critic sees opponent hands to compute GAE (Generalized Advantage Estimation) advantages. In progress, see [PPO Training](#ppo-training).
+
+### Tried
+
+- **Asymmetric PPO Actor-Critic**: (Proximal Policy Optimization) with action masking, Critic sees opponent hands to compute GAE (Generalized Advantage Estimation) advantages. It plays at the DMC ensemble's level but doesn't beat it, see [PPO Training](#ppo-training).
 
 ## Custom Rules
 
@@ -138,11 +141,15 @@ Snapshots, elites and evaluation results are written to `backend/snapshots/`.
 
 PPO trains a policy that plays from its own information, with a critic that also sees every opponent's hand during training, for lower-variance advantages than DMC's Monte Carlo targets. It starts from the DMC ensemble and passes cards with the DMC passer.
 
-1. **Distill** (`python -m ppo_loop.distill_ppo`): clones the DMC ensemble's policy into the actor and pretrains the critics on its games. `--dagger` continues with the student playing.
+1. **Distill** (`python -m ppo_loop.distill_ppo`): clones the DMC ensemble's policy into the actor and pretrains the critics on its games. `--dagger` continues with the student playing, `--critics` trains only the critics, and `--arch flat|seat|pairwise` picks the critic architecture.
 2. **Gate 1** (`python -m ppo_loop.gates_ppo gate1`): the distilled actor has to play at parity with the ensemble over 2400 head-to-head games.
 3. **Train** (`python -m ppo_loop.orchestrate_ppo`): league cycles as for DMC. Every 3 cycles, gate 2 plays the best elite against the ensemble and the distilled start, and gives up if training stops improving.
 
 Snapshots, the frozen DMC elites and gate results are written to `backend/snapshots_ppo/`.
+
+**Outcome.** The distilled actor passed gate 1 (−0.005, 95% CI [−0.011, +0.001] against the ensemble). Fifteen training cycles (about 1.8M games) then gained about +0.005 over the distilled start, which brought PPO level with the ensemble (final model +0.002, [−0.004, +0.009]) but not past it, so gate 2 gave up.
+
+The premise didn't hold: seeing every hand barely helps to predict a round's outcome. The critic with every opponent's hand explains 0.77 of the outcome's variance, against 0.74 for one with only the actor's information. That makes the advantages only about 1.2× less noisy than without the hidden hands. Flat, per-seat and pairwise critics all stall there. Replaying rounds from the true state shows that about 0.88 is predictable, so the gap lies in judging how the rest of a round plays out, not in hidden information. Giving the critic each opponent's played cards made no difference either.
 
 ### Benchmark
 
