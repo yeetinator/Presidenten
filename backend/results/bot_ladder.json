@@ -1,0 +1,422 @@
+{
+    "Random vs DMC": {
+        "bot": "Random",
+        "field": "DMC",
+        "games": 800,
+        "rounds": 44000,
+        "base_seed": 20261028,
+        "beat_rate": 0.02755505952380949,
+        "beat_rate_ci": 0.0014649569568907792,
+        "by_players": {
+            "4": {
+                "games": 200,
+                "beat_rate": 0.008541666666666725,
+                "beat_rate_ci": 0.0015466475290143327
+            },
+            "5": {
+                "games": 200,
+                "beat_rate": 0.02215000000000006,
+                "beat_rate_ci": 0.0019408357056126372
+            },
+            "6": {
+                "games": 200,
+                "beat_rate": 0.02926666666666672,
+                "beat_rate_ci": 0.002034194157788316
+            },
+            "7": {
+                "games": 200,
+                "beat_rate": 0.05026190476190473,
+                "beat_rate_ci": 0.0025724247881908874
+            }
+        },
+        "first": 0.002159090909090909,
+        "last": 0.9041818181818182,
+        "kept_top": 0.03333333333333333,
+        "left_bottom": 0.07709953561237622,
+        "transitions": {
+            "top_rounds": 90,
+            "kept_top": 3,
+            "bottom_rounds": 35746,
+            "left_bottom": 2756
+        },
+        "seconds": 41
+    },
+    "Baseline vs DMC": {
+        "bot": "Baseline",
+        "field": "DMC",
+        "games": 800,
+        "rounds": 44000,
+        "base_seed": 20261028,
+        "beat_rate": 0.2733279761904762,
+        "beat_rate_ci": 0.005261036853694829,
+        "by_players": {
+            "4": {
+                "games": 200,
+                "beat_rate": 0.21425,
+                "beat_rate_ci": 0.010540529206183088
+            },
+            "5": {
+                "games": 200,
+                "beat_rate": 0.2723,
+                "beat_rate_ci": 0.009026560343685236
+            },
+            "6": {
+                "games": 200,
+                "beat_rate": 0.2866666666666667,
+                "beat_rate_ci": 0.008926392863800339
+            },
+            "7": {
+                "games": 200,
+                "beat_rate": 0.3200952380952381,
+                "beat_rate_ci": 0.00769473176459647
+            }
+        },
+        "first": 0.07086363636363636,
+        "last": 0.4737727272727273,
+        "kept_top": 0.3951612903225806,
+        "left_bottom": 0.4015375517445299,
+        "transitions": {
+            "top_rounds": 2852,
+            "kept_top": 1127,
+            "bottom_rounds": 18601,
+            "left_bottom": 7469
+        },
+        "seconds": 39
+    },
+    "PPO vs DMC": {
+        "bot": "PPO",
+        "field": "DMC",
+        "games": 800,
+        "rounds": 44000,
+        "base_seed": 20261028,
+        "beat_rate": 0.5005767857142858,
+        "beat_rate_ci": 0.00455295040551096,
+        "by_players": {
+            "4": {
+                "games": 200,
+                "beat_rate": 0.5022083333333334,
+                "beat_rate_ci": 0.011292630248093502
+            },
+            "5": {
+                "games": 200,
+                "beat_rate": 0.495925,
+                "beat_rate_ci": 0.008933649681859647
+            },
+            "6": {
+                "games": 200,
+                "beat_rate": 0.5079,
+                "beat_rate_ci": 0.008058336621784573
+            },
+            "7": {
+                "games": 200,
+                "beat_rate": 0.4962738095238095,
+                "beat_rate_ci": 0.007667300676573967
+            }
+        },
+        "first": 0.1841590909090909,
+        "last": 0.18361363636363637,
+        "kept_top": 0.5623713462330177,
+        "left_bottom": 0.6302555647155812,
+        "transitions": {
+            "top_rounds": 7287,
+            "kept_top": 4098,
+            "bottom_rounds": 7278,
+            "left_bottom": 4587
+        },
+        "seconds": 46
+    },
+    "Random vs Baseline": {
+        "bot": "Random",
+        "field": "Baseline",
+        "games": 800,
+        "rounds": 44000,
+        "base_seed": 20261029,
+        "beat_rate": 0.10345029761904767,
+        "beat_rate_ci": 0.0022419332627323257,
+        "by_players": {
+            "4": {
+                "games": 200,
+                "beat_rate": 0.07458333333333328,
+                "beat_rate_ci": 0.0034536815094522747
+            },
+            "5": {
+                "games": 200,
+                "beat_rate": 0.09802499999999997,
+                "beat_rate_ci": 0.003702774973926674
+            },
+            "6": {
+                "games": 200,
+                "beat_rate": 0.10980000000000006,
+                "beat_rate_ci": 0.003340566843576737
+            },
+            "7": {
+                "games": 200,
+                "beat_rate": 0.1313928571428572,
+                "beat_rate_ci": 0.003379310379002291
+            }
+        },
+        "first": 0.004454545454545455,
+        "last": 0.65725,
+        "kept_top": 0.026881720430107527,
+        "left_bottom": 0.3260342505291514,
+        "transitions": {
+            "top_rounds": 186,
+            "kept_top": 5,
+            "bottom_rounds": 25985,
+            "left_bottom": 8472
+        },
+        "seconds": 8
+    },
+    "PPO vs Baseline": {
+        "bot": "PPO",
+        "field": "Baseline",
+        "games": 800,
+        "rounds": 44000,
+        "base_seed": 20261029,
+        "beat_rate": 0.7313755952380953,
+        "beat_rate_ci": 0.004366559184742329,
+        "by_players": {
+            "4": {
+                "games": 200,
+                "beat_rate": 0.7730833333333333,
+                "beat_rate_ci": 0.007832943327544846
+            },
+            "5": {
+                "games": 200,
+                "beat_rate": 0.7203999999999999,
+                "beat_rate_ci": 0.00864071632522821
+            },
+            "6": {
+                "games": 200,
+                "beat_rate": 0.7244,
+                "beat_rate_ci": 0.008246516142265499
+            },
+            "7": {
+                "games": 200,
+                "beat_rate": 0.7076190476190476,
+                "beat_rate_ci": 0.0073794635585562925
+            }
+        },
+        "first": 0.3819090909090909,
+        "last": 0.027681818181818182,
+        "kept_top": 0.637231981831541,
+        "left_bottom": 0.9233480176211454,
+        "transitions": {
+            "top_rounds": 14971,
+            "kept_top": 9540,
+            "bottom_rounds": 1135,
+            "left_bottom": 1048
+        },
+        "seconds": 16
+    },
+    "DMC vs Baseline": {
+        "bot": "DMC",
+        "field": "Baseline",
+        "games": 800,
+        "rounds": 44000,
+        "base_seed": 20261029,
+        "beat_rate": 0.7338074404761905,
+        "beat_rate_ci": 0.004351752844086086,
+        "by_players": {
+            "4": {
+                "games": 200,
+                "beat_rate": 0.7700416666666667,
+                "beat_rate_ci": 0.008883048083735473
+            },
+            "5": {
+                "games": 200,
+                "beat_rate": 0.7226,
+                "beat_rate_ci": 0.0076697792332919975
+            },
+            "6": {
+                "games": 200,
+                "beat_rate": 0.7314333333333333,
+                "beat_rate_ci": 0.008754675241876848
+            },
+            "7": {
+                "games": 200,
+                "beat_rate": 0.7111547619047619,
+                "beat_rate_ci": 0.007209907411330281
+            }
+        },
+        "first": 0.3865227272727273,
+        "last": 0.028363636363636365,
+        "kept_top": 0.6390041493775933,
+        "left_bottom": 0.9222126188418324,
+        "transitions": {
+            "top_rounds": 15183,
+            "kept_top": 9702,
+            "bottom_rounds": 1157,
+            "left_bottom": 1067
+        },
+        "seconds": 16
+    },
+    "ISMCTS vs DMC": {
+        "bot": "ISMCTS",
+        "field": "DMC",
+        "games": 120,
+        "rounds": 6600,
+        "base_seed": 20261028,
+        "beat_rate": 0.3126904761904762,
+        "beat_rate_ci": 0.01481923280747619,
+        "by_players": {
+            "4": {
+                "games": 30,
+                "beat_rate": 0.24722222222222223,
+                "beat_rate_ci": 0.025380125838324333
+            },
+            "5": {
+                "games": 30,
+                "beat_rate": 0.32499999999999996,
+                "beat_rate_ci": 0.025607057216914725
+            },
+            "6": {
+                "games": 30,
+                "beat_rate": 0.30766666666666664,
+                "beat_rate_ci": 0.028393855504244458
+            },
+            "7": {
+                "games": 30,
+                "beat_rate": 0.37087301587301585,
+                "beat_rate_ci": 0.021422407035656902
+            }
+        },
+        "first": 0.08696969696969697,
+        "last": 0.4066666666666667,
+        "kept_top": 0.4419475655430712,
+        "left_bottom": 0.4465251768622555,
+        "transitions": {
+            "top_rounds": 534,
+            "kept_top": 236,
+            "bottom_rounds": 2403,
+            "left_bottom": 1073
+        },
+        "seconds": 5362
+    },
+    "ISMCTS vs Baseline": {
+        "bot": "ISMCTS",
+        "field": "Baseline",
+        "games": 120,
+        "rounds": 6600,
+        "base_seed": 20261029,
+        "beat_rate": 0.7183095238095238,
+        "beat_rate_ci": 0.011020091534519752,
+        "by_players": {
+            "4": {
+                "games": 30,
+                "beat_rate": 0.7647222222222222,
+                "beat_rate_ci": 0.0187407716469793
+            },
+            "5": {
+                "games": 30,
+                "beat_rate": 0.7191666666666666,
+                "beat_rate_ci": 0.02110295960794503
+            },
+            "6": {
+                "games": 30,
+                "beat_rate": 0.6980000000000001,
+                "beat_rate_ci": 0.020784749886434396
+            },
+            "7": {
+                "games": 30,
+                "beat_rate": 0.6913492063492064,
+                "beat_rate_ci": 0.018121617900567946
+            }
+        },
+        "first": 0.36666666666666664,
+        "last": 0.0346969696969697,
+        "kept_top": 0.6073394495412844,
+        "left_bottom": 0.9219512195121952,
+        "transitions": {
+            "top_rounds": 2180,
+            "kept_top": 1324,
+            "bottom_rounds": 205,
+            "left_bottom": 189
+        },
+        "seconds": 5053
+    },
+    "DMC vs DMC": {
+        "bot": "DMC",
+        "field": "DMC",
+        "games": 800,
+        "rounds": 44000,
+        "base_seed": 20261028,
+        "beat_rate": 0.5,
+        "beat_rate_ci": 8.838195253255475e-19,
+        "by_players": {
+            "4": {
+                "games": 200,
+                "beat_rate": 0.5,
+                "beat_rate_ci": 1.7400777685961025e-18
+            },
+            "5": {
+                "games": 200,
+                "beat_rate": 0.5,
+                "beat_rate_ci": 1.783341018770404e-18
+            },
+            "6": {
+                "games": 200,
+                "beat_rate": 0.5,
+                "beat_rate_ci": 1.689370842154561e-18
+            },
+            "7": {
+                "games": 200,
+                "beat_rate": 0.5,
+                "beat_rate_ci": 1.682501716360992e-18
+            }
+        },
+        "first": 0.18181818181818182,
+        "last": 0.18181818181818182,
+        "kept_top": 0.56,
+        "left_bottom": 0.6326388888888889,
+        "transitions": {
+            "top_rounds": 7200,
+            "kept_top": 4032,
+            "bottom_rounds": 7200,
+            "left_bottom": 4555
+        },
+        "seconds": 43
+    },
+    "Baseline vs Baseline": {
+        "bot": "Baseline",
+        "field": "Baseline",
+        "games": 800,
+        "rounds": 44000,
+        "base_seed": 20261029,
+        "beat_rate": 0.5,
+        "beat_rate_ci": 8.4418079168957e-19,
+        "by_players": {
+            "4": {
+                "games": 200,
+                "beat_rate": 0.5,
+                "beat_rate_ci": 1.4802859974371225e-18
+            },
+            "5": {
+                "games": 200,
+                "beat_rate": 0.5,
+                "beat_rate_ci": 1.6717175843732537e-18
+            },
+            "6": {
+                "games": 200,
+                "beat_rate": 0.5,
+                "beat_rate_ci": 1.600654279662631e-18
+            },
+            "7": {
+                "games": 200,
+                "beat_rate": 0.5,
+                "beat_rate_ci": 1.5061292266819057e-18
+            }
+        },
+        "first": 0.18181818181818182,
+        "last": 0.18181818181818182,
+        "kept_top": 0.44666666666666666,
+        "left_bottom": 0.7698611111111111,
+        "transitions": {
+            "top_rounds": 7200,
+            "kept_top": 3216,
+            "bottom_rounds": 7200,
+            "left_bottom": 5543
+        },
+        "seconds": 8
+    }
+}
