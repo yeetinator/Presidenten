@@ -32,7 +32,7 @@ I kept the game engine synchronous to allow multiprocessing across CPU cores for
 
 - 4 to 7 players. The holder of the 3 of Clubs starts the first round by playing 3s, the Scum starts every round after that.
 - Must play card value higher and card count equal or higher than currently on the pile, up to 4 cards.
-- 2s act as wildcards when played with other cards, or as the highest card value. Playing 2s on their own clears the pile.
+- 2s act as wildcards when played with other cards, or as the highest card value.
 - A player can jump in out of turn if they can make a quad out of the last played move, even after passing. Jumping in clears the pile and the jumper leads the next one.
 - Finishing your hand with a 2 ranks you last for that round.
 - After a round ends, 'winning' players ((Vice-)President, Secretary) can choose which cards to pass. 'Losing' players ((High-)Scum, Clerk) must pass their highest cards. Citizens are exempt from card passing.
