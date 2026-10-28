@@ -94,7 +94,7 @@ def test_hands_and_suit_cards_stay_in_sync_over_whole_games(players):
     random.seed(players)
     env = President(players, track_suits=True)
     bots = {
-        p: (PresidentRandomBot(p) if p % 2 else PresidentBaselineBot(p))
+        p: (PresidentRandomBot(p, seed=players) if p % 2 else PresidentBaselineBot(p))
         for p in range(players)
     }
 
