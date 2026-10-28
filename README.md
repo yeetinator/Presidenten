@@ -20,13 +20,13 @@ I kept the game engine synchronous to allow multiprocessing across CPU cores for
 - **ISMCTS**: (Information Set Monte Carlo Tree Search), creates possible game states from the current state, plays them out, results are backpropagated up the tree to determine which move is statistically the most successful. The possible states favour hands that explain the opponents' moves so far this round. Thinks for 1 second per move.
 - **DMC**: (Deep Monte Carlo) Q-value network over 125 move actions, trained through self-play with round placement rewards. It also chooses which cards to pass. The web game averages two independently trained models (`bots/DMC.pt` and `bots/DMCW.pt`) into an ensemble.
 
-### Planned
-
-- **Master-Student DMC**: Master is trained with knowing opponent hands, guiding a student model.
-
 ### Tried
 
 - **Asymmetric PPO Actor-Critic**: (Proximal Policy Optimization) with action masking, Critic sees opponent hands to compute GAE (Generalized Advantage Estimation) advantages. It plays at the DMC ensemble's level but doesn't beat it, see [PPO Training](#ppo-training).
+
+### Dropped
+
+- **Master-Student DMC**: Master is trained with knowing opponent hands, guiding a student model. Dropped after the PPO outcome: its critic already saw every opponent's hand and still couldn't guide the actor past the ensemble.
 
 ## Custom Rules
 
