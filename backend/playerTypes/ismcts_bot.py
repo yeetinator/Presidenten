@@ -414,6 +414,8 @@ def _execute_search(
 
 
 class PresidentISMCTSBot(Player):
+    needs_env = True  # Searches from the real game, not just its own view of it
+
     def __init__(self, player_id, iterations=None, time_limit=1.0):
         self.player_id = player_id
         self.iterations = iterations  # Optional cap on top of the time limit

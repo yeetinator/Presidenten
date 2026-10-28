@@ -25,25 +25,40 @@ def _init_h2h_worker(master_spec, old_spec):
         ("master", master_spec),
         ("old", old_spec),
     ):
-        model = get_cached_traced_model(path, net_class)
+        # No path: a bot without a model, built as bot_class(seat)
+        model = None if path is None else get_cached_traced_model(path, net_class)
         _H2H_SIDES[name] = (model, bot_class)
+
+
+def _make_bot(side, seat, device) -> Player:
+    model, bot_class = _H2H_SIDES[side]
+    return bot_class(seat) if model is None else bot_class(seat, model, device)
+
+
+def _role_transitions(out_orders, seat, num_players):
+    """How often the seat kept the top spot and got out of the bottom one, counted
+    over the rounds it started in that role."""
+    counts = {"top_rounds": 0, "kept_top": 0, "bottom_rounds": 0, "left_bottom": 0}
+    for prev, curr in zip(out_orders, out_orders[1:]):
+        prev_rank, rank = prev.index(seat), curr.index(seat)
+        if prev_rank == 0:
+            counts["top_rounds"] += 1
+            counts["kept_top"] += rank == 0
+        elif prev_rank == num_players - 1:
+            counts["bottom_rounds"] += 1
+            counts["left_bottom"] += rank != num_players - 1
+    return counts
 
 
 def _play_h2h_games(game_chunk):
     device = torch.device("cpu")
-    master_model, master_bot = _H2H_SIDES["master"]
-    old_model, old_bot = _H2H_SIDES["old"]
 
     games = []
     for g_idx, (game_seed, num_players) in enumerate(game_chunk):
         round_seeds = [game_seed + round_idx for round_idx in range(NUM_ROUNDS)]
         for rotation in range(num_players):
             bot_instances: dict[int, Player] = {
-                seat: (
-                    master_bot(seat, master_model, device)
-                    if seat == rotation
-                    else old_bot(seat, old_model, device)
-                )
+                seat: _make_bot("master" if seat == rotation else "old", seat, device)
                 for seat in range(num_players)
             }
             games.append(
@@ -62,11 +77,18 @@ def _play_h2h_games(game_chunk):
         old_avg_norm = 0.0
         master_wins = 0
         max_pos_score = (num_players - 1) * NUM_ROUNDS
+        transitions = dict.fromkeys(
+            ("top_rounds", "kept_top", "bottom_rounds", "left_bottom"), 0
+        )
 
         for rotation in range(num_players):
             scores, out_orders = finished[(g_idx, rotation)]
             for out_order in out_orders:
                 master_placements[out_order.index(rotation)] += 1
+            for key, count in _role_transitions(
+                out_orders, rotation, num_players
+            ).items():
+                transitions[key] += count
 
             master_raw = scores[rotation][0]
             master_norm_score += ((master_raw / max_pos_score) * 2 - 1) / num_players
@@ -81,15 +103,22 @@ def _play_h2h_games(game_chunk):
                 "old_avg_norm": old_avg_norm,
                 "master_wins": master_wins,
                 "master_placements": master_placements,
+                "master_transitions": transitions,
                 "match_rounds": NUM_ROUNDS * num_players,
             }
         )
     return results
 
 
+def _mean_se(values):
+    values = np.asarray(values, dtype=np.float64)
+    if len(values) < 2:
+        return float(np.mean(values)), float("nan")
+    return float(np.mean(values)), float(np.std(values, ddof=1) / np.sqrt(len(values)))
+
+
 def _paired_delta(results):
-    diffs = np.array([r["master_norm_score"] - r["old_avg_norm"] for r in results])
-    return float(np.mean(diffs)), float(np.std(diffs, ddof=1) / np.sqrt(len(diffs)))
+    return _mean_se([r["master_norm_score"] - r["old_avg_norm"] for r in results])
 
 
 def _interim_looks(total_games):
@@ -108,7 +137,11 @@ def run_h2h(
     progress_every=100,
     early_stop=True,
     base_seed=None,
+    games_per_task=H2H_GAMES_PER_TASK,
 ):
+    """Plays one master seat against old in every other seat. A path of None
+    makes a side a bot without a model, built as bot_class(seat); slow bots
+    such as ISMCTS want small games_per_task so every worker gets some."""
     # A fixed base_seed replays the same deals, e.g. to rerun a gate exactly
     base_entropy = (
         random.randint(1_000_000, 99_000_000) if base_seed is None else base_seed
@@ -131,8 +164,8 @@ def run_h2h(
     ) as executor:
         futures = {
             executor.submit(_play_h2h_games, game_tasks[start:end]): range(start, end)
-            for start in range(0, total_games, H2H_GAMES_PER_TASK)
-            for end in [min(start + H2H_GAMES_PER_TASK, total_games)]
+            for start in range(0, total_games, games_per_task)
+            for end in [min(start + games_per_task, total_games)]
         }
         completed = 0
 
@@ -172,6 +205,17 @@ def run_h2h(
     master_scores = np.array([r["master_norm_score"] for r in results])
     old_scores = np.array([r["old_avg_norm"] for r in results])
     mean_diff, se_diff = _paired_delta(results)
+    _, se_master = _mean_se(master_scores)
+
+    transitions = {
+        key: sum(r["master_transitions"][key] for r in results)
+        for key in results[0]["master_transitions"]
+    }
+    by_players = {}
+    for num_players in sorted({r["num_players"] for r in results}):
+        group = [r["master_norm_score"] for r in results if r["num_players"] == num_players]
+        mean, se = _mean_se(group)
+        by_players[num_players] = {"games": len(group), "master_avg": mean, "se": se}
 
     max_ranks = max(r["num_players"] for r in results)
     rank_counts = [0] * max_ranks
@@ -191,6 +235,7 @@ def run_h2h(
         "stopped_early": stopped_at is not None,
         "total_rounds": sum(r["match_rounds"] for r in results),
         "master_avg": float(np.mean(master_scores)),
+        "master_se": se_master,
         "old_avg": float(np.mean(old_scores)),
         "delta": mean_diff,
         "ci_lo": mean_diff - 1.96 * se_diff,
@@ -199,6 +244,9 @@ def run_h2h(
         "master_wins": sum(r["master_wins"] for r in results),
         "rank_counts": rank_counts,
         "rounds_per_rank": rounds_per_rank,
+        "last_place": sum(r["master_placements"][-1] for r in results),
+        "transitions": transitions,
+        "by_players": by_players,
     }
 
 

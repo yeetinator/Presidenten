@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from game import President
 from playerTypes.player import Player
-from playerTypes.dmc_bot import PresidentDMCBot, INPUT_DIM, _HIGH_ROLES
+from playerTypes.dmc_bot import PresidentDMCBot, INPUT_DIM
 from .common import NUM_ROUNDS
 
 EVAL_CONCURRENCY = 128
@@ -16,7 +16,9 @@ def play_round_gen(env: President, bot_instances: dict[int, Player], round_idx: 
     if round_idx > 0:
         cards_to_pass = {}
         for p_id, role in env.roles.items():
-            if role in _HIGH_ROLES:
+            # Low roles' picks are ignored by the exchange, but bots like ISMCTS
+            # note what they handed over, as in the web game
+            if role != "Citizen":
                 bot = bot_instances[p_id]
                 p_state = env._get_state(p_id)
 
@@ -48,6 +50,8 @@ def play_round_gen(env: President, bot_instances: dict[int, Player], round_idx: 
         bot = bot_instances[curr_player]
         if hasattr(bot, "get_move_gen"):
             chosen_move = yield from bot.get_move_gen(state)
+        elif getattr(bot, "needs_env", False):
+            chosen_move = bot.get_move(state, env)
         else:
             chosen_move = bot.get_move(state)
         state, _ = env.step(curr_player, chosen_move)
