@@ -91,8 +91,9 @@ def main():
     for field in args.field:
         for bot in args.only:
             key = f"{bot} vs {field}"
-            # A bot among copies of itself is level with the table by symmetry
-            if bot == field or (key in results and not args.force):
+            # A bot among copies of itself is level with the table by symmetry,
+            # but how often it ends first or last is still worth knowing
+            if key in results and not args.force:
                 continue
             print(f"\n=== {key} ===")
             results[key] = entry = run_entry(bot, field)
