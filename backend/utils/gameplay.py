@@ -131,6 +131,28 @@ def seeded_game_gen(num_players, bot_instances, round_seeds):
     return dict(env.scores), out_orders
 
 
+def seed_deal(env: President, seed):
+    """Make the next deal depend on seed alone. The deck is shuffled in place, so
+    it is put back in order first, or the deal would depend on earlier rounds."""
+    env.deck.sort()
+    random.seed(seed)
+
+
+def replay_round_gen(num_players, bot_instances, round_idx, roles, seed):
+    """Play one round of a logged game again from its start: the deal of seed
+    and, after the first round, the roles before the card exchange.
+
+    Returns the finishing order."""
+
+    env = President(num_players, lightweight=True)
+    if round_idx > 0:
+        env.roles = {int(p_id): role for p_id, role in roles.items()}
+        env.first_turn = False
+    seed_deal(env, seed)
+    yield from play_round_gen(env, bot_instances, round_idx)
+    return list(env.out_order)
+
+
 def _tagged(tag, game):
     result = yield from game
     return tag, result

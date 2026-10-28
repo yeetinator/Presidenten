@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 
 import pytest
@@ -7,6 +8,7 @@ import torch
 import main
 from game import PlayerType, President
 from playerTypes.baseline_bot import PresidentBaselineBot
+from utils.gameplay import seed_deal
 from support import (
     FakeWebSocket,
     answer,
@@ -279,3 +281,41 @@ def test_dmc_model_is_loaded_once_and_shared():
     seats = {0: PlayerType.HUMAN, 1: PlayerType.DMC, 2: PlayerType.DMC}
     players, _ = main.build_assigned_players(seats, device)
     assert players[1].model is players[2].model is model
+
+
+def test_benchmark_mode_logs_rounds_whose_deals_can_be_dealt_again(
+    monkeypatch, tmp_path
+):
+    log = tmp_path / "rounds.jsonl"
+    monkeypatch.setattr(main, "BENCHMARK_LOG", str(log))
+    dealt = []
+
+    @async_test
+    async def play_two_rounds():
+        async with connected() as ws:
+            dealt.append((await start_game(ws, BOTS_ONLY))["state"]["hand"])
+            await ws.send({"type": "DEALT_CARDS"})
+            await play_until_round_over(ws)
+            await ws.send({"type": "NEXT_ROUND"})
+            dealt.append((await ws.recv("DEAL_CARDS"))["state"]["hand"])
+            await ws.send({"type": "DEALT_CARDS"})
+            await play_until_round_over(ws)
+
+    play_two_rounds()
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+
+    assert [r["round_idx"] for r in records] == [0, 1]
+    assert records[0]["seats"] == ["Human", "Baseline", "Baseline", "Baseline"]
+    # The second round starts from the roles the first one handed out
+    first_order = records[0]["out_order"]
+    assert records[1]["roles"][str(first_order[0])] == "President"
+    assert records[1]["roles"][str(first_order[-1])] == "Scum"
+
+    for record, hand in zip(records, dealt):
+        env = President(record["num_players"], lightweight=True)
+        if record["round_idx"]:
+            env.roles = {int(p): role for p, role in record["roles"].items()}
+            env.first_turn = False
+        seed_deal(env, record["seed"])
+        env.full_reset(next_round=record["round_idx"] > 0)
+        assert env.hands[0] == hand

@@ -1,6 +1,9 @@
 import asyncio
 import functools
 import itertools
+import json
+import os
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,6 +20,7 @@ from playerTypes.dmc_bot import (
     PresidentEnsembleNet,
     PresidentValueNet,
 )
+from utils.gameplay import seed_deal
 
 app = FastAPI(title="President Game Server")
 app.add_middleware(
@@ -39,6 +43,11 @@ ISMCTS_TIME_LIMIT = 1.0
 
 MIN_PLAYERS = 4
 MAX_PLAYERS = 7
+
+# Benchmark mode: seeded deals, and every round's start and finishing order
+# appended to this JSONL file, so human_placement.py can replay the rounds with
+# a bot in the human's seat
+BENCHMARK_LOG = os.environ.get("PRESIDENT_BENCHMARK_LOG")
 
 PLAYER_TYPE_LABELS = {
     PlayerType.HUMAN: "Human",
@@ -86,6 +95,41 @@ class GameSession:
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     next_round_event: asyncio.Event = field(default_factory=asyncio.Event)
     dealt_cards_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # Benchmark mode only: the game's id, and the current round's start
+    game_seed: int = field(default_factory=lambda: random.randint(1, 2**40))
+    round_idx: int = -1
+    start_roles: dict[int, str] = field(default_factory=dict)
+
+    def deal(self, next_round: bool):
+        """Deal the next round, seeded in benchmark mode."""
+        env = self.env
+        assert env is not None
+        self.round_idx += 1
+        if BENCHMARK_LOG:
+            seed_deal(env, self.round_seed)
+            self.start_roles = dict(env.roles)
+        env.full_reset(next_round=next_round)
+
+    @property
+    def round_seed(self) -> int:
+        return self.game_seed * 1000 + self.round_idx
+
+    def log_round(self):
+        env = self.env
+        if not BENCHMARK_LOG or env is None:
+            return
+        record = {
+            "game": self.game_seed,
+            "round_idx": self.round_idx,
+            "seed": self.round_seed,
+            "num_players": env.players,
+            "human_seat": self.human_id,
+            "seats": [PLAYER_TYPE_LABELS[self.assign_p[p]] for p in range(env.players)],
+            "roles": self.start_roles,
+            "out_order": env.out_order,
+        }
+        with open(BENCHMARK_LOG, "a") as f:
+            f.write(json.dumps(record) + "\n")
 
 
 def _parse_helper(suits):
@@ -342,7 +386,7 @@ async def control_listener(
             session.assigned_players, session.human_id = build_assigned_players(
                 session.assign_p, device
             )
-            session.env.full_reset(next_round=False)
+            session.deal(next_round=False)
             session.ready_event.set()
             continue
 
@@ -755,6 +799,7 @@ async def end_round(table: Table):
             table.hold(timings.reveal_delay)
 
     env.assign_roles()
+    table.session.log_round()
     await table.send(
         {
             "type": "ROUND_OVER",
@@ -808,7 +853,7 @@ async def run_connection(
             if not table.env.game_over:
                 continue
 
-            table.env.full_reset(next_round=True)
+            session.deal(next_round=True)
             await deal_hands(table)
             await run_exchange_phase(table)
             await table.show_state()
