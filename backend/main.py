@@ -47,7 +47,7 @@ MAX_PLAYERS = 7
 # Benchmark mode: seeded deals, and every round's start and finishing order
 # appended to this JSONL file, so human_placement.py can replay the rounds with
 # a bot in the human's seat
-BENCHMARK_LOG = os.environ.get("PRESIDENT_BENCHMARK_LOG")
+BENCHMARK_LOG = None  # os.environ.get("PRESIDENT_BENCHMARK_LOG")
 
 PLAYER_TYPE_LABELS = {
     PlayerType.HUMAN: "Human",
