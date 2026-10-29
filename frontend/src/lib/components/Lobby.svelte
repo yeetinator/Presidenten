@@ -1,5 +1,6 @@
 <script lang="ts">
   import Rules from "../../assets/Rules.svelte";
+  import SoundControl from "./SoundControl.svelte";
   import {
     currTheme,
     setTheme,
@@ -68,6 +69,7 @@
       class="w-full rounded-3xl border border-white/10 bg-black/25 p-8 shadow-2xl shadow-black/35 backdrop-blur-md md:p-10"
     >
       <Rules className="right-4" side="right" />
+      <SoundControl className="right-15" side="right" previews />
       <div class="mb-8 space-y-3">
         <p class="text-sm uppercase tracking-[0.35em] text-white/70">
           President Lobby

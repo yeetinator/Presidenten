@@ -5,6 +5,8 @@
   import Rules from "./assets/Rules.svelte";
   import OpponentSeat from "./lib/components/OpponentSeat.svelte";
   import SummaryModal from "./lib/components/SummaryModal.svelte";
+  import SoundControl from "./lib/components/SoundControl.svelte";
+  import { playSound } from "./lib/audio";
   import {
     gameStore,
     exchangePrompt,
@@ -30,6 +32,7 @@
 
   const websocketUrl =
     import.meta.env.VITE_WS_URL ?? "ws://localhost:8000/ws/game";
+  const PAGE_TITLE = "President";
 
   type MoveLabelTone = "waiting" | "prompt" | "ready" | "invalid" | "exchange";
   type MoveLabel = { text: string; tone: MoveLabelTone };
@@ -63,6 +66,11 @@
   $: jumpInVisible = !!$jumpInPrompt && !!$gameState?.is_finish_prompt;
   $: jumpInAutoMove =
     jumpInVisible && $gameState ? gameStore.getAutoFinishMove() : null;
+
+  // A hidden tab can't show the vignette, so the jump-in shows in its title
+  let isTabHidden = document.hidden;
+  $: document.title =
+    jumpInVisible && isTabHidden ? `⚡ JUMP IN! · ${PAGE_TITLE}` : PAGE_TITLE;
   $: selectedMoveValues = $selectedCards.map(gameStore.stripSuitCard);
   $: isSelectionLegal = (() => {
     if (
@@ -351,7 +359,9 @@
           dealQueue.push({ seat, card: rawHands[seat][cardIdx] });
 
     const delayMs = 55;
+    playSound("shuffle");
     for (const step of dealQueue) {
+      playSound("deal");
       deck = deck.filter((c) => c !== step.card);
       visibleCardsPerSeat[step.seat] = [
         ...(visibleCardsPerSeat[step.seat] ?? []),
@@ -503,6 +513,9 @@
 </script>
 
 <svelte:window on:keydown={handleKeyDown} on:keyup={handleKeyUp} />
+<svelte:document
+  on:visibilitychange={() => (isTabHidden = document.hidden)}
+/>
 
 {#if !$inGame}
   <Lobby onStartGame={handleStartGame} />
@@ -531,6 +544,7 @@
 
     {#if !$roundSummary}
       <Rules className="left-4" side="left" />
+      <SoundControl className="left-15" side="left" />
       <button
         class="fixed right-5 top-4 z-30 rounded-md border border-red-300/30 bg-red-500 px-3 py-1 text-[0.65rem]
         font-black tracking-[0.28em] text-white shadow-lg shadow-black/30 transition hover:bg-red-400 active:scale-[0.98]"

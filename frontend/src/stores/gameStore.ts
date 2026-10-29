@@ -1,6 +1,9 @@
 import { writable, get } from "svelte/store";
 import { tick } from "svelte";
 import { TABLE_THEMES, type ThemeKey, type TableTheme } from "../lib/themes";
+import { persisted } from "../lib/persisted";
+import { playSound, setEffectsDucked } from "../lib/audio";
+import { playStateSounds } from "../lib/gameSounds";
 
 export interface GameStateUpdate {
   suited_hand: string[];
@@ -62,8 +65,10 @@ export interface ExchangePromptMessage {
   prompt_id: number;
 }
 
-const initialThemeKey = "emerald";
-export const currTheme = writable<TableTheme>(TABLE_THEMES[initialThemeKey] || TABLE_THEMES.emerald);
+const savedTheme = persisted<{ id: string }>("president.theme.v1", { id: "emerald" });
+export const currTheme = writable<TableTheme>(
+  TABLE_THEMES[get(savedTheme).id as ThemeKey] ?? TABLE_THEMES.emerald,
+);
 export const state = writable<GameStateUpdate | null>(null);
 export const inGame = writable<boolean>(false);
 export const lobbyNotice = writable<string | null>(null);
@@ -124,7 +129,21 @@ function releaseAnimation(element: EventTarget) {
 }
 
 export function setTheme(key: ThemeKey) {
-  if (TABLE_THEMES[key]) currTheme.set(TABLE_THEMES[key]);
+  if (!TABLE_THEMES[key]) return;
+
+  currTheme.set(TABLE_THEMES[key]);
+  savedTheme.set({ id: key });
+}
+
+function showState(nextState: GameStateUpdate) {
+  playStateSounds(get(state), nextState);
+  state.set(nextState);
+}
+
+function showJumpIn(message: string) {
+  jumpInPrompt.set({ message });
+  // The window only shows when the human is the one who can finish the quad
+  if (get(state)?.is_finish_prompt) playSound("jumpIn");
 }
 
 function isGameStateUpdate(value: unknown): value is GameStateUpdate {
@@ -304,11 +323,11 @@ function handleSocketMessage(event: MessageEvent<string>) {
       const promptId = typeof msg.prompt_id === "number" ? msg.prompt_id : null;
       enqueue(() => {
         activePromptId = promptId;
-        state.set(nextState);
+        showState(nextState);
         clearExchangePrompt();
         if (!keepJumpIn) clearJumpInPrompt();
         // The human's own turn offers a pending jump-in next to a normal move
-        else if (!get(jumpInPrompt)) jumpInPrompt.set({ message: JUMP_IN_MESSAGE });
+        else if (!get(jumpInPrompt)) showJumpIn(JUMP_IN_MESSAGE);
       });
       return;
     }
@@ -322,9 +341,9 @@ function handleSocketMessage(event: MessageEvent<string>) {
       const promptId = msg.prompt_id;
       enqueue(() => {
         activePromptId = promptId;
-        state.set(nextState);
+        showState(nextState);
         clearJumpInPrompt();
-        jumpInPrompt.set({ message });
+        showJumpIn(message);
       });
       return;
     }
@@ -345,7 +364,7 @@ function handleSocketMessage(event: MessageEvent<string>) {
       const promptId = msg.prompt_id;
       enqueue(() => {
         activePromptId = promptId;
-        state.set(nextState);
+        showState(nextState);
         if (!canChoose && requiredCards > 0) selectedCards.set(getHighestSuitCards(nextState.suited_hand, requiredCards));
 
         exchangePrompt.set({ requiredCards, canChoose });
@@ -359,6 +378,7 @@ function handleSocketMessage(event: MessageEvent<string>) {
       clearJumpInPrompt();
       clearExchangePrompt();
       clearFastForwardMode();
+      playSound("roundEnd");
       roundSummary.set({
         scores: payload.scores,
         roles: payload.roles,
@@ -550,6 +570,8 @@ async function fastForwardGame() {
 isAnimating.subscribe((animating) => {
   if (!animating) processQueue();
 });
+
+fastForwardMode.subscribe(setEffectsDucked);
 
 export const gameStore = {
   selectedCards,
