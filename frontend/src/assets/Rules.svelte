@@ -63,7 +63,8 @@
           <li>
             <span class="text-white font-medium">Clearing:</span> Resets on consecutive
             passes or an instant Jump-In. Last player to act opens the new pile.
-            Solo 2s clear the pile instantly unless a Jump-In occurs.
+            It also clears instantly, after any Jump-In, once the cards played and
+            hand sizes show nobody can beat it, e.g. a 2, or an Ace with all 2s gone.
           </li>
           <li>
             <span class="text-white font-medium">Jump-In:</span> Play immediately

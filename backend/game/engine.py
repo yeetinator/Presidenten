@@ -483,6 +483,27 @@ class President:
         self.pending_finish = None  # {"queue": [(card, count, player_id), ...], "resume_turn": player_id, "pile_reset": bool}
         self.was_pile_reset = False
 
+    def _is_unanswerable(self):
+        """Whether nobody who may still play on the pile could beat its top move,
+        however the unplayed cards are dealt. It uses only what every player sees
+        (the cards played, hand sizes and passes), so clearing early gives nothing
+        away. Everyone having passed and a 2 on top are the simplest cases."""
+        card_val, count, _ = self.last_move
+        answerers = [
+            p for p in self.playing if p != self.pile_leader and p not in self.passed
+        ]
+        if all(len(self.hands[p]) < count for p in answerers):
+            return True
+
+        unplayed = [4 - played for played in self._history_flat_counts]
+        if card_val < 15 and unplayed[15] >= count:
+            return False  # 2s on their own
+        # A higher card, topped up with 2s as wildcards
+        return not any(
+            unplayed[card] and unplayed[card] + unplayed[15] >= count
+            for card in range(card_val + 1, 15)
+        )
+
     def _is_game_over(self):
         active_players = [p_id for p_id in range(self.players) if self.hands[p_id]]
         return len(active_players) <= 1
@@ -520,15 +541,9 @@ class President:
             self._remove_cards(p_id, card_val, rcount, suits)
             self._remove_cards(p_id, 15, twos, suits)
 
-        if self.pile_leader is not None:
-            pile_reset = all(
-                p == self.pile_leader or p in self.passed for p in self.playing
-            )
-
-        if card_val == 15:
-            pile_reset = True
-
         self._record_history_move(p_id, move)
+        if self.pile_leader is not None:
+            pile_reset = self._is_unanswerable()
         self.pile.extend([card_val] * (count - twos))
         self.pile.extend([15] * twos)
         self.first_turn = False

@@ -89,6 +89,63 @@ def test_jumping_in_with_the_second_finish_option_plays_those_cards():
     assert env.pile[-3:] == [15, 15, 15]
 
 
+def all_twos_played(env):
+    env._history_flat_counts[15] = 4
+    return env
+
+
+def test_the_highest_unplayed_card_clears_the_pile():
+    env = all_twos_played(
+        table_with(
+            {0: ["AH", "4C"], 1: ["5H", "6C"], 2: ["7D", "8S"], 3: ["9C", "TH"]},
+            turn=0,
+        )
+    )
+    env.step(0, (14, 1, 0), ["AH"])
+
+    assert env.was_pile_reset and env.curr_turn == 0
+
+
+def test_an_unplayed_2_keeps_the_pile_open_even_in_the_players_own_hand():
+    env = table_with(
+        {0: ["AH", "2S"], 1: ["5H", "6C"], 2: ["7D", "8S"], 3: ["9C", "TH"]},
+        turn=0,
+    )
+    env._history_flat_counts[15] = 3
+    env.step(0, (14, 1, 0), ["AH"])
+
+    # Clearing would tell the others that the last 2 is in player 0's hand
+    assert not env.was_pile_reset and env.curr_turn == 1
+
+
+def test_a_pile_clears_when_nobody_left_to_answer_holds_enough_cards():
+    env = table_with(
+        {0: ["5H", "5C", "4D"], 1: ["9S", "9H"], 2: ["KH"], 3: ["AC"]},
+        turn=0,
+    )
+    env.step(0, (5, 2, 0), ["5H", "5C"])
+    assert not env.was_pile_reset and env.curr_turn == 1
+
+    env.step(1, (0, 0, 0))
+
+    assert env.was_pile_reset and env.curr_turn == 0
+
+
+def test_a_jump_in_comes_before_an_early_clear():
+    env = all_twos_played(
+        table_with(
+            {0: ["AH", "4C"], 1: ["AS", "AD", "AC", "6C"], 2: ["7D", "8S"], 3: ["9C", "TH"]},
+            turn=0,
+        )
+    )
+    env.step(0, (14, 1, 0), ["AH"])
+    assert env.curr_turn == 1 and env._get_state(1)["is_finish_prompt"]
+
+    env.step(1, (0, 0, 0))
+
+    assert env.was_pile_reset and env.curr_turn == 0
+
+
 @pytest.mark.parametrize("players", [4, 5, 6, 7])
 def test_hands_and_suit_cards_stay_in_sync_over_whole_games(players):
     random.seed(players)
