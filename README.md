@@ -60,9 +60,34 @@ To test a player, we seat it at a table where every other seat is the same bot. 
 
 ### Where Does a Human Fit?
 
-About 100 rounds of play are too few for a fair comparison on their own: with that many rounds, luck of the deal alone moves a beat rate by about ±9 percentage points. So the web game has a benchmark mode that records the deal of every round. Afterwards, each round is played again from the same start, with the same cards, roles and opponents, but with a bot in the human's seat. Comparing the human with each bot on the very same rounds takes most of the luck out: the uncertainty drops to about ±5 points, as much as 400 ordinary rounds would give. See [Bot Strength](#bot-strength) to measure yourself.
+About 100 rounds of play are too few for a fair comparison on their own: with that many rounds, luck of the deal alone moves a beat rate by ±10 percentage points or more. So the web game has a benchmark mode that records the deal of every round. Afterwards, each round is played again from the same start, with the same cards, roles and opponents, but with a bot in the human's seat. Comparing the human with each bot on the very same rounds takes most of the luck out: the uncertainty drops to about ±5 points, as much as several hundred ordinary rounds would give. See [Bot Strength](#bot-strength) to measure yourself.
 
-<!-- Human placement: add the result of human_placement.py here -->
+I played 100 rounds at tables of DMC bots, one game of 25 rounds at each of 4, 5, 6 and 7 players. My plain beat rate was 48.1%, but without the replays the 95% range runs from 35% to 61%.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./public/human_vs_bots_dark.png">
+  <img alt="My beat rate minus each bot's when it plays my seat on my 100 rounds" src="./public/human_vs_bots_light.png">
+</picture>
+
+| Bot in my seat | Its beat rate | Me minus the bot | 95% range        | Chance I'm better |
+| -------------- | ------------- | ---------------- | ---------------- | ----------------- |
+| Random         | 8.6%          | +39.5            | +29.2 to +49.7   | 100%              |
+| Baseline       | 40.4%         | +7.6             | +2.5 to +13.2    | 99.8%             |
+| ISMCTS         | 43.2%         | +4.8             | −0.1 to +10.0    | 97%               |
+| PPO            | 51.6%         | −3.5             | −8.5 to +0.9     | 6%                |
+| DMC            | 54.0%         | −6.0             | −10.3 to −1.7    | 0.3%              |
+
+On the same cards I finished ahead of Random, Baseline and ISMCTS, and behind PPO and DMC. Against Baseline and DMC the result is clear. Against ISMCTS and PPO it is likely, but a few dozen more rounds would settle it.
+
+**Where that puts me on the ranking.** Each replay starts from the role I had in that round, so it compares play round by round and leaves out the snowball of the card exchange. Over a 10-round game the gaps grow: on my rounds Baseline trails DMC by 13.6 points, on the ladder by 22.7, about 1.7 times as much. Scaling my 6-point gap to DMC the same way puts me at roughly **40% at a DMC table**, between ISMCTS (31%) and DMC (50%).
+
+My gap to DMC shrank from 7.7 points in my first 50 rounds to 4.3 in my last 50. That could mean I got used to the bots, but it is well within the noise. It also isn't a clean test of learning: I played the table sizes in order, so my first 50 rounds were the 4- and 5-player games. I didn't study how DMC plays, and I can't see its cards or keep track of everything it played. I think my style suits bigger tables better: I'm used to playing this game with a lot of friends at once, and at the bigger tables I noticed myself playing more aggressively.
+
+| Players      | 4     | 5    | 6    | 7    |
+| ------------ | ----- | ---- | ---- | ---- |
+| Me minus DMC | −13.3 | −2.0 | −7.2 | −1.3 |
+
+The 4-player gap stands out, but with 25 rounds per size each of these numbers is uncertain by about ±10 points. Gaps shrink at bigger tables for the bots too: on the ladder, Baseline trails DMC by 29 points at 4 players and by 18 at 7.
 
 <details>
 <summary>Method details</summary>
@@ -214,7 +239,7 @@ Plays two checkpoints (`MASTER_PATH` vs `OLD_PATH`) against each other in paired
 ```Bash
 python bot_ladder.py               # every bot at a DMC table and at a Baseline table
 python bot_ladder.py --only ISMCTS # some bots; --field DMC for one table, --force to rerun
-python plot_bot_strength.py        # redraws public/bot_strength_{light,dark}.png
+python plot_bot_strength.py        # redraws the charts in public/
 ```
 
 Runs the [bot ladder](#how-strong-are-the-bots) and saves it to `results/bot_ladder.json`, skipping finished runs. The fast bots take under a minute each. ISMCTS takes about 1.5 h per table on 8 cores and should have the machine to itself, as it thinks for a fixed time. PPO needs a model under `snapshots_ppo/`, which isn't in the repo.
@@ -230,7 +255,7 @@ PRESIDENT_BENCHMARK_LOG=results/human_rounds.jsonl uvicorn main:app  # Linux/mac
 python human_placement.py results/human_rounds.jsonl
 ```
 
-`human_placement.py` replays every logged round with each bot in your seat. It prints your result against each bot with a 95% interval and the chance that you are ahead, and saves it to `results/human_placement.json`. The chart script adds you to the chart. The replays take about 15 minutes, most of it ISMCTS. `--dry-run Baseline` checks the intervals by letting a bot play the human's seat.
+`human_placement.py` replays every logged round with each bot in your seat. It prints your result against each bot with a 95% interval and the chance that you are ahead, and saves it to `results/human_placement.json`. The chart script then also draws `public/human_vs_bots_{light,dark}.png`. The replays take about 15 minutes, most of it ISMCTS. `--dry-run Baseline` checks the intervals by letting a bot play the human's seat.
 
 ### Tests
 
