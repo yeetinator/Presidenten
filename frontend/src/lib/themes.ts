@@ -43,9 +43,9 @@ export const TABLE_THEMES: Record<ThemeKey, TableTheme> = {
     name: "Midnight Blue",
     swatchColor: "#38bdf8",
     mainBg:
-      "radial-gradient(circle at center, #1d4ed8 0%, #1e3a8a 55%, #0f172a 100%)",
+      "radial-gradient(circle at center, #1e326c 0%, #0e1a3c 55%, #050b1c 100%)",
     feltBg:
-      "radial-gradient(circle at top, rgba(56, 189, 248, 0.16), rgba(30, 58, 138, 0.95) 70%)",
+      "radial-gradient(circle at top, rgba(56, 189, 248, 0.16), rgba(14, 26, 60, 0.95) 70%)",
     feltBorder: "rgba(56, 189, 248, 0.25)",
     accentBorder: "#38bdf8",
     accentBg: "rgba(56, 189, 248, 0.12)",
@@ -62,9 +62,9 @@ export const TABLE_THEMES: Record<ThemeKey, TableTheme> = {
     name: "Crimson Velvet",
     swatchColor: "#f43f5e",
     mainBg:
-      "radial-gradient(circle at center, #881337 0%, #580a20 55%, #1c0209 100%)",
+      "radial-gradient(circle at center, #681d34 0%, #3a0e1b 55%, #1b050c 100%)",
     feltBg:
-      "radial-gradient(circle at top, rgba(244, 63, 94, 0.16), rgba(80, 14, 35, 0.95) 70%)",
+      "radial-gradient(circle at top, rgba(244, 63, 94, 0.16), rgba(58, 14, 27, 0.95) 70%)",
     feltBorder: "rgba(251, 113, 133, 0.25)",
     accentBorder: "#fb7185",
     accentBg: "rgba(251, 113, 133, 0.12)",
@@ -81,9 +81,9 @@ export const TABLE_THEMES: Record<ThemeKey, TableTheme> = {
     name: "Royal Obsidian",
     swatchColor: "#c084fc",
     mainBg:
-      "radial-gradient(circle at center, #4c1d95 0%, #3b0764 55%, #120224 100%)",
+      "radial-gradient(circle at center, #3c1e6c 0%, #200e3c 55%, #0e051c 100%)",
     feltBg:
-      "radial-gradient(circle at top, rgba(168, 85, 247, 0.16), rgba(58, 20, 120, 0.95) 70%)",
+      "radial-gradient(circle at top, rgba(168, 85, 247, 0.16), rgba(32, 14, 60, 0.95) 70%)",
     feltBorder: "rgba(192, 132, 252, 0.25)",
     accentBorder: "#c084fc",
     accentBg: "rgba(192, 132, 252, 0.12)",
