@@ -162,6 +162,11 @@
     isMyTurn &&
     !$gameState?.can_pass &&
     ($gameState?.legal_moves_suits?.length ?? 0) === 0;
+  $: canPassTurn =
+    isMyTurn &&
+    !!$gameState?.can_pass &&
+    $gameState?.pile_leader !== 0 &&
+    !isTurnPending;
 
   let lastStateRef: typeof $gameState = null;
   $: if ($gameState && !$exchangePrompt) {
@@ -392,27 +397,45 @@
     }
   }
 
-  function handleKeyDown(event: KeyboardEvent) {
-    if (!$inGame || event.repeat || $roundSummary) return;
+  function isGameKey(event: KeyboardEvent) {
+    if (!$inGame || $roundSummary) return false;
 
     const target = event.target as HTMLElement | null;
-    if (
+    return !(
       target?.isContentEditable ||
       ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")
-    )
-      return;
+    );
+  }
+
+  function handleKeyDown(event: KeyboardEvent) {
+    if (!isGameKey(event)) return;
 
     if (event.code === "Space") {
-      if (!jumpInVisible || !jumpInAutoMove?.length) return;
+      // Space belongs to the game, so a focused card isn't toggled as well
       event.preventDefault();
-      handleJumpIn(jumpInAutoMove[0]);
+      // enableCards is off from sending a move until the next prompt
+      if (event.repeat || !enableCards) return;
+
+      if ($exchangePrompt || $selectedCards.length) {
+        // Sends the exchange or plays the selection, as Enter does. An
+        // illegal selection does nothing, rather than passing
+        if (isCenterClickable) handleCenterAction();
+      } else if (jumpInVisible) {
+        if (jumpInAutoMove?.length) handleJumpIn(jumpInAutoMove[0]);
+      } else if (canPassTurn) handlePass();
       return;
     }
 
+    if (event.repeat) return;
     if (event.code === "Enter" && isCenterClickable) {
       event.preventDefault();
       handleCenterAction();
     }
+  }
+
+  // Buttons are clicked when Space is released
+  function handleKeyUp(event: KeyboardEvent) {
+    if (event.code === "Space" && isGameKey(event)) event.preventDefault();
   }
 
   async function handleNextRound() {
@@ -479,7 +502,7 @@
   }
 </script>
 
-<svelte:window on:keydown={handleKeyDown} />
+<svelte:window on:keydown={handleKeyDown} on:keyup={handleKeyUp} />
 
 {#if !$inGame}
   <Lobby onStartGame={handleStartGame} />
@@ -730,13 +753,18 @@
                 >Your Turn</span
               >
             {/if}
-            {#if isMyTurn && $gameState?.can_pass && $gameState?.pile_leader !== 0 && !isTurnPending}
+            {#if canPassTurn}
               <button
                 transition:fade={{ duration: 100 }}
                 type="button"
                 class="rounded-full border border-white/20 bg-black/50 backdrop-blur-md px-6 py-1.5 text-[0.65rem] font-black uppercase tracking-[0.2em] text-white/90
                 shadow-md transition-all hover:bg-white/10 hover:text-white active:scale-95"
-                on:click={handlePass}>Pass Turn</button
+                on:click={handlePass}
+                >Pass Turn
+                <!-- Space jumps in while a jump-in is offered -->
+                <span class="opacity-70" class:hidden={jumpInVisible}
+                  >· Space</span
+                ></button
               >
             {/if}
           </div>
