@@ -11,6 +11,8 @@ NUM_RANKS = 13
 COUNT_BUCKETS = 4
 MAX_PLAYERS = 7
 PASS_CAP = 4.0  # Passes per rank
+# Below this, every move of a 2-player endgame loses (checked against exact solves)
+CERTAIN_LOSS_Q = -0.95
 ROLE_MAP = {
     "President": 1.0,
     "Vice-President": 0.8,
@@ -388,7 +390,17 @@ class PresidentDMCBot(Player):
         q = yield (self.model, state_vec[None, :])
         q_legal = q[0][legal_idx]
 
-        if self.profile == "aggressive":
+        # With 2 players left and every move lost, training rarely tried playing,
+        # so it mostly passes while it could play. Playing on changes nothing but
+        # looks less odd. Training games keep the learned choice.
+        lost_endgame = (
+            not self.explore
+            and not self.record
+            and len(state["active_players"]) == 2
+            and not state["is_finish_prompt"]
+            and q_legal.max() < CERTAIN_LOSS_Q
+        )
+        if self.profile == "aggressive" or lost_endgame:
             non_pass = legal_idx != PASS_ACTION
             if non_pass.any():
                 q_legal = np.where(non_pass, q_legal, -np.inf)
