@@ -1,5 +1,6 @@
-"""Draws the README's bot strength chart from results/bot_ladder.json (and
-results/human_placement.json when it exists), in a light and a dark version.
+"""Draws the README's bot strength chart from results/bot_ladder.json, and the
+human's comparison with each bot from results/human_placement.json when it
+exists, each in a light and a dark version.
 
 python plot_bot_strength.py
 """
@@ -15,6 +16,7 @@ from bot_ladder import FIELDS, RESULTS_PATH
 from human_placement import RESULTS_PATH as HUMAN_RESULTS_PATH
 
 OUT = "../public/bot_strength_{mode}.png"
+HUMAN_OUT = "../public/human_vs_bots_{mode}.png"
 THEMES = {
     "light": {
         "surface": "#fcfcfb",
@@ -33,7 +35,6 @@ THEMES = {
 }
 FIELD_LABELS = {"DMC": "At a table of DMC bots", "Baseline": "At a table of Baseline bots"}
 PLAYERS = ["Random", "Baseline", "ISMCTS", "PPO", "DMC"]
-HUMAN = "You (human)"
 
 
 def load_points():
@@ -52,15 +53,15 @@ def load_points():
                     entry["beat_rate_ci"],
                     False,
                 )
-
-    if os.path.exists(HUMAN_RESULTS_PATH):
-        with open(HUMAN_RESULTS_PATH) as f:
-            vs_dmc = json.load(f)["bots"]["DMC"]
-        # DMC is at 50% in its own table, so the human sits their paired
-        # difference from DMC away from it
-        lo, hi = vs_dmc["diff_ci"]
-        points[HUMAN] = {"DMC": (0.5 + vs_dmc["diff"], (hi - lo) / 2, False)}
     return points
+
+
+def style_axes(ax, theme):
+    ax.grid(axis="x", color=theme["grid"], lw=1)
+    ax.set_axisbelow(True)
+    ax.tick_params(length=0)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
 
 
 def draw(points, mode):
@@ -100,13 +101,7 @@ def draw(points, mode):
         fontsize=8, va="center",
     )
     ax.set_yticks(range(len(rows)))
-    ax.set_yticklabels(
-        rows, color=theme["text"], fontsize=10,
-        fontweight="normal",
-    )
-    for label in ax.get_yticklabels():
-        if label.get_text() == HUMAN:
-            label.set_fontweight("bold")
+    ax.set_yticklabels(rows, color=theme["text"], fontsize=10)
     ax.set_ylim(-0.6, len(rows) - 0.3)
     ax.set_xlim(0, 100)
     ax.set_xticks(range(0, 101, 25))
@@ -115,11 +110,7 @@ def draw(points, mode):
         "Beat rate: share of opponents finished ahead of per round (95% intervals)",
         color=theme["muted"], fontsize=9,
     )
-    ax.grid(axis="x", color=theme["grid"], lw=1)
-    ax.set_axisbelow(True)
-    ax.tick_params(length=0)
-    for spine in ax.spines.values():
-        spine.set_visible(False)
+    style_axes(ax, theme)
 
     handles = [
         Line2D([], [], marker="o", lw=0, markersize=7, color=theme["series"][f], label=FIELD_LABELS[f])
@@ -143,11 +134,64 @@ def draw(points, mode):
     plt.close(fig)
 
 
+def draw_human(report, mode):
+    """The human minus each bot on the human's own rounds. The replays start
+    from the human's roles, so this isn't on the ladder's scale."""
+    theme = THEMES[mode]
+    color = theme["series"]["DMC"]
+    bots = sorted(report["bots"], key=lambda b: report["bots"][b]["diff"])
+    fig, ax = plt.subplots(figsize=(8, 0.5 * len(bots) + 1.2), dpi=200)
+    fig.patch.set_facecolor(theme["surface"])
+    ax.set_facecolor(theme["surface"])
+
+    for y, bot in enumerate(bots):
+        b = report["bots"][bot]
+        lo, hi = (100 * v for v in b["diff_ci"])
+        ax.plot([lo, hi], [y, y], color=color, lw=2, solid_capstyle="round")
+        ax.scatter(
+            [100 * b["diff"]], [y], s=60, zorder=3, facecolor=color,
+            edgecolor=theme["surface"], linewidth=2,
+        )
+        ax.text(
+            hi + 1.5, y, f"{100 * b['diff']:+.1f}", color=theme["text"],
+            fontsize=9, va="center",
+        )
+
+    ax.axvline(0, color=theme["muted"], lw=1, zorder=0)
+    top = len(bots) - 0.45
+    ax.text(-1, top, "← bot ahead", color=theme["muted"], fontsize=8, va="center", ha="right")
+    ax.text(1, top, "you ahead →", color=theme["muted"], fontsize=8, va="center")
+    ax.set_yticks(range(len(bots)))
+    ax.set_yticklabels(bots, color=theme["text"], fontsize=10)
+    ax.set_ylim(-0.6, len(bots) - 0.2)
+    ax.set_xlim(-20, 60)
+    ticks = range(-20, 61, 10)
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([f"{t:+d}" if t else "0" for t in ticks], color=theme["muted"], fontsize=9)
+    ax.set_xlabel(
+        f"Your beat rate minus the bot's in your seat, on your {report['rounds']} rounds "
+        "(points, 95% intervals)",
+        color=theme["muted"], fontsize=9,
+    )
+    style_axes(ax, theme)
+
+    fig.tight_layout()
+    fig.savefig(HUMAN_OUT.format(mode=mode), facecolor=theme["surface"])
+    plt.close(fig)
+
+
 def main():
     points = load_points()
+    report = None
+    if os.path.exists(HUMAN_RESULTS_PATH):
+        with open(HUMAN_RESULTS_PATH) as f:
+            report = json.load(f)
     for mode in THEMES:
         draw(points, mode)
         print(f"Wrote {OUT.format(mode=mode)}")
+        if report is not None:
+            draw_human(report, mode)
+            print(f"Wrote {HUMAN_OUT.format(mode=mode)}")
 
 
 if __name__ == "__main__":
